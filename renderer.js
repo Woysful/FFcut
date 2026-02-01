@@ -41,6 +41,46 @@ let state = {
     }
 };
 
+// ---------------------------------------------------------------------------
+// Cross-platform helpers
+// ---------------------------------------------------------------------------
+
+// file:// URL builder.
+// Windows: C:\Users\... → file:///C:/Users/...
+// Unix:    /home/...    → file:///home/...  (file:// + /path = three slashes)
+function filePathToUrl(filePath) {
+    const normalized = filePath.replace(/\\/g, '/');
+    return normalized.startsWith('/')
+        ? 'file://' + normalized
+        : 'file:///' + normalized;
+}
+
+// Centralised cancellation-error detector.
+// Linux/macOS surfaces SIGKILL; Windows says "terminated"; Electron IPC can
+// time out with "reply was never sent" when the child is killed mid-flight.
+function isCancellationError(error) {
+    if (!error || !error.message) return false;
+    const m = error.message.toLowerCase();
+    return (
+        m.includes('cancelled') ||
+        m.includes('sigkill') ||
+        m.includes('killed') ||
+        m.includes('terminated') ||
+        m.includes('reply was never sent')
+    );
+}
+
+// Platform flags used for keyboard shortcuts and labels
+const isMacOS = navigator.platform.startsWith('Mac') || navigator.userAgent.includes('Macintosh');
+const modifierLabel = isMacOS ? '⌘' : 'Ctrl';
+
+// On macOS rewrite static "Ctrl+…" menu-shortcut labels to "⌘+…"
+if (isMacOS) {
+    document.querySelectorAll('.menu-shortcut').forEach(span => {
+        span.textContent = span.textContent.replace(/^Ctrl/, '⌘');
+    });
+}
+
 // DOM Elements
 const emptyState = document.getElementById('emptyState');
 const dropZone = document.querySelector('.empty-state-content');
@@ -439,8 +479,12 @@ function initializeCodecUI() {
 }
 
 // Import Video
-async function importVideo() {
-    const filePath = await window.electronAPI.selectVideo();
+// If filePath is provided (CLI arg / second-instance / macOS open-file) the
+// dialog is skipped; otherwise it behaves exactly as before.
+async function importVideo(filePath) {
+    if (!filePath) {
+        filePath = await window.electronAPI.selectVideo();
+    }
     if (!filePath) return;
 
     let wasCancelled = false;
@@ -487,11 +531,7 @@ async function importVideo() {
             videoInfo = await window.electronAPI.getVideoInfo(filePath);
         } catch (error) {
             // Handle cancellation errors gracefully
-            if (error.message && (
-                error.message.includes('cancelled') ||
-                error.message.includes('SIGKILL') ||
-                error.message.includes('killed')
-            )) {
+            if (isCancellationError(error)) {
                 // Remove loading message silently
                 const msg = document.getElementById('loadingMessage');
                 if (msg) msg.remove();
@@ -542,12 +582,12 @@ async function importVideo() {
                 const split = await window.electronAPI.prepareMultiAudioPreview(filePath, videoInfo.metadata);
                 state.previewVideoPath = split.videoPath;
                 state.previewAudioPaths = split.audioPaths;
-                videoPreview.src = `file://${split.videoPath}`;
+                videoPreview.src = filePathToUrl(split.videoPath);
                 videoPreview.muted = true;
-                previewAudio.src = `file://${split.audioPaths[0]}`;
+                previewAudio.src = filePathToUrl(split.audioPaths[0]);
                 previewAudio.volume = volumeSlider.value / 100;
             } catch (error) {
-                if (error.message.includes('cancelled')) {
+                if (isCancellationError(error)) {
                     // Restore previous video state if operation was cancelled
                     if (wasPlayingBefore) {
                         // Try to restore playback state
@@ -577,13 +617,13 @@ async function importVideo() {
             }
         } else if (videoInfo.needsPreview) {
             state.previewPath = videoInfo.previewPath;
-            videoPreview.src = `file://${videoInfo.previewPath}`;
+            videoPreview.src = filePathToUrl(videoInfo.previewPath);
             videoPreview.muted = false;
             previewAudio.src = '';
         } else {
             // Video doesn't need preview, load directly
             // Don't stop playback for this case - try to preserve it
-            videoPreview.src = `file://${filePath}`;
+            videoPreview.src = filePathToUrl(filePath);
             videoPreview.muted = false;
             previewAudio.src = '';
 
@@ -650,11 +690,7 @@ async function importVideo() {
         console.error('Error importing video:', error);
 
         // Handle cancellation errors gracefully
-        if (error.message && (
-            error.message.includes('cancelled') ||
-            error.message.includes('SIGKILL') ||
-            error.message.includes('killed')
-        )) {
+        if (isCancellationError(error)) {
             // Loading message should already be removed by inner handlers
             return;
         }
@@ -771,11 +807,7 @@ dropZone.addEventListener('drop', async (e) => {
                     videoInfo = await window.electronAPI.getVideoInfo(filePath);
                 } catch (error) {
                 // Handle cancellation errors gracefully
-                if (error.message && (
-                    error.message.includes('cancelled') ||
-                    error.message.includes('SIGKILL') ||
-                    error.message.includes('killed')
-                )) {
+                if (isCancellationError(error)) {
                     // Remove loading message silently
                     const msg = document.getElementById('loadingMessage');
                     if (msg) msg.remove();
@@ -798,12 +830,12 @@ dropZone.addEventListener('drop', async (e) => {
                         const split = await window.electronAPI.prepareMultiAudioPreview(filePath, videoInfo.metadata);
                         state.previewVideoPath = split.videoPath;
                         state.previewAudioPaths = split.audioPaths;
-                        videoPreview.src = `file://${split.videoPath}`;
+                        videoPreview.src = filePathToUrl(split.videoPath);
                         videoPreview.muted = true;
-                        previewAudio.src = `file://${split.audioPaths[0]}`;
+                        previewAudio.src = filePathToUrl(split.audioPaths[0]);
                         previewAudio.volume = volumeSlider.value / 100;
                     } catch (error) {
-                        if (error.message.includes('cancelled')) {
+                        if (isCancellationError(error)) {
                             // Restore previous video state if operation was cancelled
                             if (wasPlayingBefore) {
                                 // Try to restore playback state
@@ -833,13 +865,13 @@ dropZone.addEventListener('drop', async (e) => {
                     }
                 } else if (videoInfo.needsPreview) {
                     state.previewPath = videoInfo.previewPath;
-                    videoPreview.src = `file://${videoInfo.previewPath}`;
+                    videoPreview.src = filePathToUrl(videoInfo.previewPath);
                     videoPreview.muted = false;
                     previewAudio.src = '';
                 } else {
                     // Video doesn't need preview, load directly
                     // Don't stop playback for this case - try to preserve it
-                    videoPreview.src = `file://${filePath}`;
+                    videoPreview.src = filePathToUrl(filePath);
                     videoPreview.muted = false;
                     previewAudio.src = '';
 
@@ -897,11 +929,7 @@ dropZone.addEventListener('drop', async (e) => {
                 console.error('Error loading video:', error);
 
                 // Handle cancellation errors gracefully
-                if (error.message && (
-                    error.message.includes('cancelled') ||
-                    error.message.includes('SIGKILL') ||
-                    error.message.includes('killed')
-                )) {
+                if (isCancellationError(error)) {
                     // Loading message should already be removed by inner handlers
                     const msg = document.getElementById('loadingMessage');
                     if (msg) msg.remove();
@@ -1015,11 +1043,7 @@ editorState.addEventListener('drop', async (e) => {
                     videoInfo = await window.electronAPI.getVideoInfo(filePath);
                 } catch (error) {
                 // Handle cancellation errors gracefully
-                if (error.message && (
-                    error.message.includes('cancelled') ||
-                    error.message.includes('SIGKILL') ||
-                    error.message.includes('killed')
-                )) {
+                if (isCancellationError(error)) {
                     // Remove loading message silently
                     const msg = document.getElementById('loadingMessage');
                     if (msg) msg.remove();
@@ -1042,12 +1066,12 @@ editorState.addEventListener('drop', async (e) => {
                         const split = await window.electronAPI.prepareMultiAudioPreview(filePath, videoInfo.metadata);
                         state.previewVideoPath = split.videoPath;
                         state.previewAudioPaths = split.audioPaths;
-                        videoPreview.src = `file://${split.videoPath}`;
+                        videoPreview.src = filePathToUrl(split.videoPath);
                         videoPreview.muted = true;
-                        previewAudio.src = `file://${split.audioPaths[0]}`;
+                        previewAudio.src = filePathToUrl(split.audioPaths[0]);
                         previewAudio.volume = volumeSlider.value / 100;
                     } catch (error) {
-                        if (error.message.includes('cancelled')) {
+                        if (isCancellationError(error)) {
                             // Restore previous video state if operation was cancelled
                             if (wasPlayingBefore) {
                                 // Try to restore playback state
@@ -1077,13 +1101,13 @@ editorState.addEventListener('drop', async (e) => {
                     }
                 } else if (videoInfo.needsPreview) {
                     state.previewPath = videoInfo.previewPath;
-                    videoPreview.src = `file://${videoInfo.previewPath}`;
+                    videoPreview.src = filePathToUrl(videoInfo.previewPath);
                     videoPreview.muted = false;
                     previewAudio.src = '';
                 } else {
                     // Video doesn't need preview, load directly
                     // Don't stop playback for this case - try to preserve it
-                    videoPreview.src = `file://${filePath}`;
+                    videoPreview.src = filePathToUrl(filePath);
                     videoPreview.muted = false;
                     previewAudio.src = '';
 
@@ -1138,11 +1162,7 @@ editorState.addEventListener('drop', async (e) => {
                 console.error('Error loading video:', error);
 
                 // Handle cancellation errors gracefully
-                if (error.message && (
-                    error.message.includes('cancelled') ||
-                    error.message.includes('SIGKILL') ||
-                    error.message.includes('killed')
-                )) {
+                if (isCancellationError(error)) {
                     // Loading message should already be removed by inner handlers
                     const msg = document.getElementById('loadingMessage');
                     if (msg) msg.remove();
@@ -1871,7 +1891,7 @@ function applyAudioTrackToPreview() {
     }
 
     // Switch audio source
-    previewAudio.src = `file://${state.previewAudioPaths[idx]}`;
+    previewAudio.src = filePathToUrl(state.previewAudioPaths[idx]);
     previewAudio.volume = volumeSlider.value / 100;
 
     // Wait for audio to load before syncing and playing
@@ -2003,7 +2023,7 @@ exportBtn.addEventListener('click', async () => {
         }
 
         // Don't show error if export was cancelled or if it's an IPC timeout error
-        if (!isCancelled && !error.message.includes('cancelled') && !error.message.includes('reply was never sent')) {
+        if (!isCancelled && !isCancellationError(error)) {
             alert('Export error: ' + error.message);
         }
     } finally {
@@ -2187,12 +2207,13 @@ document.getElementById('menuPreviewFullscreen').addEventListener('click', () =>
 
 document.getElementById('menuShortcuts').addEventListener('click', () => {
     closeAllMenus();
+    const m = modifierLabel;
     alert(`Keyboard Shortcuts:
 
-    Ctrl+N - Import Video
-    Ctrl+S - Export Video
-    Ctrl+Q - Quit
-    Ctrl+F - Video Fullscreen
+    ${m}+N - Import Video
+    ${m}+S - Export Video
+    ${m}+Q - Quit
+    ${m}+F - Video Fullscreen
     F11 - Application Fullscreen    
 
     Space - Play/Pause
@@ -2209,12 +2230,20 @@ document.getElementById('menuShortcuts').addEventListener('click', () => {
 
 document.getElementById('menuAbout').addEventListener('click', () => {
     closeAllMenus();
+    let platformStr;
+    if (isMacOS) {
+        platformStr = 'macOS';
+    } else if (navigator.userAgent.includes('Windows')) {
+        platformStr = 'Windows';
+    } else {
+        platformStr = 'Linux';
+    }
     alert(`FFcut v1.0.0
 
     Fast and reliable video editor
     Built with Electron 40.1.0 + FFmpeg
 
-    Platform: Linux + Wayland/X11
+    Platform: ${platformStr}
     License: MIT`);
 });
 
@@ -2249,8 +2278,11 @@ document.addEventListener('keydown', (e) => {
         activeElement.isContentEditable
     );
 
+    // On macOS shortcuts use Cmd (metaKey); on Windows/Linux they use Ctrl.
+    const modPressed = isMacOS ? e.metaKey : e.ctrlKey;
+
     // Global shortcuts (всегда активны)
-    if (e.ctrlKey && e.code === 'KeyN') {
+    if (modPressed && e.code === 'KeyN') {
         e.preventDefault();
         if (!isImporting) {
             importVideo();
@@ -2258,7 +2290,7 @@ document.addEventListener('keydown', (e) => {
         return;
     }
 
-    if (e.ctrlKey && e.code === 'KeyS') {
+    if (modPressed && e.code === 'KeyS') {
         e.preventDefault();
         if (state.videoPath) {
             exportBtn.click();
@@ -2266,7 +2298,7 @@ document.addEventListener('keydown', (e) => {
         return;
     }
 
-    if (e.ctrlKey && e.code === 'KeyQ') {
+    if (modPressed && e.code === 'KeyQ') {
         e.preventDefault();
         if (confirm('Are you sure you want to quit?')) {
             window.close();
@@ -2280,7 +2312,7 @@ document.addEventListener('keydown', (e) => {
         return;
     }
 
-    if (e.ctrlKey && e.code === 'KeyF') {
+    if (modPressed && e.code === 'KeyF') {
         e.preventDefault();
         toggleVideoFullscreen();
         return;
@@ -2775,3 +2807,10 @@ presetNameInput.addEventListener('keydown', (e) => {
 // Load presets on startup
 loadPresetsFromStorage();
 
+// Listen for file-open requests from the main process (CLI arg, second
+// instance, or macOS open-file event) and feed the path directly into
+// importVideo, which will skip the file-dialog when a path is provided.
+window.electronAPI.onOpenFile((filePath) => {
+    console.log('Received open-file event:', filePath);
+    importVideo(filePath);
+});

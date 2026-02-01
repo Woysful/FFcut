@@ -7,6 +7,17 @@ const fsSync = require('fs');
 const os = require('os');
 
 let mainWindow;
+
+// Capture the file path passed via CLI on first launch.
+// On Linux/Windows: process.argv = [electron, app.js, /path/to/file.mp4]
+// On macOS the path arrives via the 'open-file' event instead (handled below).
+const cliFilePath = (() => {
+    const args = process.argv.slice(app.isPackaged ? 1 : 2);
+    const candidate = args.find(arg => !arg.startsWith('-'));
+    if (candidate && fsSync.existsSync(candidate)) return path.resolve(candidate);
+    return null;
+})();
+
 let isTranscodingCancelled = false;
 let currentTranscodeProcess = null;
 let currentTranscodeFilePath = null;
@@ -487,10 +498,56 @@ function createWindow() {
     });
 }
 
+// macOS sends file paths via 'open-file' instead of argv.
+// Store it here in case it fires before the window is ready.
+let pendingOpenFile = null;
+app.on('open-file', (event, filePath) => {
+    event.preventDefault();
+    if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('open-file', filePath);
+    } else {
+        pendingOpenFile = filePath;
+    }
+});
+
 // Handle app ready
 app.whenReady().then(() => {
     console.log('FFcut v1.0.0 starting...');
+
+    // Single-instance lock: if a second "FFcut file.mp4" is launched while
+    // we are already running, forward the path here and quit the new one.
+    const gotLock = app.requestSingleInstanceLock();
+    if (!gotLock) {
+        app.quit();
+        return;
+    }
+
+    app.on('second-instance', (event, commandLine, workingDirectory) => {
+        if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+        }
+
+        const args = commandLine.slice(app.isPackaged ? 1 : 2);
+        const candidate = args.find(arg => !arg.startsWith('-'));
+        if (candidate) {
+            const resolved = path.resolve(workingDirectory, candidate);
+            if (fsSync.existsSync(resolved) && mainWindow && mainWindow.webContents) {
+                mainWindow.webContents.send('open-file', resolved);
+            }
+        }
+    });
+
     createWindow();
+
+    // Forward the initial CLI path (or a pending macOS open-file path) to the
+    // renderer once it is ready to receive IPC messages.
+    const fileToOpen = cliFilePath || pendingOpenFile;
+    if (fileToOpen && mainWindow) {
+        mainWindow.once('ready-to-show', () => {
+            mainWindow.webContents.send('open-file', fileToOpen);
+        });
+    }
 
     // Handle macOS activation
     app.on('activate', () => {

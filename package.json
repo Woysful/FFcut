@@ -8,6 +8,8 @@
     "start": "electron .",
     "build": "electron-builder",
     "build:linux": "electron-builder --linux",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
     "build:all": "electron-builder --linux --win --mac"
   },
   "keywords": [
@@ -58,11 +60,11 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.ico"
     },
     "mac": {
       "target": "dmg",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.icns"
     },
     "nsis": {
       "oneClick": false,

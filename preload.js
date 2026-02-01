@@ -40,6 +40,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onExportProgress: (callback) => {
     ipcRenderer.on('export-progress', (event, data) => callback(data));
   },
+  // Fired when the app should open a file (CLI arg, second instance, or macOS open-file)
+  onOpenFile: (callback) => {
+    ipcRenderer.on('open-file', (event, filePath) => callback(filePath));
+  },
   
   // Remove listeners
   removeTranscodeProgressListener: () => {
