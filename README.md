@@ -2,6 +2,8 @@
 
 Electron wrapper for FFmpeg
 
+![](https://github.com/user-attachments/assets/bdc0b022-1fb0-4304-a78a-d50e0f80c8fa)
+
 > Heavily vibe coded. Expect issues.
 
 ## Supported Formats
