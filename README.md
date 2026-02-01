@@ -60,11 +60,11 @@ In `./dist` you'll find `AppImage` file and `linux-unpacked` with all the binari
 | Ctrl+Q  | Quit                    |
 | Ctrl+F  | Video Fullscreen        |
 | F11     | Application Fullscreen  |   
-|
+|         |                         |
 | Space   | Play/Pause              |
 | ← →     | Previous/Next frame     |
 | , .     | Previous/Next frame     |
-|
+|         |                         |
 | Q       | Set trim start          |
 | E       | Set trim end            |
 | R       | Reset Trim              |
