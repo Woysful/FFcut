@@ -87,7 +87,7 @@ In `./dist` you'll find `AppImage` file and `linux-unpacked` with all the binari
 - Unzip it whenewer you like and run `FFcut.exe`
 
 
-### 4. Manual building
+### 3. Manual building
 
 > **Prerequisites**
 > - Node.js
