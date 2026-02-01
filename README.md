@@ -71,7 +71,7 @@ In `./dist` you'll find `AppImage` file and `linux-unpacked` with all the binari
 ## 🪟 Installation Windows
 
 > **Prerequisites**
-> - FFmpeg - Download [FFmpeg binaries](https://ffmpeg.org/) and place `FFmpeg.exe` in `C:\Windows\` OR place it whenewer you like and add it to the PATH in Environment settings
+> - FFmpeg - Download [FFmpeg binaries](https://ffmpeg.org/) and place `FFmpeg.exe and FFprobe.exe` in `C:\Windows\` OR place it whenewer you like and add it to the PATH in Environment settings
 
 **3 Installation options:**
 
