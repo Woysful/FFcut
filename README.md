@@ -1,6 +1,6 @@
 # [<img src="https://github.com/Woysful/FFcut/blob/main/assets/icon.png" width="2.75%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
 
-Basically Electron wrapper for FFmpeg
+Basically an Electron wrapper for FFmpeg
 ![](https://github.com/user-attachments/assets/bdc0b022-1fb0-4304-a78a-d50e0f80c8fa)
 > Heavily vibe coded. Expect issues.
 
