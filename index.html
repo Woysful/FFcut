@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FFcut</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div id="app">
+    <!-- Menu Bar -->
+    <div class="menu-bar">
+      <div class="menu-item" id="fileMenu">
+        <span class="menu-label">File</span>
+        <div class="menu-dropdown" id="fileDropdown">
+          <div class="menu-option" id="menuImport">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 4V12M10 12L7 9M10 12L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M4 13V15C4 15.5304 4.21071 16.0391 4.58579 16.4142C4.96086 16.7893 5.46957 17 6 17H14C14.5304 17 15.0391 16.7893 15.4142 16.4142C15.7893 16.0391 16 15.5304 16 15V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Import Video
+            <span class="menu-shortcut">Ctrl+O</span>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-option" id="menuExport">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 14V6M10 6L7 9M10 6L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M4 13V15C4 15.5304 4.21071 16.0391 4.58579 16.4142C4.96086 16.7893 5.46957 17 6 17H14C14.5304 17 15.0391 16.7893 15.4142 16.4142C15.7893 16.0391 16 15.5304 16 15V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Export Video
+            <span class="menu-shortcut">Ctrl+E</span>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-option" id="menuQuit">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M13 3L17 3L17 7M17 3L10 10M7 3H5C4.46957 3 3.96086 3.21071 3.58579 3.58579C3.21071 3.96086 3 4.46957 3 5V15C3 15.5304 3.21071 16.0391 3.58579 16.4142C3.96086 16.7893 4.46957 17 5 17H15C15.5304 17 16.0391 16.7893 16.4142 16.4142C16.7893 16.0391 17 15.5304 17 15V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Quit
+            <span class="menu-shortcut">Ctrl+Q</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" id="editMenu">
+        <span class="menu-label">Edit</span>
+        <div class="menu-dropdown" id="editDropdown">
+          <div class="menu-option" id="menuResetTrim">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M4 7H16M10 3V7M6 7V17M14 7V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Reset Trim
+            <span class="menu-shortcut">Ctrl+R</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" id="viewMenu">
+        <span class="menu-label">View</span>
+        <div class="menu-dropdown" id="viewDropdown">
+          <div class="menu-option" id="menuFullscreen">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 3C5 3 2 10 2 10S5 17 10 17C15 17 18 10 18 10S15 3 10 3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Fullscreen
+            <span class="menu-shortcut">F11</span>
+          </div>
+          <div class="menu-option" id="menuPreviewFullscreen">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M3 3H7M17 3H13M3 17H7M17 17H13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M7 7H13V13H7V7Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Preview Full Screen
+            <span class="menu-shortcut">Ctrl+F</span>
+          </div>
+        </div>
+      </div>
+      <div class="menu-item" id="helpMenu">
+        <span class="menu-label">Help</span>
+        <div class="menu-dropdown" id="helpDropdown">
+          <div class="menu-option" id="menuShortcuts">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M8 3H5C4.46957 3 3.96086 3.21071 3.58579 3.58579C3.21071 3.96086 3 4.46957 3 5V8M8 17H5C4.46957 17 3.96086 16.7893 3.58579 16.4142C3.21071 16.0391 3 15.5304 3 15V12M17 8V5C17 4.46957 16.7893 3.96086 16.4142 3.58579C16.0391 3.21071 15.5304 3 15 3H12M17 12V15C17 15.5304 16.7893 16.0391 16.4142 16.4142C16.0391 16.7893 15.5304 17 15 17H12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Keyboard Shortcuts
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-option" id="menuAbout">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2"/>
+              <path d="M10 14V10M10 7V6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            About FFcut
+          </div>
+        </div>
+      </div>
+
+      <!-- Spacer to push presets menu to the right -->
+      <div style="flex: 1;"></div>
+
+      <!-- Presets Menu (right side) -->
+      <div class="menu-item menu-item-right" id="presetsMenu">
+        <span class="menu-label">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="margin-right: 4px; vertical-align: middle;">
+            <path d="M10 3V6M10 14V17M17 10H14M6 10H3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="10" cy="10" r="2" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          Presets
+        </span>
+        <div class="menu-dropdown menu-dropdown-right" id="presetsDropdown">
+          <div class="menu-option" id="menuManagePresets">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 3V6M10 14V17M17 10H14M6 10H3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <circle cx="10" cy="10" r="2" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Manage Presets
+          </div>
+          <div class="menu-divider"></div>
+          <div id="presetsListContainer">
+            <div class="menu-option disabled" style="opacity: 0.5; cursor: default;">No presets saved</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- File Info in Menu Bar -->
+      <div class="menu-file-info" id="menuFileInfo">
+        <div class="info-item">
+          <span class="info-label">Video</span>
+          <span class="info-value" id="videoCodecInfo">-</span>
+        </div>
+        <div class="info-separator">•</div>
+        <div class="info-item">
+          <span class="info-label">Profile</span>
+          <span class="info-value" id="profileInfo">-</span>
+        </div>
+        <div class="info-separator">•</div>
+        <div class="info-item">
+          <span class="info-label">Audio</span>
+          <span class="info-value" id="audioCodecInfo">-</span>
+        </div>
+        <div class="info-separator">•</div>
+        <div class="info-item">
+          <span class="info-label">FPS</span>
+          <span class="info-value" id="fpsInfo">-</span>
+        </div>
+        <div class="info-separator">•</div>
+        <div class="info-item">
+          <span class="info-label">Bitrate</span>
+          <span class="info-value" id="bitrateInfo">-</span>
+        </div>
+        <div class="info-separator">•</div>
+        <div class="info-item">
+          <span class="info-label">Size</span>
+          <span class="info-value" id="fileSizeInfo">-</span>
+        </div>
+      </div>
+
+      <!-- File name display (right-aligned) -->
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Empty State -->
+      <div id="emptyState" class="empty-state">
+        <div class="empty-state-content">
+          <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
+            <rect x="20" y="30" width="80" height="60" rx="6" stroke="currentColor" stroke-width="3" opacity="0.3"/>
+            <path d="M48 45L72 60L48 75V45Z" fill="currentColor" opacity="0.3"/>
+          </svg>
+          <h2>Import video to start</h2>
+          <p>Supported formats: MP4, MOV, AVI, MKV, WEBM, FLV, WMV, M4V</p>
+          <button id="importBtnEmpty" class="btn btn-large btn-primary">
+            Pick a file
+          </button>
+        </div>
+      </div>
+
+      <!-- Editor State -->
+      <div id="editorState" class="editor-state" style="display: none;">
+        <!-- Preview Panel -->
+        <div class="preview-panel">
+          <div class="preview-container">
+            <video id="videoPreview" class="video-preview"></video>
+            <audio id="previewAudio" style="display: none;"></audio>
+            <div class="crop-overlay" id="cropOverlay">
+              <div class="crop-handles">
+                <div class="crop-handle crop-handle-nw"></div>
+                <div class="crop-handle crop-handle-ne"></div>
+                <div class="crop-handle crop-handle-sw"></div>
+                <div class="crop-handle crop-handle-se"></div>
+                <div class="crop-handle crop-handle-n"></div>
+                <div class="crop-handle crop-handle-s"></div>
+                <div class="crop-handle crop-handle-w"></div>
+                <div class="crop-handle crop-handle-e"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Crop Toggle -->
+
+          <!-- Video Controls -->
+          <div class="video-controls-wrapper">
+            <!-- Playback Controls -->
+            <div class="controls-island">
+
+              <button id="lockTimelineBtn" class="control-btn-small" title="Lock timeline to trim range">
+                <svg id="lockIcon" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <rect x="5" y="11" width="14" height="10" rx="2" stroke="currentColor" stroke-width="2"/>
+                  <path d="M7 11V7C7 5.67392 7.52678 4.40215 8.46447 3.46447C9.40215 2.52678 10.6739 2 12 2C13.3261 2 14.5979 2.52678 15.5355 3.46447C16.4732 4.40215 17 5.67392 17 7V11" stroke="currentColor" stroke-width="2"/>
+                </svg>
+              </button>
+
+              <button id="loopBtn" class="control-btn-small" title="Loop playback">
+                <svg id="loopIcon" width="18" height="18" viewBox="0 0 24 24" fill="none">
+                  <path d="M17 2L21 6L17 10M21 6H7.5C5.01472 6 3 8.01472 3 10.5V10.5C3 12.9853 5.01472 15 7.5 15H12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M7 22L3 18L7 14M3 18H16.5C18.9853 18 21 15.9853 21 13.5V13.5C21 11.0147 18.9853 9 16.5 9H12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <div class="time-display">
+                <span id="currentTime">00:00</span>
+                <span class="time-separator">/</span>
+                <span id="totalTime">00:00</span>
+              </div>
+            </div>
+
+          <!-- Crop Control -->
+          <div class="crop-control">
+            <button id="quickCropBtn" class="control-btn" title="Toggle crop mode">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+                <path d="M6 4V14H16M4 6H14V16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </button>
+          </div>
+
+            <!-- Center Controls -->
+            <div class="playback-controls-center">
+              <button id="frameBackBtn" class="control-btn-small" title="Previous frame">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M15 18L9 12L15 6V18Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button id="playPauseBtn" class="control-btn">
+                <svg id="playIcon" width="20" height="20" viewBox="0 0 24 24" fill="none">
+                  <path d="M8 5V19L19 12L8 5Z" fill="currentColor"/>
+                </svg>
+                <svg id="pauseIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" style="display: none;">
+                  <rect x="6" y="5" width="4" height="14" fill="currentColor"/>
+                  <rect x="14" y="5" width="4" height="14" fill="currentColor"/>
+                </svg>
+              </button>
+              <button id="frameForwardBtn" class="control-btn-small" title="Next frame">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                  <path d="M9 18L15 12L9 6V18Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- Right Controls -->
+            <div class="controls-island right-controls">
+              <!-- Audio Track Selection -->
+              <div class="audio-track-control" id="audioTrackControl" style="display: none;">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" style="opacity: 0.7; margin-right: 6px;">
+                  <path d="M8 5V15M8 15L11 12M8 15L5 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M12 5V15M12 15L15 12M12 15L9 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <select id="audioTrackSelect" class="audio-track-select">
+                  <option value="0">Audio Track 1</option>
+                </select>
+              </div>
+
+              <!-- Volume Controls -->
+              <div class="volume-control">
+                <button id="muteBtn" class="control-btn-small">
+                  <svg id="volumeOnIcon" width="18" height="18" viewBox="0 0 20 20" fill="none">
+                    <path d="M10 4L6 8H3V12H6L10 16V4Z" fill="currentColor"/>
+                    <path d="M13 7C14 8 14 12 13 13M15 5C17 7 17 13 15 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                  <svg id="volumeMutedIcon" width="18" height="18" viewBox="0 0 20 20" fill="none" style="display: none;">
+                    <path d="M10 4L6 8H3V12H6L10 16V4Z" fill="currentColor"/>
+                    <path d="M14 8L18 12M18 8L14 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  </svg>
+                </button>
+                <input type="range" id="volumeSlider" min="0" max="100" value="50" class="volume-slider">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timeline Panel -->
+        <div class="timeline-panel">
+          <div class="timeline-header">
+            <!-- <h3>Timeline</h3> -->
+            <div class="timeline-info">
+              <span id="trimInfo">Trim not set</span>
+            </div>
+            <div class="timeline-filename" id="timelineFilename">
+              <span class="filename-text" id="timelineFilenameText">-</span>
+            </div>
+          </div>
+
+          <div class="timeline-container">
+            <div class="timeline-ruler" id="timelineRuler"></div>
+            <div class="timeline-track">
+              <canvas id="waveformCanvas" class="waveform-canvas"></canvas>
+              <input type="range" id="scrubber" class="scrubber" min="0" max="100" value="0" step="0.01">
+              <div class="trim-handles">
+                <div class="trim-handle trim-handle-start" id="trimStart">
+                  <div class="trim-handle-label">IN</div>
+                </div>
+                <div class="trim-handle trim-handle-end" id="trimEnd">
+                  <div class="trim-handle-label">OUT</div>
+                </div>
+              </div>
+              <div class="playhead" id="playhead"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sidebar Controls -->
+        <div class="sidebar">
+          <!-- Trim Section -->
+          <div class="control-section">
+            <div class="section-header">
+              <h3>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path d="M4 6H16M4 14H16M7 6V14M13 6V14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                Trim
+              </h3>
+            </div>
+            <div class="control-row">
+              <div class="control-group">
+                <label>Start</label>
+                <div class="input-with-unit">
+                  <input type="number" id="trimStartInput" min="0" step="0.1" placeholder="0.0">
+                  <span class="unit">s</span>
+                </div>
+              </div>
+              <div class="control-group">
+                <label>End</label>
+                <div class="input-with-unit">
+                  <input type="number" id="trimEndInput" min="0" step="0.1" placeholder="0.0">
+                  <span class="unit">s</span>
+                </div>
+              </div>
+              <div class="control-group">
+                <label>&nbsp;</label>
+                <button id="resetTrimBtn" class="btn btn-secondary btn-small" title="Reset trim">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M21 3v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 21v-5h5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Crop Section -->
+          <div class="control-section">
+            <div class="section-header">
+              <h3>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path d="M6 4V14H16M4 6H14V16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                Crop
+              </h3>
+              <label class="toggle-switch">
+                <input type="checkbox" id="cropToggle">
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div id="cropControls" class="crop-controls" style="display: none;">
+              <div class="control-row">
+                <div class="control-group">
+                  <label>X</label>
+                  <input type="number" id="cropX" min="0" step="1" value="0">
+                </div>
+                <div class="control-group">
+                  <label>Y</label>
+                  <input type="number" id="cropY" min="0" step="1" value="0">
+                </div>
+              </div>
+              <div class="control-row">
+                <div class="control-group">
+                  <label>Width</label>
+                  <input type="number" id="cropWidth" min="0" step="1">
+                </div>
+                <div class="control-group">
+                  <label>Height</label>
+                  <input type="number" id="cropHeight" min="0" step="1">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Export Section -->
+          <div class="control-section export-section">
+            <div class="section-header">
+              <h3>
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                  <path d="M10 14V6M10 6L7 9M10 6L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path d="M4 13V15C4 15.5304 4.21071 16.0391 4.58579 16.4142C4.96086 16.7893 5.46957 17 6 17H14C14.5304 17 15.0391 16.7893 15.4142 16.4142C15.7893 16.0391 16 15.5304 16 15V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                </svg>
+                Export
+              </h3>
+            </div>
+
+            <!-- Video Settings -->
+            <div class="control-group">
+              <label>Video codec</label>
+                <select id="videoCodec" class="select-input">
+                  <optgroup label="Stream copy">
+                    <option value="copy" selected>Copy (lossless)</option>
+                  </optgroup>
+                  <optgroup label="CPU codecs">
+                    <option value="libx264">H.264 (libx264)</option>
+                    <option value="libx265">H.265/HEVC (libx265)</option>
+                    <option value="libvpx">VP8 (libvpx)</option>
+                    <option value="libvpx-vp9">VP9 (libvpx-vp9)</option>
+                    <option value="libaom-av1">AV1 (libaom-av1)</option>
+                    <option value="libsvtav1">AV1 (SVT-AV1)</option>
+                    <option value="mpeg4">MPEG-4 Part 2</option>
+                    <option value="mpeg2video">MPEG-2</option>
+                    <option value="libtheora">Theora</option>
+                    <option value="prores">ProRes</option>
+                    <option value="prores_ks">ProRes HQ</option>
+                    <option value="dnxhd">DNxHD</option>
+                    <option value="huffyuv">HuffYUV</option>
+                    <option value="ffv1">FFV1</option>
+                  </optgroup>
+                  <optgroup label="NVIDIA GPU (NVENC)">
+                    <option value="h264_nvenc">H.264 NVENC</option>
+                    <option value="hevc_nvenc">H.265/HEVC NVENC</option>
+                    <option value="av1_nvenc">AV1 NVENC</option>
+                  </optgroup>
+                  <optgroup label="AMD GPU (AMF)">
+                    <option value="h264_amf">H.264 AMF</option>
+                    <option value="hevc_amf">H.265/HEVC AMF</option>
+                    <option value="av1_amf">AV1 AMF</option>
+                  </optgroup>
+                  <optgroup label="Intel GPU (QSV)">
+                    <option value="h264_qsv">H.264 QSV</option>
+                    <option value="hevc_qsv">H.265/HEVC QSV</option>
+                    <option value="vp9_qsv">VP9 QSV</option>
+                    <option value="av1_qsv">AV1 QSV</option>
+                  </optgroup>
+                  <optgroup label="VAAPI (Linux GPU)">
+                    <option value="h264_vaapi">H.264 VAAPI</option>
+                    <option value="hevc_vaapi">H.265/HEVC VAAPI</option>
+                    <option value="vp8_vaapi">VP8 VAAPI</option>
+                    <option value="vp9_vaapi">VP9 VAAPI</option>
+                    <option value="av1_vaapi">AV1 VAAPI</option>
+                    <option value="mpeg2_vaapi">MPEG-2 VAAPI</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              <!-- Quality Settings -->
+              <div class="control-group">
+                <label>Quality mode</label>
+                <select id="qualityMode" class="select-input">
+                  <option value="crf">CRF/CQ (Constant Quality)</option>
+                  <option value="bitrate">Bitrate (CBR/VBR)</option>
+                </select>
+              </div>
+
+              <div id="crfSettings" class="quality-settings">
+                <div class="control-group">
+                  <label>
+                    CRF/CQ Value
+                    <div class="info-tooltip">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/>
+                        <path d="M7 10V7M7 5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                      </svg>
+                      <span class="tooltip-text">Lower = better quality, larger file (0-51)</span>
+                    </div>
+                  </label>
+                  <div class="slider-container">
+                    <input type="range" id="crfSlider" min="0" max="51" value="23" class="quality-slider">
+                    <input type="number" id="crfValue" min="0" max="51" value="23" class="quality-input">
+                  </div>
+                </div>
+              </div>
+
+              <div id="bitrateSettings" class="quality-settings" style="display: none;">
+                <div class="control-group">
+                  <label>Video bitrate</label>
+                  <div class="input-with-unit">
+                    <input type="number" id="videoBitrate" min="100" step="100" value="5000">
+                    <span class="unit">kbps</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Preset -->
+              <div class="control-group" id="presetGroup">
+                <label>Encoder preset</label>
+                <select id="encoderPreset" class="select-input">
+                  <option value="ultrafast">Ultrafast</option>
+                  <option value="superfast">Superfast</option>
+                  <option value="veryfast">Very Fast</option>
+                  <option value="faster">Faster</option>
+                  <option value="fast">Fast</option>
+                  <option value="medium" selected>Medium</option>
+                  <option value="slow">Slow</option>
+                  <option value="slower">Slower</option>
+                  <option value="veryslow">Very Slow</option>
+                </select>
+              </div>
+
+              <!-- Profile -->
+              <div class="control-group" id="profileGroup">
+                <label>
+                  Encoder profile
+                  <div class="info-tooltip">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/>
+                      <path d="M7 10V7M7 5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <span class="tooltip-text">Compatibility vs features trade-off</span>
+                  </div>
+                </label>
+                <select id="encoderProfile" class="select-input">
+                  <option value="auto">Auto</option>
+                  <option value="baseline">Baseline (max compatibility)</option>
+                  <option value="main">Main (good compatibility)</option>
+                  <option value="high" selected>High (best quality)</option>
+                  <option value="high10">High 10-bit</option>
+                  <option value="high422">High 4:2:2</option>
+                  <option value="high444">High 4:4:4</option>
+                </select>
+              </div>
+
+              <!-- Audio Settings -->
+              <div class="control-group">
+                <label>Audio codec</label>
+                <select id="audioCodec" class="select-input">
+                  <optgroup label="Stream copy">
+                    <option value="copy" selected>Copy (lossless)</option>
+                  </optgroup>
+                  <optgroup label="Lossy">
+                    <option value="aac">AAC</option>
+                    <option value="libfdk_aac">AAC (FDK)</option>
+                    <option value="libmp3lame">MP3</option>
+                    <option value="libopus">Opus</option>
+                    <option value="libvorbis">Vorbis</option>
+                    <option value="ac3">AC-3</option>
+                    <option value="eac3">E-AC-3</option>
+                  </optgroup>
+                  <optgroup label="Lossless">
+                    <option value="flac">FLAC</option>
+                    <option value="alac">ALAC</option>
+                    <option value="pcm_s16le">PCM 16-bit</option>
+                    <option value="pcm_s24le">PCM 24-bit</option>
+                  </optgroup>
+                </select>
+              </div>
+
+              <!-- Audio Track Selection for Export -->
+              <div class="control-group" id="audioExportTrackGroup" style="display: none;">
+                <label>
+                  Audio tracks for export
+                  <div class="info-tooltip">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                      <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/>
+                      <path d="M7 10V7M7 5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <span class="tooltip-text">Select which audio tracks to include in export</span>
+                  </div>
+                </label>
+                <select id="audioExportTrack" class="select-input">
+                  <option value="all">All tracks (MKV only)</option>
+                  <option value="0" selected>Track 1</option>
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label>Audio bitrate</label>
+                <div class="input-with-unit">
+                  <input type="number" id="audioBitrate" min="64" step="32" value="192">
+                  <span class="unit">kbps</span>
+                </div>
+              </div>
+
+            <div class="control-group">
+              <label>Container</label>
+              <select id="container" class="select-input">
+                <option value="mp4">MP4</option>
+                <option value="mov">MOV</option>
+                <option value="mkv">MKV</option>
+                <option value="webm">WebM</option>
+                <option value="avi">AVI</option>
+              </select>
+            </div>
+
+            <!-- FFmpeg Command -->
+            <div class="control-group">
+              <label>
+                FFmpeg command
+                <div class="info-tooltip">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/>
+                    <path d="M7 10V7M7 5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                  <span class="tooltip-text">Edit to add custom FFmpeg parameters</span>
+                </div>
+              </label>
+              <textarea id="ffmpegCommand" class="ffmpeg-command" rows="4" spellcheck="false"></textarea>
+            </div>
+
+            <button id="exportBtn" class="btn btn-primary btn-large btn-full">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M10 14V6M10 6L7 9M10 6L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M4 13V15C4 15.5304 4.21071 16.0391 4.58579 16.4142C4.96086 16.7893 5.46957 17 6 17H14C14.5304 17 15.0391 16.7893 15.4142 16.4142C15.7893 16.0391 16 15.5304 16 15V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Export video
+            </button>
+
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Preset Manager Modal -->
+  <div id="presetModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Manage Export Presets</h2>
+        <button class="modal-close" id="closePresetModal">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="preset-actions">
+          <button class="btn btn-primary" id="saveNewPresetBtn">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Save Current Settings as Preset
+          </button>
+        </div>
+        <div class="preset-list" id="presetList">
+          <div class="empty-preset-message">No presets saved yet</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Save Preset Dialog -->
+  <div id="savePresetDialog" class="modal" style="display: none;">
+    <div class="modal-content modal-small">
+      <div class="modal-header">
+        <h2 id="savePresetTitle">Save Preset</h2>
+        <button class="modal-close" id="closeSavePresetDialog">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="control-group">
+          <label>Preset Name</label>
+          <input type="text" id="presetNameInput" class="text-input" placeholder="Enter preset name...">
+        </div>
+        <div class="preset-dialog-actions">
+          <button class="btn" id="cancelSavePreset">Cancel</button>
+          <button class="btn btn-primary" id="confirmSavePreset">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

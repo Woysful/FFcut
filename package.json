@@ -1,0 +1,75 @@
+{
+  "name": "ffcut",
+  "productName": "FFcut",
+  "version": "1.0.0",
+  "description": "Fast and reliable video editor with minimal functionality",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --linux --win --mac"
+  },
+  "keywords": [
+    "video",
+    "editor",
+    "ffmpeg",
+    "video-editor",
+    "trim",
+    "cut"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "fluent-ffmpeg": "^2.1.3"
+  },
+  "devDependencies": {
+    "electron": "^40.1.0",
+    "electron-builder": "^26.4.0"
+  },
+  "build": {
+    "appId": "com.ffcut.app",
+    "productName": "FFcut",
+    "copyright": "Copyright © 2026 FFcut",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "renderer.js",
+      "preload.js",
+      "index.html",
+      "styles.css",
+      "assets/**/*",
+      "!install.sh",
+      "!build.sh",
+      "!start.sh"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz",
+        "deb"
+      ],
+      "category": "Video",
+      "icon": "assets/icon.png",
+      "synopsis": "Fast and reliable video editor",
+      "description": "Simple video trimming and cropping tool built with Electron and FFmpeg"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.png"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    },
+    "publish": null
+  }
+}
