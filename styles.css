@@ -436,6 +436,11 @@ overflow: hidden;
     position: absolute;
     border: 2px solid var(--color-primary);
     box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+    cursor: move;
+}
+
+.crop-handles:active {
+    cursor: grabbing;
 }
 
 .crop-handle {

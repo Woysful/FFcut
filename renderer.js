@@ -1863,6 +1863,7 @@ let cropDragStartState = null;
 let isDraggingCropRAF = false;
 let lastCropDragEvent = null;
 
+// Handle dragging crop handles (corners and edges)
 document.querySelectorAll('.crop-handle').forEach(handle => {
     handle.addEventListener('mousedown', (e) => {
         e.preventDefault();
@@ -1882,6 +1883,28 @@ document.querySelectorAll('.crop-handle').forEach(handle => {
     });
 });
 
+// Handle dragging the entire crop area (move)
+document.querySelector('.crop-handles').addEventListener('mousedown', (e) => {
+    // Only handle if clicking on the crop-handles div itself, not on the handle buttons
+    if (e.target.classList.contains('crop-handle')) {
+        return; // Let the handle's own event handler deal with it
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    state.isDraggingCrop = 'move';
+
+    cropDragStartX = e.clientX;
+    cropDragStartY = e.clientY;
+    cropDragStartState = {
+        x: state.crop.x,
+        y: state.crop.y,
+        width: state.crop.width,
+        height: state.crop.height
+    };
+});
+
 function processCropDrag() {
     if (!isDraggingCropRAF || !lastCropDragEvent) return;
 
@@ -1898,8 +1921,20 @@ function processCropDrag() {
 
     const handle = state.isDraggingCrop;
 
+    // Move entire crop area
+    if (handle === 'move') {
+        const newX = cropDragStartState.x + deltaX;
+        const newY = cropDragStartState.y + deltaY;
+        
+        // Clamp to video boundaries
+        state.crop.x = clamp(newX, 0, videoWidth - cropDragStartState.width);
+        state.crop.y = clamp(newY, 0, videoHeight - cropDragStartState.height);
+        // Width and height stay the same
+        state.crop.width = cropDragStartState.width;
+        state.crop.height = cropDragStartState.height;
+    }
     // Corner handles
-    if (handle === 'nw') {
+    else if (handle === 'nw') {
         state.crop.x = clamp(cropDragStartState.x + deltaX, 0, cropDragStartState.x + cropDragStartState.width - 10);
         state.crop.y = clamp(cropDragStartState.y + deltaY, 0, cropDragStartState.y + cropDragStartState.height - 10);
         state.crop.width = cropDragStartState.width - (state.crop.x - cropDragStartState.x);
