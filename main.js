@@ -646,6 +646,11 @@ ipcMain.handle('get-video-info', async (event, filePath) => {
         const videoStream = metadata.streams.find(s => s.codec_type === 'video');
         const needsPreview = videoStream && !isCodecSupportedByHTML5(videoStream.codec_name);
         const multiAudio = audioStreams.length > 1;
+        
+        // Extract pixel format from video stream
+        if (videoStream && videoStream.pix_fmt) {
+            metadata.pix_fmt = videoStream.pix_fmt;
+        }
 
         if (multiAudio) {
             // Check if operation was cancelled before starting multi-audio processing
@@ -776,6 +781,8 @@ ipcMain.handle('export-video', async (event, options) => {
                     command = command.addOption('-qp', args[++i]);
                 } else if (arg === '-global_quality' && i + 1 < args.length) {
                     command = command.addOption('-global_quality', args[++i]);
+                } else if (arg === '-pix_fmt' && i + 1 < args.length) {
+                    command = command.addOption('-pix_fmt', args[++i]);
                 } else if (arg === '-map' && i + 1 < args.length) {
                     command = command.addOption('-map', args[++i]);
                 } else if (arg === '-c' && args[i + 1] === 'copy') {

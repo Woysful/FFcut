@@ -611,7 +611,7 @@ overflow: hidden;
     color: var(--color-border-strong);
     font-size: 11px;
     user-select: none;
-    margin: 0 6px;
+    margin: 0 3px;
 }
 
 .volume-control {

@@ -36,10 +36,92 @@ let state = {
         videoBitrate: 5000,
         audioBitrate: 192,
         preset: 'medium',
-        profile: 'high',
+        pixelFormat: 'auto',
         container: 'mp4',
         customCommand: ''
     }
+};
+
+// Codec pixel format support mapping
+const codecPixelFormatSupport = {
+    // H.264 codecs
+    'libx264': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'nv12', 'nv16', 'nv21', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le'],
+    'h264_nvenc': ['yuv420p', 'yuv444p', 'yuv420p10le', 'yuv444p10le'],
+    'h264_qsv': ['yuv420p', 'nv12'],
+    'h264_amf': ['yuv420p', 'nv12'],
+    'h264_vaapi': ['yuv420p', 'nv12'],
+    
+    // H.265/HEVC codecs
+    'libx265': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'gbrp', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gbrp10le', 'yuv420p12le', 'yuv422p12le', 'yuv444p12le', 'gbrp12le', 'gray', 'gray10le', 'gray12le'],
+    'hevc_nvenc': ['yuv420p', 'nv12', 'p010le', 'yuv444p', 'p016le', 'yuv444p16le'],
+    'hevc_qsv': ['yuv420p', 'yuv420p10le', 'nv12'],
+    'hevc_amf': ['yuv420p', 'yuv420p10le', 'nv12'],
+    'hevc_vaapi': ['yuv420p', 'yuv420p10le', 'nv12'],
+    
+    // VP8/VP9 codecs
+    'libvpx': ['yuv420p'],
+    'libvpx-vp9': ['yuv420p', 'yuva420p', 'yuv422p', 'yuv440p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'yuv440p10le', 'yuv444p10le', 'yuv420p12le', 'yuv422p12le', 'yuv440p12le', 'yuv444p12le', 'gbrp', 'gbrp10le', 'gbrp12le'],
+    'vp8_vaapi': ['yuv420p', 'nv12'],
+    'vp9_vaapi': ['yuv420p', 'nv12'],
+    'vp9_qsv': ['yuv420p', 'yuv420p10le'],
+    
+    // AV1 codecs
+    'libaom-av1': ['yuv420p', 'yuv422p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le'],
+    'libsvtav1': ['yuv420p', 'yuv420p10le'],
+    'av1_nvenc': ['yuv420p', 'yuv420p10le'],
+    'av1_qsv': ['yuv420p', 'yuv420p10le'],
+    'av1_amf': ['yuv420p', 'yuv420p10le'],
+    'av1_vaapi': ['yuv420p', 'yuv420p10le'],
+    
+    // ProRes codecs
+    'prores': ['yuv422p10le', 'yuv444p10le'],
+    'prores_ks': ['yuv422p10le', 'yuv444p10le'],
+    
+    // Other codecs
+    'mpeg4': ['yuv420p'],
+    'mpeg2video': ['yuv420p', 'yuv422p'],
+    'mpeg2_vaapi': ['yuv420p', 'nv12'],
+    'libtheora': ['yuv420p', 'yuv422p', 'yuv444p'],
+    'dnxhd': ['yuv422p'],
+    'huffyuv': ['yuv422p', 'yuv420p', 'yuv444p', 'rgb24', 'bgr24'],
+    'ffv1': ['yuv420p', 'yuv422p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'yuv420p12le', 'yuv422p12le', 'yuv444p12le', 'yuv420p16le', 'yuv422p16le', 'yuv444p16le', 'rgb24', 'bgr24', 'gbrp', 'gbrp10le', 'gbrp12le', 'gbrp16le']
+};
+
+// Pixel format display names and grouping
+const pixelFormatInfo = {
+    'yuv420p': { name: 'yuv420p (8-bit 4:2:0)', group: '420-8bit' },
+    'yuvj420p': { name: 'yuvj420p (8-bit 4:2:0 Full Range)', group: '420-8bit' },
+    'yuva420p': { name: 'yuva420p (8-bit 4:2:0 with Alpha)', group: '420-8bit' },
+    'yuv422p': { name: 'yuv422p (8-bit 4:2:2)', group: '422-8bit' },
+    'yuvj422p': { name: 'yuvj422p (8-bit 4:2:2 Full Range)', group: '422-8bit' },
+    'yuv440p': { name: 'yuv440p (8-bit 4:4:0)', group: '440-8bit' },
+    'yuv444p': { name: 'yuv444p (8-bit 4:4:4)', group: '444-8bit' },
+    'yuvj444p': { name: 'yuvj444p (8-bit 4:4:4 Full Range)', group: '444-8bit' },
+    'yuv420p10le': { name: 'yuv420p10le (10-bit 4:2:0)', group: '420-10bit' },
+    'yuv422p10le': { name: 'yuv422p10le (10-bit 4:2:2)', group: '422-10bit' },
+    'yuv440p10le': { name: 'yuv440p10le (10-bit 4:4:0)', group: '440-10bit' },
+    'yuv444p10le': { name: 'yuv444p10le (10-bit 4:4:4)', group: '444-10bit' },
+    'yuv420p12le': { name: 'yuv420p12le (12-bit 4:2:0)', group: '420-12bit' },
+    'yuv422p12le': { name: 'yuv422p12le (12-bit 4:2:2)', group: '422-12bit' },
+    'yuv440p12le': { name: 'yuv440p12le (12-bit 4:4:0)', group: '440-12bit' },
+    'yuv444p12le': { name: 'yuv444p12le (12-bit 4:4:4)', group: '444-12bit' },
+    'yuv420p16le': { name: 'yuv420p16le (16-bit 4:2:0)', group: '420-16bit' },
+    'yuv422p16le': { name: 'yuv422p16le (16-bit 4:2:2)', group: '422-16bit' },
+    'yuv444p16le': { name: 'yuv444p16le (16-bit 4:4:4)', group: '444-16bit' },
+    'nv12': { name: 'NV12 (8-bit 4:2:0)', group: '420-8bit' },
+    'nv16': { name: 'NV16 (8-bit 4:2:2)', group: '422-8bit' },
+    'nv21': { name: 'NV21 (8-bit 4:2:0)', group: '420-8bit' },
+    'p010le': { name: 'P010LE (10-bit 4:2:0)', group: '420-10bit' },
+    'p016le': { name: 'P016LE (16-bit 4:2:0)', group: '420-16bit' },
+    'gbrp': { name: 'GBRP (8-bit RGB Planar)', group: 'rgb-8bit' },
+    'gbrp10le': { name: 'GBRP10LE (10-bit RGB Planar)', group: 'rgb-10bit' },
+    'gbrp12le': { name: 'GBRP12LE (12-bit RGB Planar)', group: 'rgb-12bit' },
+    'gbrp16le': { name: 'GBRP16LE (16-bit RGB Planar)', group: 'rgb-16bit' },
+    'rgb24': { name: 'RGB24 (8-bit RGB)', group: 'rgb-8bit' },
+    'bgr24': { name: 'BGR24 (8-bit BGR)', group: 'rgb-8bit' },
+    'gray': { name: 'Gray (8-bit Grayscale)', group: 'gray-8bit' },
+    'gray10le': { name: 'Gray10LE (10-bit Grayscale)', group: 'gray-10bit' },
+    'gray12le': { name: 'Gray12LE (12-bit Grayscale)', group: 'gray-12bit' }
 };
 
 // ---------------------------------------------------------------------------
@@ -135,9 +217,9 @@ const crfValue = document.getElementById('crfValue');
 const videoBitrate = document.getElementById('videoBitrate');
 const audioBitrate = document.getElementById('audioBitrate');
 const encoderPreset = document.getElementById('encoderPreset');
-const encoderProfile = document.getElementById('encoderProfile');
+const pixelFormat = document.getElementById('pixelFormat');
 const presetGroup = document.getElementById('presetGroup');
-const profileGroup = document.getElementById('profileGroup');
+const pixelFormatGroup = document.getElementById('pixelFormatGroup');
 const container = document.getElementById('container');
 const ffmpegCommand = document.getElementById('ffmpegCommand');
 const exportBtn = document.getElementById('exportBtn');
@@ -216,6 +298,22 @@ function updateFileInfo() {
         document.getElementById('profileInfo').textContent = videoStream.profile;
     } else {
         document.getElementById('profileInfo').textContent = '-';
+    }
+    
+    // Pixel format
+    if (state.videoMetadata.pix_fmt) {
+        document.getElementById('pixelFormatInfo').textContent = state.videoMetadata.pix_fmt;
+    } else if (videoStream && videoStream.pix_fmt) {
+        document.getElementById('pixelFormatInfo').textContent = videoStream.pix_fmt;
+    } else {
+        document.getElementById('pixelFormatInfo').textContent = '-';
+    }
+
+    // Resolution
+    if (videoStream && videoStream.width && videoStream.height) {
+        document.getElementById('resolutionInfo').textContent = `${videoStream.width}×${videoStream.height}`;
+    } else {
+        document.getElementById('resolutionInfo').textContent = '-';
     }
 
     // Audio codec - show first audio stream info
@@ -507,10 +605,23 @@ function buildFFmpegCommandWithEncoding() {
             if (codec.includes('264') || codec.includes('265') || codec.includes('libvpx') || codec.includes('libaom')) {
                 cmd += `-preset ${state.exportSettings.preset} `;
             }
-
-            // Profile (for codecs that support it)
-            if ((codec.includes('264') || codec.includes('265')) && state.exportSettings.profile !== 'auto') {
-                cmd += `-profile:v ${state.exportSettings.profile} `;
+            
+            // Pixel format handling
+            if (state.exportSettings.pixelFormat !== 'auto') {
+                // User explicitly selected a format
+                cmd += `-pix_fmt ${state.exportSettings.pixelFormat} `;
+            } else {
+                // Auto mode: use source format if supported, otherwise fallback to yuv420p
+                const supportedFormats = codecPixelFormatSupport[codec] || ['yuv420p'];
+                const sourcePixFmt = state.videoMetadata?.pix_fmt;
+                
+                if (sourcePixFmt && supportedFormats.includes(sourcePixFmt)) {
+                    // Source format is supported, use it
+                    cmd += `-pix_fmt ${sourcePixFmt} `;
+                } else {
+                    // Fallback to yuv420p (most compatible)
+                    cmd += `-pix_fmt yuv420p `;
+                }
             }
         }
     }
@@ -634,14 +745,73 @@ function initializeCodecUI() {
     codec.includes('libvpx') || codec.includes('libaom');
     presetGroup.style.display = (supportsPreset && !videoCopy) ? 'block' : 'none';
 
-    const supportsProfile = codec.includes('264') || codec.includes('265');
-    profileGroup.style.display = (supportsProfile && !videoCopy) ? 'block' : 'none';
+    // Always show pixel format selector when encoding video
+    pixelFormatGroup.style.display = !videoCopy ? 'block' : 'none';
 
     // Audio codec settings
     const audioCopy = state.exportSettings.audioCodec === 'copy';
     const audioBitrateGroup = audioBitrate.closest('.control-group');
     if (audioBitrateGroup) {
         audioBitrateGroup.style.display = audioCopy ? 'none' : 'block';
+    }
+}
+
+// Update pixel format options based on selected codec
+function updatePixelFormatOptions(codec) {
+    const supportedFormats = codecPixelFormatSupport[codec] || ['yuv420p']; // Default to yuv420p if codec not found
+    const currentValue = pixelFormat.value;
+    
+    // Save current selection
+    const wasAuto = currentValue === 'auto';
+    
+    // Clear existing options except "Auto"
+    pixelFormat.innerHTML = '<option value="auto">Auto (from source)</option>';
+    
+    // Group formats by category
+    const groups = {
+        '420-8bit': { label: '8-bit 4:2:0 (Most Compatible)', formats: [] },
+        '422-8bit': { label: '8-bit 4:2:2 (Better Quality)', formats: [] },
+        '444-8bit': { label: '8-bit 4:4:4 (Highest Quality)', formats: [] },
+        '420-10bit': { label: '10-bit 4:2:0', formats: [] },
+        '422-10bit': { label: '10-bit 4:2:2', formats: [] },
+        '444-10bit': { label: '10-bit 4:4:4', formats: [] },
+        '420-12bit': { label: '12-bit 4:2:0', formats: [] },
+        '422-12bit': { label: '12-bit 4:2:2', formats: [] },
+        '444-12bit': { label: '12-bit 4:4:4', formats: [] }
+    };
+    
+    // Sort supported formats into groups
+    supportedFormats.forEach(format => {
+        const info = pixelFormatInfo[format];
+        if (info && groups[info.group]) {
+            groups[info.group].formats.push({ value: format, name: info.name });
+        }
+    });
+    
+    // Add optgroups with formats
+    Object.keys(groups).forEach(groupKey => {
+        const group = groups[groupKey];
+        if (group.formats.length > 0) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = group.label;
+            
+            group.formats.forEach(format => {
+                const option = document.createElement('option');
+                option.value = format.value;
+                option.textContent = format.name;
+                optgroup.appendChild(option);
+            });
+            
+            pixelFormat.appendChild(optgroup);
+        }
+    });
+    
+    // Restore selection if still available, otherwise reset to auto
+    if (!wasAuto && supportedFormats.includes(currentValue)) {
+        pixelFormat.value = currentValue;
+    } else {
+        pixelFormat.value = 'auto';
+        state.exportSettings.pixelFormat = 'auto';
     }
 }
 
@@ -844,6 +1014,11 @@ async function importVideo(filePath) {
 
             // Initialize UI elements visibility based on default codec settings
             initializeCodecUI();
+            
+            // Update pixel format options based on current codec
+            if (state.exportSettings.videoCodec !== 'copy') {
+                updatePixelFormatOptions(state.exportSettings.videoCodec);
+            }
 
             // Update FFmpeg command
             updateFFmpegCommand();
@@ -2011,9 +2186,13 @@ videoCodec.addEventListener('change', (e) => {
     codec.includes('libvpx') || codec.includes('libaom');
     presetGroup.style.display = (supportsPreset && !isCopy) ? 'block' : 'none';
 
-    // Update profile visibility
-    const supportsProfile = codec.includes('264') || codec.includes('265');
-    profileGroup.style.display = (supportsProfile && !isCopy) ? 'block' : 'none';
+    // Update pixel format visibility - show for all encoding codecs
+    pixelFormatGroup.style.display = !isCopy ? 'block' : 'none';
+    
+    // Update available pixel formats based on codec
+    if (!isCopy) {
+        updatePixelFormatOptions(codec);
+    }
 
     updateFFmpegCommand();
 });
@@ -2069,8 +2248,8 @@ encoderPreset.addEventListener('change', (e) => {
     updateFFmpegCommand();
 });
 
-encoderProfile.addEventListener('change', (e) => {
-    state.exportSettings.profile = e.target.value;
+pixelFormat.addEventListener('change', (e) => {
+    state.exportSettings.pixelFormat = e.target.value;
     updateFFmpegCommand();
 });
 
@@ -2770,7 +2949,7 @@ function loadPreset(name) {
     videoBitrate.value = preset.videoBitrate || 5000;
     audioBitrate.value = preset.audioBitrate || 192;
     encoderPreset.value = preset.preset || 'medium';
-    encoderProfile.value = preset.profile || 'high';
+    pixelFormat.value = preset.pixelFormat || 'auto';
     container.value = preset.container || 'mp4';
     
     // Update state
@@ -2817,7 +2996,7 @@ function getCurrentExportSettings() {
         videoBitrate: parseInt(videoBitrate.value),
         audioBitrate: parseInt(audioBitrate.value),
         preset: encoderPreset.value,
-        profile: encoderProfile.value,
+        pixelFormat: pixelFormat.value,
         container: container.value,
         customCommand: ffmpegCommand.value
     };

@@ -126,17 +126,27 @@
       <!-- File Info in Menu Bar -->
       <div class="menu-file-info" id="menuFileInfo">
         <div class="info-item">
-          <span class="info-label">Video</span>
+          <span class="info-label">Video:</span>
           <span class="info-value" id="videoCodecInfo">-</span>
         </div>
         <div class="info-separator">•</div>
         <div class="info-item">
-          <span class="info-label">Profile</span>
+          <!-- <span class="info-label">Profile</span> -->
           <span class="info-value" id="profileInfo">-</span>
         </div>
         <div class="info-separator">•</div>
         <div class="info-item">
-          <span class="info-label">Audio</span>
+          <!-- <span class="info-label">Pixel Format</span> -->
+          <span class="info-value" id="pixelFormatInfo">-</span>
+        </div>
+        <div class="info-separator">•</div>
+        <div class="info-item">
+          <!-- <span class="info-label">Resolution</span> -->
+          <span class="info-value" id="resolutionInfo">-</span>
+        </div>
+        <div class="info-separator">•</div>
+        <div class="info-item">
+          <span class="info-label">Audio:</span>
           <span class="info-value" id="audioCodecInfo">-</span>
         </div>
         <div class="info-separator">•</div>
@@ -144,15 +154,16 @@
           <span class="info-label">FPS</span>
           <span class="info-value" id="fpsInfo">-</span>
         </div>
+
         <div class="info-separator">•</div>
         <div class="info-item">
-          <span class="info-label">Bitrate</span>
-          <span class="info-value" id="bitrateInfo">-</span>
+          <span class="info-label">Size:</span>
+          <span class="info-value" id="fileSizeInfo">-</span>
         </div>
         <div class="info-separator">•</div>
         <div class="info-item">
-          <span class="info-label">Size</span>
-          <span class="info-value" id="fileSizeInfo">-</span>
+          <!-- <span class="info-label">Bitrate</span> -->
+          <span class="info-value" id="bitrateInfo">-</span>
         </div>
       </div>
 
@@ -512,26 +523,46 @@
                 </select>
               </div>
 
-              <!-- Profile -->
-              <div class="control-group" id="profileGroup">
+              <!-- Pixel Format -->
+              <div class="control-group" id="pixelFormatGroup" style="display: none;">
                 <label>
-                  Encoder profile
+                  Pixel format
                   <div class="info-tooltip">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                       <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/>
                       <path d="M7 10V7M7 5V4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
                     </svg>
-                    <span class="tooltip-text">Compatibility vs features trade-off</span>
+                    <span class="tooltip-text">Chroma subsampling and bit depth</span>
                   </div>
                 </label>
-                <select id="encoderProfile" class="select-input">
-                  <option value="auto">Auto</option>
-                  <option value="baseline">Baseline (max compatibility)</option>
-                  <option value="main">Main (good compatibility)</option>
-                  <option value="high" selected>High (best quality)</option>
-                  <option value="high10">High 10-bit</option>
-                  <option value="high422">High 4:2:2</option>
-                  <option value="high444">High 4:4:4</option>
+                <select id="pixelFormat" class="select-input">
+                  <option value="auto" selected>Auto (from source)</option>
+                  <optgroup label="8-bit 4:2:0 (Most Compatible)">
+                    <option value="yuv420p">yuv420p (8-bit 4:2:0)</option>
+                    <option value="yuvj420p">yuvj420p (8-bit 4:2:0 Full Range)</option>
+                  </optgroup>
+                  <optgroup label="8-bit 4:2:2 (Better Quality)">
+                    <option value="yuv422p">yuv422p (8-bit 4:2:2)</option>
+                    <option value="yuvj422p">yuvj422p (8-bit 4:2:2 Full Range)</option>
+                  </optgroup>
+                  <optgroup label="8-bit 4:4:4 (Highest Quality)">
+                    <option value="yuv444p">yuv444p (8-bit 4:4:4)</option>
+                    <option value="yuvj444p">yuvj444p (8-bit 4:4:4 Full Range)</option>
+                  </optgroup>
+                  <optgroup label="10-bit 4:2:0">
+                    <option value="yuv420p10le">yuv420p10le (10-bit 4:2:0)</option>
+                  </optgroup>
+                  <optgroup label="10-bit 4:2:2">
+                    <option value="yuv422p10le">yuv422p10le (10-bit 4:2:2)</option>
+                  </optgroup>
+                  <optgroup label="10-bit 4:4:4">
+                    <option value="yuv444p10le">yuv444p10le (10-bit 4:4:4)</option>
+                  </optgroup>
+                  <optgroup label="12-bit">
+                    <option value="yuv420p12le">yuv420p12le (12-bit 4:2:0)</option>
+                    <option value="yuv422p12le">yuv422p12le (12-bit 4:2:2)</option>
+                    <option value="yuv444p12le">yuv444p12le (12-bit 4:4:4)</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -563,7 +594,7 @@
               <!-- Audio Track Selection for Export -->
               <div class="control-group" id="audioExportTrackGroup" style="display: none;">
                 <label>
-                  Audio tracks for export
+                  Audio tracks
                   <div class="info-tooltip">
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                       <circle cx="7" cy="7" r="6" stroke="currentColor" stroke-width="1.5"/>
