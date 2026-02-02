@@ -573,9 +573,19 @@
                   </div>
                 </label>
                 <select id="audioExportTrack" class="select-input">
-                  <option value="all">All tracks (MKV only)</option>
-                  <option value="0" selected>Track 1</option>
+                  <option value="all" selected>All tracks</option>
+                  <option value="pick-export">Pick to export</option>
+                  <option value="pick-merge">Pick to merge</option>
+                  <option value="none">No sound</option>
                 </select>
+              </div>
+
+              <!-- Audio Track Picker (shown when Pick to export/merge is selected) -->
+              <div class="control-group" id="audioTrackPickerGroup" style="display: none;">
+                <label id="audioTrackPickerLabel">Select tracks to export</label>
+                <div id="audioTrackPicker" class="audio-track-picker">
+                  <!-- Track checkboxes will be dynamically added here -->
+                </div>
               </div>
 
               <div class="control-group">

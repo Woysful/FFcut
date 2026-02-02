@@ -29,7 +29,8 @@ let state = {
     exportSettings: {
         videoCodec: 'copy',
         audioCodec: 'copy',
-        audioTrack: '0',
+        audioTrack: 'all', // Changed default from '0' to 'all'
+        selectedAudioTracks: [], // New: array of selected track indices for pick-export/pick-merge
         qualityMode: 'crf',
         crf: 23,
         videoBitrate: 5000,
@@ -104,6 +105,9 @@ const audioTrackControl = document.getElementById('audioTrackControl');
 const audioTrackSelect = document.getElementById('audioTrackSelect');
 const audioExportTrackGroup = document.getElementById('audioExportTrackGroup');
 const audioExportTrack = document.getElementById('audioExportTrack');
+const audioTrackPickerGroup = document.getElementById('audioTrackPickerGroup');
+const audioTrackPicker = document.getElementById('audioTrackPicker');
+const audioTrackPickerLabel = document.getElementById('audioTrackPickerLabel');
 
 const trimStartHandle = document.getElementById('trimStart');
 const trimEndHandle = document.getElementById('trimEnd');
@@ -257,6 +261,7 @@ function setupAudioTrackSelector() {
     // Always clear the select elements first
     audioTrackSelect.innerHTML = '';
     audioExportTrack.innerHTML = '';
+    audioTrackPicker.innerHTML = '';
 
     // Always show audio track controls
     audioTrackControl.style.display = 'flex';
@@ -266,6 +271,7 @@ function setupAudioTrackSelector() {
         // Show audio track selector for preview
         state.selectedAudioTrack = 0;
 
+        // Populate preview track selector
         state.audioStreams.forEach((stream, index) => {
             const option = document.createElement('option');
             option.value = index;
@@ -279,28 +285,39 @@ function setupAudioTrackSelector() {
             audioTrackSelect.appendChild(option);
         });
 
-        // Add "All tracks" option for MKV (only if multiple tracks exist)
-        if (state.audioStreams.length > 1) {
-            const allOption = document.createElement('option');
-            allOption.value = 'all';
-            allOption.textContent = 'All tracks (MKV, AVI only)';
-            audioExportTrack.appendChild(allOption);
-        }
+        // Populate export track selector with new options
+        const allOption = document.createElement('option');
+        allOption.value = 'all';
+        allOption.textContent = 'All tracks';
+        audioExportTrack.appendChild(allOption);
 
-        // Add individual tracks
-        state.audioStreams.forEach((stream, index) => {
-            const option = document.createElement('option');
-            option.value = index;
+        const pickExportOption = document.createElement('option');
+        pickExportOption.value = 'pick-export';
+        pickExportOption.textContent = 'Pick to export';
+        audioExportTrack.appendChild(pickExportOption);
 
-            const codec = stream.codec_name.toUpperCase();
-            const channels = stream.channels ? ` ${stream.channels}ch` : '';
-            const language = stream.tags && stream.tags && stream.tags.language ? ` (${stream.tags.language})` : '';
-            const title = stream.tags && stream.tags && stream.tags.title ? ` - ${stream.tags.title}` : '';
+        const pickMergeOption = document.createElement('option');
+        pickMergeOption.value = 'pick-merge';
+        pickMergeOption.textContent = 'Pick to merge';
+        audioExportTrack.appendChild(pickMergeOption);
 
-            option.textContent = `Track ${index + 1}: ${codec}${channels}${language}${title}`;
-            if (index === 0) option.selected = true;
-            audioExportTrack.appendChild(option);
-        });
+        const noSoundOption = document.createElement('option');
+        noSoundOption.value = 'none';
+        noSoundOption.textContent = 'No sound';
+        audioExportTrack.appendChild(noSoundOption);
+
+        // Set default to 'all'
+        audioExportTrack.value = 'all';
+        state.exportSettings.audioTrack = 'all';
+        
+        // Initialize selected tracks array
+        state.exportSettings.selectedAudioTracks = [];
+        
+        // Hide picker initially
+        audioTrackPickerGroup.style.display = 'none';
+        
+        // Create track picker checkboxes
+        createAudioTrackPicker();
     } else {
         // No audio streams - show "No Sound" option
         const noSoundOption = document.createElement('option');
@@ -312,7 +329,67 @@ function setupAudioTrackSelector() {
         noSoundExportOption.value = 'none';
         noSoundExportOption.textContent = 'No Sound';
         audioExportTrack.appendChild(noSoundExportOption);
+        
+        audioTrackPickerGroup.style.display = 'none';
     }
+}
+
+// Create audio track picker with checkboxes
+function createAudioTrackPicker() {
+    audioTrackPicker.innerHTML = '';
+    
+    state.audioStreams.forEach((stream, index) => {
+        const trackItem = document.createElement('div');
+        trackItem.className = 'audio-track-item';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `audio-track-${index}`;
+        checkbox.value = index;
+        checkbox.checked = false;
+        
+        const trackInfo = document.createElement('div');
+        trackInfo.className = 'audio-track-info';
+        
+        const trackName = document.createElement('div');
+        trackName.className = 'audio-track-name';
+        const codec = stream.codec_name.toUpperCase();
+        const language = stream.tags && stream.tags.language ? ` (${stream.tags.language})` : '';
+        const title = stream.tags && stream.tags.title ? ` - ${stream.tags.title}` : '';
+        trackName.textContent = `Track ${index + 1}${language}${title}`;
+        
+        const trackDetails = document.createElement('div');
+        trackDetails.className = 'audio-track-details';
+        const channels = stream.channels ? `${stream.channels}ch` : 'Unknown channels';
+        const sampleRate = stream.sample_rate ? `${(stream.sample_rate / 1000).toFixed(1)}kHz` : '';
+        const bitrate = stream.bit_rate ? `${(stream.bit_rate / 1000).toFixed(0)}kbps` : '';
+        trackDetails.textContent = `${codec} • ${channels}${sampleRate ? ` • ${sampleRate}` : ''}${bitrate ? ` • ${bitrate}` : ''}`;
+        
+        trackInfo.appendChild(trackName);
+        trackInfo.appendChild(trackDetails);
+        
+        trackItem.appendChild(checkbox);
+        trackItem.appendChild(trackInfo);
+        
+        // Make the whole item clickable
+        trackItem.addEventListener('click', (e) => {
+            if (e.target !== checkbox) {
+                checkbox.checked = !checkbox.checked;
+                updateSelectedAudioTracks();
+            }
+        });
+        
+        checkbox.addEventListener('change', updateSelectedAudioTracks);
+        
+        audioTrackPicker.appendChild(trackItem);
+    });
+}
+
+// Update selected audio tracks array
+function updateSelectedAudioTracks() {
+    const checkboxes = audioTrackPicker.querySelectorAll('input[type="checkbox"]:checked');
+    state.exportSettings.selectedAudioTracks = Array.from(checkboxes).map(cb => parseInt(cb.value));
+    updateFFmpegCommand();
 }
 
 // Build FFmpeg Command
@@ -333,14 +410,47 @@ function buildFFmpegCommand() {
         }
 
         // Handle audio track selection for lossless mode
-        if (state.exportSettings.audioTrack === 'none') {
+        const audioTrackMode = state.exportSettings.audioTrack;
+        
+        if (audioTrackMode === 'none') {
             cmd += ` -map 0:v:0 -an`;
-        } else if (state.exportSettings.audioTrack !== 'all' && state.audioStreams.length > 1) {
+        } else if (audioTrackMode === 'all') {
+            // All tracks - explicitly map video and all audio streams
+            cmd += ` -map 0:v:0 -map 0:a`;
+        } else if (audioTrackMode === 'pick-export') {
+            if (state.exportSettings.selectedAudioTracks.length > 0) {
+                cmd += ` -map 0:v:0`;
+                state.exportSettings.selectedAudioTracks.forEach(trackIndex => {
+                    cmd += ` -map 0:a:${trackIndex}`;
+                });
+            } else {
+                cmd += ` -map 0:v:0 -an`;
+            }
+        } else if (audioTrackMode === 'pick-merge') {
+            // Cannot merge with copy codec, need to re-encode
+            // This will be handled in the encoding section below
+            // For now, just map video
+            if (state.exportSettings.selectedAudioTracks.length > 0) {
+                // Merge requires encoding, so we can't use full lossless mode
+                // Fall through to encoding section
+                return buildFFmpegCommandWithEncoding();
+            } else {
+                cmd += ` -map 0:v:0 -an`;
+            }
+        } else if (state.audioStreams.length > 1 && audioTrackMode !== 'all') {
+            // Legacy single track selection
             cmd += ` -map 0:v:0 -map 0:a:${state.exportSettings.audioTrack}`;
         }
 
         return cmd;
     }
+
+    return buildFFmpegCommandWithEncoding();
+}
+
+function buildFFmpegCommandWithEncoding() {
+    const videoCopy = state.exportSettings.videoCodec === 'copy';
+    const audioCopy = state.exportSettings.audioCodec === 'copy';
 
     let cmd = '';
 
@@ -407,13 +517,13 @@ function buildFFmpegCommand() {
 
     // Audio track selection
     const selectedContainer = state.exportSettings.container.toLowerCase();
-    const multiTrackContainers = ['mkv', 'avi', 'mov'];
+    const audioTrackMode = state.exportSettings.audioTrack;
 
-    if (state.exportSettings.audioTrack === 'none') {
+    if (audioTrackMode === 'none') {
         // No audio export - video only
         cmd += `-map 0:v:0 -an `;
-    } else if (state.exportSettings.audioTrack === 'all' && multiTrackContainers.includes(selectedContainer)) {
-        // Export all audio tracks (only for supported containers)
+    } else if (audioTrackMode === 'all') {
+        // Export all audio tracks
         cmd += `-map 0:v:0 -map 0:a `;
 
         if (audioCopy) {
@@ -425,10 +535,67 @@ function buildFFmpegCommand() {
                 cmd += `-b:a ${state.exportSettings.audioBitrate}k `;
             }
         }
+    } else if (audioTrackMode === 'pick-export') {
+        // Export selected audio tracks
+        if (state.exportSettings.selectedAudioTracks.length > 0) {
+            cmd += `-map 0:v:0 `;
+            
+            state.exportSettings.selectedAudioTracks.forEach(trackIndex => {
+                cmd += `-map 0:a:${trackIndex} `;
+            });
+
+            if (audioCopy) {
+                cmd += `-c:a copy `;
+            } else {
+                cmd += `-c:a ${state.exportSettings.audioCodec} `;
+
+                if (!state.exportSettings.audioCodec.startsWith('pcm')) {
+                    cmd += `-b:a ${state.exportSettings.audioBitrate}k `;
+                }
+            }
+        } else {
+            // No tracks selected, default to video only
+            cmd += `-map 0:v:0 -an `;
+        }
+    } else if (audioTrackMode === 'pick-merge') {
+        // Merge selected audio tracks into one
+        if (state.exportSettings.selectedAudioTracks.length > 0) {
+            if (state.exportSettings.selectedAudioTracks.length === 1) {
+                // Single track - just map it normally
+                cmd += `-map 0:v:0 -map 0:a:${state.exportSettings.selectedAudioTracks[0]} `;
+                
+                if (audioCopy) {
+                    cmd += `-c:a copy `;
+                } else {
+                    cmd += `-c:a ${state.exportSettings.audioCodec} `;
+                    if (!state.exportSettings.audioCodec.startsWith('pcm')) {
+                        cmd += `-b:a ${state.exportSettings.audioBitrate}k `;
+                    }
+                }
+            } else {
+                // Multiple tracks - merge them using amix filter
+                // amix is better than amerge for mixing multiple audio streams
+                const trackInputs = state.exportSettings.selectedAudioTracks
+                    .map(trackIndex => `[0:a:${trackIndex}]`)
+                    .join('');
+                
+                cmd += `-filter_complex "${trackInputs}amix=inputs=${state.exportSettings.selectedAudioTracks.length}:duration=longest:dropout_transition=0[aout]" `;
+                cmd += `-map 0:v:0 -map [aout] `;
+                
+                // Always need to encode when merging
+                cmd += `-c:a ${state.exportSettings.audioCodec} `;
+                if (!state.exportSettings.audioCodec.startsWith('pcm')) {
+                    cmd += `-b:a ${state.exportSettings.audioBitrate}k `;
+                }
+            }
+        } else {
+            // No tracks selected, default to video only
+            cmd += `-map 0:v:0 -an `;
+        }
     } else {
-        // Export single audio track
+        // Legacy support: single track by index (should not be used anymore)
         if (state.audioStreams.length > 0) {
-            const trackIndex = state.exportSettings.audioTrack === 'all' ? 0 : parseInt(state.exportSettings.audioTrack);
+            const trackIndex = parseInt(audioTrackMode);
             cmd += `-map 0:v:0 -map 0:a:${trackIndex} `;
         }
 
@@ -1930,7 +2097,33 @@ audioTrackSelect.addEventListener('change', (e) => {
 
 // Audio Track Selection for Export
 audioExportTrack.addEventListener('change', (e) => {
-    state.exportSettings.audioTrack = e.target.value;
+    const value = e.target.value;
+    state.exportSettings.audioTrack = value;
+    
+    // Show/hide track picker based on selection
+    if (value === 'pick-export') {
+        audioTrackPickerGroup.style.display = 'block';
+        audioTrackPickerLabel.textContent = 'Select tracks to export';
+        
+        // Clear all checkboxes
+        audioTrackPicker.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.checked = false;
+        });
+        state.exportSettings.selectedAudioTracks = [];
+    } else if (value === 'pick-merge') {
+        audioTrackPickerGroup.style.display = 'block';
+        audioTrackPickerLabel.textContent = 'Select tracks to merge';
+        
+        // Clear all checkboxes
+        audioTrackPicker.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.checked = false;
+        });
+        state.exportSettings.selectedAudioTracks = [];
+    } else {
+        audioTrackPickerGroup.style.display = 'none';
+        state.exportSettings.selectedAudioTracks = [];
+    }
+    
     updateFFmpegCommand();
 });
 
@@ -2535,6 +2728,7 @@ function loadPreset(name) {
     // Update UI elements
     videoCodec.value = preset.videoCodec || 'copy';
     audioCodec.value = preset.audioCodec || 'copy';
+    audioExportTrack.value = preset.audioTrack || 'all';
     qualityMode.value = preset.qualityMode || 'crf';
     crfSlider.value = preset.crf || 23;
     crfValue.value = preset.crf || 23;
@@ -2547,10 +2741,31 @@ function loadPreset(name) {
     // Update state
     state.exportSettings = { ...preset };
     
+    // Handle audio track picker visibility and restore selected tracks
+    if (preset.audioTrack === 'pick-export' || preset.audioTrack === 'pick-merge') {
+        audioTrackPickerGroup.style.display = 'block';
+        audioTrackPickerLabel.textContent = preset.audioTrack === 'pick-export' 
+            ? 'Select tracks to export' 
+            : 'Select tracks to merge';
+        
+        // Restore selected tracks
+        if (preset.selectedAudioTracks && preset.selectedAudioTracks.length > 0) {
+            audioTrackPicker.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                const trackIndex = parseInt(cb.value);
+                cb.checked = preset.selectedAudioTracks.includes(trackIndex);
+            });
+        }
+    } else {
+        audioTrackPickerGroup.style.display = 'none';
+    }
+    
     // Dispatch change events to trigger UI updates
     videoCodec.dispatchEvent(new Event('change'));
     audioCodec.dispatchEvent(new Event('change'));
     qualityMode.dispatchEvent(new Event('change'));
+    audioExportTrack.dispatchEvent(new Event('change'));
+    
+    updateFFmpegCommand();
     
     console.log(`Loaded preset: ${name}`);
 }
@@ -2561,6 +2776,7 @@ function getCurrentExportSettings() {
         videoCodec: videoCodec.value,
         audioCodec: audioCodec.value,
         audioTrack: audioExportTrack.value,
+        selectedAudioTracks: [...state.exportSettings.selectedAudioTracks], // Save selected tracks
         qualityMode: qualityMode.value,
         crf: parseInt(crfSlider.value),
         videoBitrate: parseInt(videoBitrate.value),

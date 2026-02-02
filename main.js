@@ -763,6 +763,9 @@ ipcMain.handle('export-video', async (event, options) => {
                     command = command.audioBitrate(args[++i]);
                 } else if (arg === '-vf' && i + 1 < args.length) {
                     command = command.videoFilters(args[++i].replace(/"/g, ''));
+                } else if (arg === '-filter_complex' && i + 1 < args.length) {
+                    // Handle filter_complex - remove quotes if present
+                    command = command.complexFilter(args[++i].replace(/"/g, ''));
                 } else if (arg === '-preset' && i + 1 < args.length) {
                     command = command.addOption('-preset', args[++i]);
                 } else if (arg === '-crf' && i + 1 < args.length) {
