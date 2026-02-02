@@ -20,7 +20,7 @@
     "trim",
     "cut"
   ],
-  "author": "",
+  "author": "FFcut <woysful@outlook.com>",
   "license": "MIT",
   "dependencies": {
     "fluent-ffmpeg": "^2.1.3"
