@@ -512,7 +512,7 @@ app.on('open-file', (event, filePath) => {
 
 // Handle app ready
 app.whenReady().then(() => {
-    console.log('FFcut v1.0.0 starting...');
+    console.log('FFcut v1.1.0 starting...');
 
     // Single-instance lock: if a second "FFcut file.mp4" is launched while
     // we are already running, forward the path here and quit the new one.

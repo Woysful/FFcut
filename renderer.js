@@ -2645,13 +2645,15 @@ document.getElementById('menuAbout').addEventListener('click', () => {
     } else {
         platformStr = 'Linux';
     }
-    alert(`FFcut v1.0.0
+    alert(`FFcut v1.1.0
 
     Fast and reliable video editor
     Built with Electron 40.1.0 + FFmpeg
 
     Platform: ${platformStr}
-    License: MIT`);
+    License: MIT
+
+    GitHub: https://github.com/Woysful/FFcut`);
 });
 
 function closeAllMenus() {
