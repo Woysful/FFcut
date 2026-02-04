@@ -5,8 +5,12 @@ const ffmpeg = require('fluent-ffmpeg');
 const fs = require('fs').promises;
 const fsSync = require('fs');
 const os = require('os');
+const ContextMenuManager = require('./context-menu-manager');
 
 let mainWindow;
+
+// Initialize context menu manager
+const contextMenuManager = new ContextMenuManager();
 
 // Capture the file path passed via CLI on first launch.
 // On Linux/Windows: process.argv = [electron, app.js, /path/to/file.mp4]
@@ -540,6 +544,24 @@ app.whenReady().then(() => {
 
     createWindow();
 
+    // Check and update context menu path if needed (e.g., AppImage moved)
+    (async () => {
+        try {
+            const needsUpdate = await contextMenuManager.needsPathUpdate();
+            if (needsUpdate) {
+                console.log('Context menu path outdated, updating...');
+                const result = await contextMenuManager.updatePath();
+                if (result.success) {
+                    console.log('Context menu path updated successfully');
+                } else {
+                    console.error('Failed to update context menu path:', result.error);
+                }
+            }
+        } catch (err) {
+            console.error('Error checking context menu path:', err);
+        }
+    })();
+
     // Forward the initial CLI path (or a pending macOS open-file path) to the
     // renderer once it is ready to receive IPC messages.
     const fileToOpen = cliFilePath || pendingOpenFile;
@@ -947,6 +969,67 @@ ipcMain.handle('rename-preset', async (event, { oldName, newName }) => {
         return { success: true };
     } catch (err) {
         console.error('Error renaming preset:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+// Context menu integration handlers
+ipcMain.handle('context-menu-is-enabled', async () => {
+    try {
+        const enabled = await contextMenuManager.isEnabled();
+        return { success: true, enabled };
+    } catch (err) {
+        console.error('Error checking context menu status:', err);
+        return { success: false, error: err.message, enabled: false };
+    }
+});
+
+ipcMain.handle('context-menu-enable', async () => {
+    try {
+        const result = await contextMenuManager.enable();
+        return { success: true, ...result };
+    } catch (err) {
+        console.error('Error enabling context menu:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('context-menu-disable', async () => {
+    try {
+        const result = await contextMenuManager.disable();
+        return { success: true, ...result };
+    } catch (err) {
+        console.error('Error disabling context menu:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('context-menu-get-info', async () => {
+    try {
+        const info = contextMenuManager.getPlatformInfo();
+        return { success: true, ...info };
+    } catch (err) {
+        console.error('Error getting context menu info:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('context-menu-needs-path-update', async () => {
+    try {
+        const needsUpdate = await contextMenuManager.needsPathUpdate();
+        return { success: true, needsUpdate };
+    } catch (err) {
+        console.error('Error checking if context menu needs path update:', err);
+        return { success: false, error: err.message, needsUpdate: false };
+    }
+});
+
+ipcMain.handle('context-menu-update-path', async () => {
+    try {
+        const result = await contextMenuManager.updatePath();
+        return result;
+    } catch (err) {
+        console.error('Error updating context menu path:', err);
         return { success: false, error: err.message };
     }
 });

@@ -86,6 +86,14 @@
             Keyboard Shortcuts
           </div>
           <div class="menu-divider"></div>
+          <div class="menu-option" id="menuSettings">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 12C11.1046 12 12 11.1046 12 10C12 8.89543 11.1046 8 10 8C8.89543 8 8 8.89543 8 10C8 11.1046 8.89543 12 10 12Z" stroke="currentColor" stroke-width="2"/>
+              <path d="M16.5 10C16.5 10.3 16.4 10.6 16.3 10.9L17.8 12.1C17.9 12.2 18 12.4 17.9 12.5L16.5 15C16.4 15.2 16.2 15.2 16 15.1L14.2 14.4C13.8 14.7 13.4 15 13 15.2L12.7 17.1C12.7 17.3 12.5 17.5 12.3 17.5H9.7C9.5 17.5 9.3 17.3 9.3 17.1L9 15.2C8.6 15 8.2 14.7 7.8 14.4L6 15.1C5.8 15.2 5.6 15.2 5.5 15L4.1 12.5C4 12.3 4.1 12.2 4.2 12.1L5.7 10.9C5.6 10.6 5.5 10.3 5.5 10C5.5 9.7 5.6 9.4 5.7 9.1L4.2 7.9C4.1 7.8 4 7.6 4.1 7.5L5.5 5C5.6 4.8 5.8 4.8 6 4.9L7.8 5.6C8.2 5.3 8.6 5 9 4.8L9.3 2.9C9.3 2.7 9.5 2.5 9.7 2.5H12.3C12.5 2.5 12.7 2.7 12.7 2.9L13 4.8C13.4 5 13.8 5.3 14.2 5.6L16 4.9C16.2 4.8 16.4 4.8 16.5 5L17.9 7.5C18 7.7 17.9 7.8 17.8 7.9L16.3 9.1C16.4 9.4 16.5 9.7 16.5 10Z" stroke="currentColor" stroke-width="2"/>
+            </svg>
+            Settings
+          </div>
+          <div class="menu-divider"></div>
           <div class="menu-option" id="menuAbout">
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
               <circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="2"/>
@@ -713,6 +721,38 @@
         <div class="preset-dialog-actions">
           <button class="btn" id="cancelSavePreset">Cancel</button>
           <button class="btn btn-primary" id="confirmSavePreset">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Dialog -->
+  <div id="settingsDialog" class="modal" style="display: none;">
+    <div class="modal-content modal-small">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button class="modal-close" id="closeSettingsDialog">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M15 5L5 15M5 5L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="settings-section">
+          <h3>System Integration</h3>
+          <div class="settings-item">
+            <div class="settings-item-info">
+              <label class="settings-label">Context Menu Integration</label>
+              <p class="settings-description" id="contextMenuDescription">
+                Loading...
+              </p>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="contextMenuToggle">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div id="contextMenuStatus" class="settings-status" style="display: none;"></div>
         </div>
       </div>
     </div>

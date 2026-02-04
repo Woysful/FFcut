@@ -2635,6 +2635,104 @@ document.getElementById('menuShortcuts').addEventListener('click', () => {
     Shift+A - Toggle timeline lock`);
 });
 
+// Settings dialog
+let contextMenuEnabled = false;
+
+async function loadSettingsDialog() {
+    try {
+        // Get platform info
+        const infoResult = await window.electronAPI.contextMenu.getInfo();
+        if (infoResult.success) {
+            const description = document.getElementById('contextMenuDescription');
+            description.textContent = infoResult.description;
+        }
+
+        // Get current status
+        const statusResult = await window.electronAPI.contextMenu.isEnabled();
+        if (statusResult.success) {
+            contextMenuEnabled = statusResult.enabled;
+            document.getElementById('contextMenuToggle').checked = contextMenuEnabled;
+        }
+    } catch (err) {
+        console.error('Error loading settings:', err);
+    }
+}
+
+function showSettingsDialog() {
+    document.getElementById('settingsDialog').style.display = 'flex';
+    loadSettingsDialog();
+}
+
+function hideSettingsDialog() {
+    document.getElementById('settingsDialog').style.display = 'none';
+    document.getElementById('contextMenuStatus').style.display = 'none';
+}
+
+function showSettingsStatus(message, isError = false) {
+    const status = document.getElementById('contextMenuStatus');
+    status.textContent = message;
+    status.className = 'settings-status ' + (isError ? 'error' : 'success');
+    status.style.display = 'block';
+
+    // Hide after 5 seconds
+    setTimeout(() => {
+        status.style.display = 'none';
+    }, 5000);
+}
+
+document.getElementById('menuSettings').addEventListener('click', () => {
+    closeAllMenus();
+    showSettingsDialog();
+});
+
+document.getElementById('closeSettingsDialog').addEventListener('click', hideSettingsDialog);
+
+document.getElementById('settingsDialog').addEventListener('click', (e) => {
+    if (e.target === document.getElementById('settingsDialog')) {
+        hideSettingsDialog();
+    }
+});
+
+document.getElementById('contextMenuToggle').addEventListener('change', async (e) => {
+    const toggle = e.target;
+    const shouldEnable = toggle.checked;
+
+    // Disable toggle during operation
+    toggle.disabled = true;
+
+    try {
+        if (shouldEnable) {
+            const result = await window.electronAPI.contextMenu.enable();
+            if (result.success) {
+                contextMenuEnabled = true;
+                let message = 'Context menu integration enabled successfully!';
+                if (result.note) {
+                    message += ' ' + result.note;
+                }
+                showSettingsStatus(message, false);
+            } else {
+                toggle.checked = false;
+                showSettingsStatus('Failed to enable context menu: ' + (result.error || 'Unknown error'), true);
+            }
+        } else {
+            const result = await window.electronAPI.contextMenu.disable();
+            if (result.success) {
+                contextMenuEnabled = false;
+                showSettingsStatus('Context menu integration disabled successfully!', false);
+            } else {
+                toggle.checked = true;
+                showSettingsStatus('Failed to disable context menu: ' + (result.error || 'Unknown error'), true);
+            }
+        }
+    } catch (err) {
+        console.error('Error toggling context menu:', err);
+        toggle.checked = contextMenuEnabled;
+        showSettingsStatus('Error: ' + err.message, true);
+    } finally {
+        toggle.disabled = false;
+    }
+});
+
 document.getElementById('menuAbout').addEventListener('click', () => {
     closeAllMenus();
     let platformStr;

@@ -22,6 +22,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deletePreset: (name) => ipcRenderer.invoke('delete-preset', name),
   renamePreset: (oldName, newName) => ipcRenderer.invoke('rename-preset', { oldName, newName }),
   
+  // Context menu integration
+  contextMenu: {
+    isEnabled: () => ipcRenderer.invoke('context-menu-is-enabled'),
+    enable: () => ipcRenderer.invoke('context-menu-enable'),
+    disable: () => ipcRenderer.invoke('context-menu-disable'),
+    getInfo: () => ipcRenderer.invoke('context-menu-get-info'),
+    needsPathUpdate: () => ipcRenderer.invoke('context-menu-needs-path-update'),
+    updatePath: () => ipcRenderer.invoke('context-menu-update-path')
+  },
+  
   // File operations - use webUtils.getPathForFile for drag-and-drop
   getFilePathFromFile: (file) => {
     try {
