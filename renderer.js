@@ -263,14 +263,28 @@ function debounce(func, wait) {
     };
 }
 
+// Format file path to "path > to > file.mp4" format
+function formatPathDisplay(filePath) {
+    if (!filePath) return '-';
+    
+    // Normalize path separators to forward slashes
+    const normalized = filePath.replace(/\\/g, '/');
+    
+    // Split the path into segments
+    const segments = normalized.split('/').filter(seg => seg.length > 0);
+    
+    // Join with " > " separator
+    return segments.join(' > ');
+}
+
 // Update window title and timeline filename
 function updateWindowTitle() {
     const filenameElement = document.getElementById('timelineFilenameText');
 
-    if (state.videoFilename) {
+    if (state.videoPath) {
         document.title = 'FFcut';
         if (filenameElement) {
-            filenameElement.textContent = state.videoFilename;
+            filenameElement.textContent = formatPathDisplay(state.videoPath);
         }
     } else {
         document.title = 'FFcut';

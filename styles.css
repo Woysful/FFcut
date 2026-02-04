@@ -125,7 +125,7 @@ overflow: hidden;
     font-size: 11px;
     color: var(--color-text-tertiary);
     font-family: var(--font-mono);
-    max-width: 700px;
+    max-width: 1200px;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
