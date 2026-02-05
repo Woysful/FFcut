@@ -2757,7 +2757,7 @@ document.getElementById('menuAbout').addEventListener('click', () => {
     } else {
         platformStr = 'Linux';
     }
-    alert(`FFcut v1.2.0
+    alert(`FFcut v1.3.0
 
     Fast and reliable video editor
     Built with Electron 40.1.0 + FFmpeg
@@ -3358,3 +3358,247 @@ window.electronAPI.onOpenFile((filePath) => {
     console.log('Received open-file event:', filePath);
     importVideo(filePath);
 });
+// ============================================================================
+// Update System
+// ============================================================================
+
+let updateDialog = null;
+let updateData = null;
+
+// Create update dialog
+function createUpdateDialog() {
+    const dialog = document.createElement('div');
+    dialog.className = 'update-dialog';
+    dialog.style.display = 'none';
+    dialog.innerHTML = `
+        <div class="update-dialog-content">
+            <div class="update-dialog-header">
+                <div class="update-dialog-icon">
+                    <svg width="24" height="24" viewBox="0 0 20 20" fill="none">
+                        <path d="M10 3V6M10 14V17M17 10H14M6 10H3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                        <circle cx="10" cy="10" r="2" stroke="currentColor" stroke-width="2"/>
+                        <path d="M15 5L13 7M7 13L5 15M5 5L7 7M13 13L15 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <h3 class="update-dialog-title">Update Available</h3>
+            </div>
+            <div class="update-dialog-body">
+                <div class="update-dialog-version">
+                    A new version of FFcut is available: <strong id="updateVersion"></strong>
+                </div>
+                <div class="update-dialog-notes" id="updateNotes"></div>
+                <div class="update-progress" id="updateProgress" style="display: none;">
+                    <div class="update-progress-bar">
+                        <div class="update-progress-fill" id="updateProgressFill" style="width: 0%;"></div>
+                    </div>
+                    <div class="update-progress-text" id="updateProgressText">Preparing...</div>
+                </div>
+            </div>
+            <div class="update-dialog-actions">
+                <button class="update-dialog-button secondary" id="updateLaterBtn">Later</button>
+                <button class="update-dialog-button primary" id="updateInstallBtn">Download & Install</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(dialog);
+    return dialog;
+}
+
+// Show update dialog
+function showUpdateDialog(data) {
+    if (!updateDialog) {
+        updateDialog = createUpdateDialog();
+        
+        // Setup event listeners
+        const laterBtn = updateDialog.querySelector('#updateLaterBtn');
+        const installBtn = updateDialog.querySelector('#updateInstallBtn');
+        
+        laterBtn.addEventListener('click', hideUpdateDialog);
+        installBtn.addEventListener('click', handleInstallUpdate);
+    }
+    
+    updateData = data;
+    
+    // Update dialog content
+    const versionEl = updateDialog.querySelector('#updateVersion');
+    const notesEl = updateDialog.querySelector('#updateNotes');
+    const progressEl = updateDialog.querySelector('#updateProgress');
+    const installBtn = updateDialog.querySelector('#updateInstallBtn');
+    const laterBtn = updateDialog.querySelector('#updateLaterBtn');
+    
+    versionEl.textContent = data.version;
+    notesEl.textContent = data.releaseNotes || 'No release notes available.';
+    progressEl.style.display = 'none';
+    installBtn.disabled = false;
+    laterBtn.disabled = false;
+    
+    updateDialog.style.display = 'flex';
+}
+
+// Hide update dialog
+function hideUpdateDialog() {
+    if (updateDialog) {
+        updateDialog.style.display = 'none';
+    }
+}
+
+// Handle install update
+async function handleInstallUpdate() {
+    const installBtn = updateDialog.querySelector('#updateInstallBtn');
+    const laterBtn = updateDialog.querySelector('#updateLaterBtn');
+    const progressEl = updateDialog.querySelector('#updateProgress');
+    
+    installBtn.disabled = true;
+    laterBtn.disabled = true;
+    progressEl.style.display = 'block';
+    
+    try {
+        await window.electronAPI.updater.downloadAndInstall();
+    } catch (error) {
+        console.error('Update installation failed:', error);
+        installBtn.disabled = false;
+        laterBtn.disabled = false;
+        progressEl.style.display = 'none';
+    }
+}
+
+// Update progress handlers
+window.electronAPI.onUpdateDownloadProgress((data) => {
+    if (!updateDialog) return;
+    
+    const progressFill = updateDialog.querySelector('#updateProgressFill');
+    const progressText = updateDialog.querySelector('#updateProgressText');
+    
+    progressFill.style.width = `${data.progress}%`;
+    progressText.textContent = `Downloading... ${data.downloaded} / ${data.total} (${data.progress}%)`;
+});
+
+window.electronAPI.onUpdateDownloadStatus((data) => {
+    if (!updateDialog) return;
+    
+    const progressText = updateDialog.querySelector('#updateProgressText');
+    
+    if (data.status === 'downloading') {
+        progressText.textContent = data.message;
+    } else if (data.status === 'completed') {
+        progressText.textContent = 'Download completed! Installing...';
+    } else if (data.status === 'error') {
+        progressText.textContent = `Error: ${data.message}`;
+        const installBtn = updateDialog.querySelector('#updateInstallBtn');
+        const laterBtn = updateDialog.querySelector('#updateLaterBtn');
+        installBtn.disabled = false;
+        laterBtn.disabled = false;
+    }
+});
+
+window.electronAPI.onUpdateInstallStatus((data) => {
+    if (!updateDialog) return;
+    
+    const progressText = updateDialog.querySelector('#updateProgressText');
+    const installBtn = updateDialog.querySelector('#updateInstallBtn');
+    const laterBtn = updateDialog.querySelector('#updateLaterBtn');
+    
+    if (data.status === 'installing') {
+        progressText.textContent = data.message;
+    } else if (data.status === 'completed') {
+        progressText.textContent = data.message;
+        installBtn.textContent = 'Restart Now';
+        installBtn.disabled = false;
+        laterBtn.textContent = 'Restart Later';
+        laterBtn.disabled = false;
+        
+        // Change install button to restart app
+        installBtn.onclick = () => {
+            window.location.reload();
+        };
+    } else if (data.status === 'manual') {
+        progressText.textContent = data.message;
+        installBtn.textContent = 'OK';
+        installBtn.disabled = false;
+        laterBtn.style.display = 'none';
+        installBtn.onclick = hideUpdateDialog;
+    } else if (data.status === 'error') {
+        progressText.textContent = `Error: ${data.message}`;
+        installBtn.disabled = false;
+        laterBtn.disabled = false;
+    }
+});
+
+window.electronAPI.onUpdateCheckStatus((data) => {
+    if (data.status === 'checking') {
+        console.log('Checking for updates...');
+    } else if (data.status === 'up-to-date') {
+        showNotification('You are using the latest version!', 'success');
+    } else if (data.status === 'error') {
+        console.error('Update check error:', data.message);
+        showNotification(`Failed to check for updates: ${data.message}`, 'error');
+    }
+});
+
+window.electronAPI.onUpdateAvailable((data) => {
+    const updateIndicator = document.getElementById('updateIndicator');
+    
+    if (data.silent) {
+        // Silent check on startup - just show indicator
+        if (updateIndicator) {
+            updateIndicator.style.display = 'inline-block';
+        }
+    } else {
+        // Manual check - show dialog
+        showUpdateDialog(data);
+    }
+});
+
+// Menu handlers
+const menuCheckUpdates = document.getElementById('menuCheckUpdates');
+if (menuCheckUpdates) {
+    menuCheckUpdates.addEventListener('click', async () => {
+        try {
+            await window.electronAPI.updater.checkForUpdates();
+        } catch (error) {
+            console.error('Failed to check for updates:', error);
+            showNotification('Failed to check for updates', 'error');
+        }
+    });
+}
+
+// Helper function to show notifications
+function showNotification(message, type = 'info') {
+    // Create a simple toast notification
+    const toast = document.createElement('div');
+    toast.className = `notification-toast notification-${type}`;
+    toast.textContent = message;
+    toast.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 12px 20px;
+        background-color: ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : '#3b82f6'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        z-index: 10001;
+        font-size: 14px;
+        font-weight: 500;
+        opacity: 0;
+        transform: translateY(-20px);
+        transition: all 0.3s ease;
+    `;
+    
+    document.body.appendChild(toast);
+    
+    // Animate in
+    setTimeout(() => {
+        toast.style.opacity = '1';
+        toast.style.transform = 'translateY(0)';
+    }, 10);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(-20px)';
+        setTimeout(() => {
+            document.body.removeChild(toast);
+        }, 300);
+    }, 3000);
+}

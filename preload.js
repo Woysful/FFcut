@@ -32,6 +32,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     updatePath: () => ipcRenderer.invoke('context-menu-update-path')
   },
   
+  // Updater integration
+  updater: {
+    checkForUpdates: () => ipcRenderer.invoke('updater-check-updates'),
+    getInfo: () => ipcRenderer.invoke('updater-get-info'),
+    downloadAndInstall: () => ipcRenderer.invoke('updater-download-and-install')
+  },
+  
   // File operations - use webUtils.getPathForFile for drag-and-drop
   getFilePathFromFile: (file) => {
     try {
@@ -53,6 +60,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Fired when the app should open a file (CLI arg, second instance, or macOS open-file)
   onOpenFile: (callback) => {
     ipcRenderer.on('open-file', (event, filePath) => callback(filePath));
+  },
+  
+  // Updater events
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on('update-available', (event, data) => callback(data));
+  },
+  onUpdateCheckStatus: (callback) => {
+    ipcRenderer.on('update-check-status', (event, data) => callback(data));
+  },
+  onUpdateDownloadProgress: (callback) => {
+    ipcRenderer.on('update-download-progress', (event, data) => callback(data));
+  },
+  onUpdateDownloadStatus: (callback) => {
+    ipcRenderer.on('update-download-status', (event, data) => callback(data));
+  },
+  onUpdateInstallStatus: (callback) => {
+    ipcRenderer.on('update-install-status', (event, data) => callback(data));
   },
   
   // Remove listeners

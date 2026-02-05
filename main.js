@@ -6,11 +6,15 @@ const fs = require('fs').promises;
 const fsSync = require('fs');
 const os = require('os');
 const ContextMenuManager = require('./context-menu-manager');
+const Updater = require('./updater');
 
 let mainWindow;
 
 // Initialize context menu manager
 const contextMenuManager = new ContextMenuManager();
+
+// Initialize updater
+const updater = new Updater();
 
 // Capture the file path passed via CLI on first launch.
 // On Linux/Windows: process.argv = [electron, app.js, /path/to/file.mp4]
@@ -544,6 +548,14 @@ app.whenReady().then(() => {
 
     createWindow();
 
+    // Set main window for updater
+    updater.setMainWindow(mainWindow);
+
+    // Check for updates on startup (silently)
+    setTimeout(() => {
+        updater.checkForUpdatesOnStartup();
+    }, 3000); // Check after 3 seconds to not delay startup
+
     // Check and update context menu path if needed (e.g., AppImage moved)
     (async () => {
         try {
@@ -1030,6 +1042,37 @@ ipcMain.handle('context-menu-update-path', async () => {
         return result;
     } catch (err) {
         console.error('Error updating context menu path:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+// Updater IPC handlers
+ipcMain.handle('updater-check-updates', async () => {
+    try {
+        await updater.checkForUpdates(false);
+        return { success: true };
+    } catch (err) {
+        console.error('Error checking for updates:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('updater-get-info', async () => {
+    try {
+        const info = updater.getUpdateInfo();
+        return { success: true, ...info };
+    } catch (err) {
+        console.error('Error getting update info:', err);
+        return { success: false, error: err.message };
+    }
+});
+
+ipcMain.handle('updater-download-and-install', async () => {
+    try {
+        await updater.performUpdate();
+        return { success: true };
+    } catch (err) {
+        console.error('Error downloading/installing update:', err);
         return { success: false, error: err.message };
     }
 });

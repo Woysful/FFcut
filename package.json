@@ -1,7 +1,7 @@
 {
   "name": "ffcut",
   "productName": "FFcut",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Fast and reliable video editor with minimal functionality",
   "main": "main.js",
   "scripts": {
@@ -41,6 +41,7 @@
       "renderer.js",
       "preload.js",
       "context-menu-manager.js",
+      "updater.js",
       "index.html",
       "styles.css",
       "assets/**/*",
