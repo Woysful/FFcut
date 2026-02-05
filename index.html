@@ -51,7 +51,7 @@
               <path d="M4 7H16M10 3V7M6 7V17M14 7V17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
             Reset Trim
-            <span class="menu-shortcut">Ctrl+R</span>
+            <span class="menu-shortcut">R</span>
           </div>
         </div>
       </div>
@@ -442,16 +442,16 @@
               <label>Video codec</label>
                 <select id="videoCodec" class="select-input">
                   <optgroup label="Stream copy">
-                    <option value="copy" selected>Copy (lossless)</option>
+                    <option value="copy" selected>Copy | lossless</option>
                     <option value="auto">Auto | -</option>
                   </optgroup>
-                  <optgroup label="CPU codecs">
-                    <option value="libx264">H.264 (libx264)</option>
-                    <option value="libx265">H.265/HEVC (libx265)</option>
-                    <option value="libvpx">VP8 (libvpx)</option>
-                    <option value="libvpx-vp9">VP9 (libvpx-vp9)</option>
-                    <option value="libaom-av1">AV1 (libaom-av1)</option>
-                    <option value="libsvtav1">AV1 (SVT-AV1)</option>
+                  <optgroup label="CPU Codec">
+                    <option value="libx264">H264 libx264</option>
+                    <option value="libx265">HEVC libx265</option>
+                    <option value="libvpx">VP8 libvpx</option>
+                    <option value="libvpx-vp9">VP9 libvpx-vp9</option>
+                    <option value="libaom-av1">AV1 libaom-av1</option>
+                    <option value="libsvtav1">AV1 SVT-AV1</option>
                     <option value="mpeg4">MPEG-4 Part 2</option>
                     <option value="mpeg2video">MPEG-2</option>
                     <option value="libtheora">Theora</option>
@@ -461,25 +461,25 @@
                     <option value="huffyuv">HuffYUV</option>
                     <option value="ffv1">FFV1</option>
                   </optgroup>
-                  <optgroup label="NVIDIA GPU (NVENC)">
-                    <option value="h264_nvenc">H.264 NVENC</option>
-                    <option value="hevc_nvenc">H.265/HEVC NVENC</option>
+                  <optgroup label="NVIDIA GPU • NVENC">
+                    <option value="h264_nvenc">H264 NVENC</option>
+                    <option value="hevc_nvenc">HEVC NVENC</option>
                     <option value="av1_nvenc">AV1 NVENC</option>
                   </optgroup>
-                  <optgroup label="AMD GPU (AMF)">
-                    <option value="h264_amf">H.264 AMF</option>
-                    <option value="hevc_amf">H.265/HEVC AMF</option>
+                  <optgroup label="AMD GPU • AMF">
+                    <option value="h264_amf">H264 AMF</option>
+                    <option value="hevc_amf">HEVC AMF</option>
                     <option value="av1_amf">AV1 AMF</option>
                   </optgroup>
-                  <optgroup label="Intel GPU (QSV)">
-                    <option value="h264_qsv">H.264 QSV</option>
-                    <option value="hevc_qsv">H.265/HEVC QSV</option>
+                  <optgroup label="Intel GPU • QSV">
+                    <option value="h264_qsv">H264 QSV</option>
+                    <option value="hevc_qsv">HEVC QSV</option>
                     <option value="vp9_qsv">VP9 QSV</option>
                     <option value="av1_qsv">AV1 QSV</option>
                   </optgroup>
-                  <optgroup label="VAAPI (Linux GPU)">
-                    <option value="h264_vaapi">H.264 VAAPI</option>
-                    <option value="hevc_vaapi">H.265/HEVC VAAPI</option>
+                  <optgroup label="Linux GPU • VAAPI">
+                    <option value="h264_vaapi">H264 VAAPI</option>
+                    <option value="hevc_vaapi">HEVC VAAPI</option>
                     <option value="vp8_vaapi">VP8 VAAPI</option>
                     <option value="vp9_vaapi">VP9 VAAPI</option>
                     <option value="av1_vaapi">AV1 VAAPI</option>
@@ -492,8 +492,8 @@
               <div class="control-group">
                 <label>Quality mode</label>
                 <select id="qualityMode" class="select-input">
-                  <option value="crf">CRF/CQ (Constant Quality)</option>
-                  <option value="bitrate">Bitrate (CBR/VBR)</option>
+                  <option value="crf">CRF/CQ | Constant Quality</option>
+                  <option value="bitrate">Bitrate | CBR/VBR</option>
                 </select>
               </div>
 
@@ -555,7 +555,7 @@
                   </div>
                 </label>
                 <select id="pixelFormat" class="select-input">
-                  <option value="auto" selected>Auto (from source)</option>
+                  <option value="auto" selected>Auto | from source</option>
                   <optgroup label="8-bit 4:2:0 (Most Compatible)">
                     <option value="yuv420p">yuv420p (8-bit 4:2:0)</option>
                     <option value="yuvj420p">yuvj420p (8-bit 4:2:0 Full Range)</option>
@@ -590,11 +590,11 @@
                 <label>Audio codec</label>
                 <select id="audioCodec" class="select-input">
                   <optgroup label="Stream copy">
-                    <option value="copy" selected>Copy (lossless)</option>
+                    <option value="copy" selected>Copy | lossless</option>
                   </optgroup>
                   <optgroup label="Lossy">
                     <option value="aac">AAC</option>
-                    <option value="libfdk_aac">AAC (FDK)</option>
+                    <option value="libfdk_aac">AAC FDK</option>
                     <option value="libmp3lame">MP3</option>
                     <option value="libopus">Opus</option>
                     <option value="libvorbis">Vorbis</option>
@@ -699,6 +699,20 @@
       </div>
       <div class="modal-body">
         <div class="preset-actions">
+          <button class="btn" id="exportPresetsBtn">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 14V6M10 6L7 9M10 6L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M4 13V15C4 15.5304 4.21071 16.0391 4.58579 16.4142C4.96086 16.7893 5.46957 17 6 17H14C14.5304 17 15.0391 16.7893 15.4142 16.4142C15.7893 16.0391 16 15.5304 16 15V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Export All
+          </button>
+          <button class="btn" id="importPresetsBtn">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
+              <path d="M10 4V12M10 12L7 9M10 12L13 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <path d="M4 13V15C4 15.5304 4.21071 16.0391 4.58579 16.4142C4.96086 16.7893 5.46957 17 6 17H14C14.5304 17 15.0391 16.7893 15.4142 16.4142C15.7893 16.0391 16 15.5304 16 15V13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Import
+          </button>
           <button class="btn btn-primary" id="saveNewPresetBtn">
             <svg width="16" height="16" viewBox="0 0 20 20" fill="none">
               <path d="M10 5V15M5 10H15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -711,6 +725,8 @@
         </div>
       </div>
     </div>
+    <!-- Hidden file input for importing presets -->
+    <input type="file" id="importPresetsFileInput" accept=".json" style="display: none;">
   </div>
 
   <!-- Save Preset Dialog -->

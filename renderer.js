@@ -891,7 +891,7 @@ function updatePixelFormatOptions(codec) {
     const wasAuto = currentValue === 'auto';
     
     // Clear existing options except "Auto"
-    pixelFormat.innerHTML = '<option value="auto">Auto (from source)</option>';
+    pixelFormat.innerHTML = '<option value="auto">Auto | from source</option>';
     
     // Group formats by category
     const groups = {
@@ -2876,7 +2876,7 @@ document.getElementById('menuAbout').addEventListener('click', () => {
     } else {
         platformStr = 'Linux';
     }
-    alert(`FFcut v1.3.0
+    alert(`FFcut v1.4.0
 
     Fast and reliable video editor
     Built with Electron 40.1.0 + FFmpeg
@@ -3121,6 +3121,9 @@ const presetModal = document.getElementById('presetModal');
 const closePresetModal = document.getElementById('closePresetModal');
 const presetList = document.getElementById('presetList');
 const saveNewPresetBtn = document.getElementById('saveNewPresetBtn');
+const exportPresetsBtn = document.getElementById('exportPresetsBtn');
+const importPresetsBtn = document.getElementById('importPresetsBtn');
+const importPresetsFileInput = document.getElementById('importPresetsFileInput');
 
 const savePresetDialog = document.getElementById('savePresetDialog');
 const closeSavePresetDialog = document.getElementById('closeSavePresetDialog');
@@ -3415,6 +3418,109 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
+// Export all presets to JSON file
+async function exportPresets() {
+    if (Object.keys(presets).length === 0) {
+        alert('No presets to export');
+        return;
+    }
+    
+    try {
+        // Create export data with metadata
+        const exportData = {
+            version: '1.0',
+            exportDate: new Date().toISOString(),
+            presets: presets
+        };
+        
+        const jsonString = JSON.stringify(exportData, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        
+        // Create download link
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ffcut-presets-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        console.log('Presets exported successfully');
+    } catch (err) {
+        console.error('Failed to export presets:', err);
+        alert(`Failed to export presets: ${err.message}`);
+    }
+}
+
+// Import presets from JSON file
+async function importPresets(file) {
+    try {
+        const text = await file.text();
+        const importData = JSON.parse(text);
+        
+        // Validate import data structure
+        if (!importData.presets || typeof importData.presets !== 'object') {
+            throw new Error('Invalid preset file format');
+        }
+        
+        const importedPresets = importData.presets;
+        const presetNames = Object.keys(importedPresets);
+        
+        if (presetNames.length === 0) {
+            alert('No presets found in the file');
+            return;
+        }
+        
+        // Check for conflicts
+        const conflicts = presetNames.filter(name => presets[name]);
+        let shouldProceed = true;
+        
+        if (conflicts.length > 0) {
+            const message = `The following presets already exist and will be overwritten:\n${conflicts.join(', ')}\n\nContinue?`;
+            shouldProceed = confirm(message);
+        }
+        
+        if (!shouldProceed) return;
+        
+        // Import presets one by one
+        let successCount = 0;
+        let failCount = 0;
+        
+        for (const [name, settings] of Object.entries(importedPresets)) {
+            try {
+                const result = await window.electronAPI.savePreset(name, settings);
+                if (result.success) {
+                    presets[name] = settings;
+                    successCount++;
+                } else {
+                    failCount++;
+                    console.error(`Failed to import preset "${name}":`, result.error);
+                }
+            } catch (err) {
+                failCount++;
+                console.error(`Failed to import preset "${name}":`, err);
+            }
+        }
+        
+        // Update UI
+        updatePresetsDropdown();
+        renderPresetList();
+        
+        // Show result
+        let message = `Successfully imported ${successCount} preset(s)`;
+        if (failCount > 0) {
+            message += `\n${failCount} preset(s) failed to import`;
+        }
+        alert(message);
+        
+        console.log(`Presets imported: ${successCount} succeeded, ${failCount} failed`);
+    } catch (err) {
+        console.error('Failed to import presets:', err);
+        alert(`Failed to import presets: ${err.message}`);
+    }
+}
+
 // Event listeners for preset system
 menuManagePresets.addEventListener('click', (e) => {
     e.stopPropagation();
@@ -3428,6 +3534,24 @@ presetModal.addEventListener('click', (e) => {
 });
 
 saveNewPresetBtn.addEventListener('click', showSavePresetDialog);
+
+// Export presets button
+exportPresetsBtn.addEventListener('click', exportPresets);
+
+// Import presets button
+importPresetsBtn.addEventListener('click', () => {
+    importPresetsFileInput.click();
+});
+
+// Handle file selection for import
+importPresetsFileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        await importPresets(file);
+        // Reset input so the same file can be selected again
+        e.target.value = '';
+    }
+});
 
 closeSavePresetDialog.addEventListener('click', hideSavePresetDialog);
 cancelSavePreset.addEventListener('click', hideSavePresetDialog);

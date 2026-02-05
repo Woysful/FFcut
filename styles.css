@@ -627,7 +627,7 @@ overflow: hidden;
     background: var(--color-border-strong);
     border-radius: var(--radius-full);
     outline: none;
-    -webkit-appearance: none;
+    /* -webkit-appearance: none; */
 }
 
 .volume-slider::-webkit-slider-thumb {
@@ -1179,7 +1179,7 @@ overflow: hidden;
     background: var(--color-border-strong);
     border-radius: var(--radius-full);
     outline: none;
-    -webkit-appearance: none;
+    /* -webkit-appearance: none; */
 }
 
 .quality-slider::-webkit-slider-thumb {
@@ -1428,6 +1428,14 @@ overflow: hidden;
 /* Preset Actions */
 .preset-actions {
     margin-bottom: var(--spacing-lg);
+    display: flex;
+    flex-direction: row;
+    gap: var(--spacing-sm);
+    justify-content: center;
+}
+
+.preset-actions .btn {
+    flex: 0 1 auto;
 }
 
 /* Preset List */
