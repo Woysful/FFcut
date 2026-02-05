@@ -2117,8 +2117,9 @@ cropToggle.addEventListener('change', (e) => {
     if (state.cropEnabled) {
         updateCropOverlay();
         
-        // Automatically switch to Auto codec when crop is enabled
-        if (videoCodec.value !== 'auto') {
+        // Automatically switch to Auto codec when crop is enabled, but only if Copy is selected
+        // If user already selected a specific encoder, respect their choice
+        if (videoCodec.value === 'copy') {
             videoCodec.value = 'auto';
             videoCodec.dispatchEvent(new Event('change'));
         }
