@@ -124,6 +124,68 @@ const pixelFormatInfo = {
     'gray12le': { name: 'Gray12LE (12-bit Grayscale)', group: 'gray-12bit' }
 };
 
+// Codec name mapping: FFmpeg decoder name -> FFmpeg encoder name
+// This maps codec_name from metadata to the correct encoder to use
+const codecEncoderMapping = {
+    // H.264 variants
+    'h264': 'libx264',
+    'avc': 'libx264',
+    'avc1': 'libx264',
+    
+    // H.265/HEVC variants
+    'hevc': 'libx265',
+    'h265': 'libx265',
+    'hvc1': 'libx265',
+    
+    // VP8/VP9
+    'vp8': 'libvpx',
+    'vp9': 'libvpx-vp9',
+    
+    // AV1
+    'av1': 'libsvtav1',  // Use SVT-AV1 as it's faster than libaom-av1
+    
+    // MPEG variants
+    'mpeg4': 'mpeg4',
+    'msmpeg4': 'mpeg4',
+    'msmpeg4v2': 'mpeg4',
+    'msmpeg4v3': 'mpeg4',
+    'mpeg2video': 'mpeg2video',
+    'mpeg1video': 'mpeg2video',
+    
+    // ProRes
+    'prores': 'prores_ks',
+    
+    // Other codecs
+    'theora': 'libtheora',
+    'dnxhd': 'dnxhd',
+    'huffyuv': 'huffyuv',
+    'ffv1': 'ffv1',
+    'mjpeg': 'mjpeg',
+    'png': 'png',
+    'qtrle': 'qtrle',
+    'svq1': 'svq1',
+    'wmv1': 'wmv1',
+    'wmv2': 'wmv2',
+    'wmv3': 'wmv2'
+};
+
+// Get the correct encoder name for a given codec from metadata
+function getEncoderForCodec(codecName) {
+    if (!codecName) return 'libx264'; // Default fallback
+    
+    // Convert to lowercase for case-insensitive matching
+    const codec = codecName.toLowerCase();
+    
+    // Check if we have a mapping for this codec
+    if (codecEncoderMapping[codec]) {
+        return codecEncoderMapping[codec];
+    }
+    
+    // Fallback: return libx264 for unknown codecs
+    console.warn(`Unknown codec "${codecName}", falling back to libx264`);
+    return 'libx264';
+}
+
 // ---------------------------------------------------------------------------
 // Cross-platform helpers
 // ---------------------------------------------------------------------------
@@ -366,6 +428,23 @@ function updateFileInfo() {
 
     // Setup audio track selector
     setupAudioTrackSelector();
+    
+    // Update Auto codec option text
+    updateAutoCodecOption();
+}
+
+// Update Auto codec option to show current video codec
+function updateAutoCodecOption() {
+    if (!state.videoMetadata || !state.videoMetadata.streams) return;
+    
+    const videoStream = state.videoMetadata.streams.find(s => s.codec_type === 'video');
+    if (videoStream && videoStream.codec_name) {
+        const codecName = videoStream.codec_name.toUpperCase();
+        const autoOption = document.querySelector('#videoCodec option[value="auto"]');
+        if (autoOption) {
+            autoOption.textContent = `Auto | ${codecName}`;
+        }
+    }
 }
 
 // Setup Audio Track Selector
@@ -507,9 +586,10 @@ function updateSelectedAudioTracks() {
 // Build FFmpeg Command
 function buildFFmpegCommand() {
     const videoCopy = state.exportSettings.videoCodec === 'copy';
+    const videoAuto = state.exportSettings.videoCodec === 'auto';
     const audioCopy = state.exportSettings.audioCodec === 'copy';
 
-    // Both copy - full lossless mode
+    // Both copy - full lossless mode (not available with auto codec)
     if (videoCopy && audioCopy && !state.cropEnabled) {
         let cmd = '-c copy';
 
@@ -562,6 +642,7 @@ function buildFFmpegCommand() {
 
 function buildFFmpegCommandWithEncoding() {
     const videoCopy = state.exportSettings.videoCodec === 'copy';
+    const videoAuto = state.exportSettings.videoCodec === 'auto';
     const audioCopy = state.exportSettings.audioCodec === 'copy';
 
     let cmd = '';
@@ -591,6 +672,36 @@ function buildFFmpegCommandWithEncoding() {
     // Video codec
     if (videoCopy && !state.cropEnabled) {
         cmd += `-c:v copy `;
+    } else if (videoAuto) {
+        // Auto mode: use the encoder matching the original video codec
+        const videoStream = state.videoMetadata?.streams?.find(s => s.codec_type === 'video');
+        const originalCodecName = videoStream?.codec_name;
+        const encoder = getEncoderForCodec(originalCodecName);
+        
+        cmd += `-c:v ${encoder} `;
+        
+        // For auto mode with CPU encoders, use reasonable quality settings
+        if (encoder === 'libx264' || encoder === 'libx265') {
+            cmd += `-crf 23 -preset medium `;
+        } else if (encoder === 'libvpx' || encoder === 'libvpx-vp9') {
+            cmd += `-crf 23 -b:v 0 `;
+        } else if (encoder === 'libsvtav1') {
+            cmd += `-crf 23 -preset 6 `;
+        }
+        
+        // For auto mode, try to preserve source pixel format if compatible
+        const sourcePixFmt = state.videoMetadata?.pix_fmt || videoStream?.pix_fmt;
+        if (sourcePixFmt) {
+            const supportedFormats = codecPixelFormatSupport[encoder] || ['yuv420p'];
+            if (supportedFormats.includes(sourcePixFmt)) {
+                cmd += `-pix_fmt ${sourcePixFmt} `;
+            } else {
+                // Fallback to yuv420p for compatibility
+                cmd += `-pix_fmt yuv420p `;
+            }
+        } else {
+            cmd += `-pix_fmt yuv420p `;
+        }
     } else {
         cmd += `-c:v ${state.exportSettings.videoCodec} `;
 
@@ -748,19 +859,20 @@ function updateFFmpegCommand() {
 function initializeCodecUI() {
     // Video codec settings
     const videoCopy = state.exportSettings.videoCodec === 'copy';
+    const videoAuto = state.exportSettings.videoCodec === 'auto';
     const qualityGroup = qualityMode.closest('.control-group');
 
-    if (qualityGroup) qualityGroup.style.display = videoCopy ? 'none' : 'block';
-    if (crfSettings) crfSettings.style.display = (videoCopy || state.exportSettings.qualityMode !== 'crf') ? 'none' : 'block';
-    if (bitrateSettings) bitrateSettings.style.display = (videoCopy || state.exportSettings.qualityMode !== 'bitrate') ? 'none' : 'block';
+    if (qualityGroup) qualityGroup.style.display = (videoCopy || videoAuto) ? 'none' : 'block';
+    if (crfSettings) crfSettings.style.display = ((videoCopy || videoAuto) || state.exportSettings.qualityMode !== 'crf') ? 'none' : 'block';
+    if (bitrateSettings) bitrateSettings.style.display = ((videoCopy || videoAuto) || state.exportSettings.qualityMode !== 'bitrate') ? 'none' : 'block';
 
     const codec = state.exportSettings.videoCodec;
     const supportsPreset = codec.includes('264') || codec.includes('265') ||
     codec.includes('libvpx') || codec.includes('libaom');
-    presetGroup.style.display = (supportsPreset && !videoCopy) ? 'block' : 'none';
+    presetGroup.style.display = (supportsPreset && !videoCopy && !videoAuto) ? 'block' : 'none';
 
     // Always show pixel format selector when encoding video
-    pixelFormatGroup.style.display = !videoCopy ? 'block' : 'none';
+    pixelFormatGroup.style.display = (!videoCopy && !videoAuto) ? 'block' : 'none';
 
     // Audio codec settings
     const audioCopy = state.exportSettings.audioCodec === 'copy';
@@ -2004,6 +2116,12 @@ cropToggle.addEventListener('change', (e) => {
 
     if (state.cropEnabled) {
         updateCropOverlay();
+        
+        // Automatically switch to Auto codec when crop is enabled
+        if (videoCodec.value !== 'auto') {
+            videoCodec.value = 'auto';
+            videoCodec.dispatchEvent(new Event('change'));
+        }
     }
 
     updateFFmpegCommand();
@@ -2185,26 +2303,27 @@ videoCodec.addEventListener('change', (e) => {
     // Update visibility of quality/preset/profile based on codec
     const codec = e.target.value;
     const isCopy = codec === 'copy';
+    const isAuto = codec === 'auto';
 
     // Hide all encoding-specific settings when copy is selected
     const qualityGroup = qualityMode.closest('.control-group');
     const crfGroup = crfSettings.closest('.control-group') || crfSettings;
     const bitrateGroup = bitrateSettings.closest('.control-group') || bitrateSettings;
 
-    if (qualityGroup) qualityGroup.style.display = isCopy ? 'none' : 'block';
-    if (crfSettings) crfSettings.style.display = (isCopy || state.exportSettings.qualityMode !== 'crf') ? 'none' : 'block';
-    if (bitrateSettings) bitrateSettings.style.display = (isCopy || state.exportSettings.qualityMode !== 'bitrate') ? 'none' : 'block';
+    if (qualityGroup) qualityGroup.style.display = (isCopy || isAuto) ? 'none' : 'block';
+    if (crfSettings) crfSettings.style.display = ((isCopy || isAuto) || state.exportSettings.qualityMode !== 'crf') ? 'none' : 'block';
+    if (bitrateSettings) bitrateSettings.style.display = ((isCopy || isAuto) || state.exportSettings.qualityMode !== 'bitrate') ? 'none' : 'block';
 
     // Update preset visibility
     const supportsPreset = codec.includes('264') || codec.includes('265') ||
     codec.includes('libvpx') || codec.includes('libaom');
-    presetGroup.style.display = (supportsPreset && !isCopy) ? 'block' : 'none';
+    presetGroup.style.display = (supportsPreset && !isCopy && !isAuto) ? 'block' : 'none';
 
     // Update pixel format visibility - show for all encoding codecs
-    pixelFormatGroup.style.display = !isCopy ? 'block' : 'none';
+    pixelFormatGroup.style.display = (!isCopy && !isAuto) ? 'block' : 'none';
     
     // Update available pixel formats based on codec
-    if (!isCopy) {
+    if (!isCopy && !isAuto) {
         updatePixelFormatOptions(codec);
     }
 
