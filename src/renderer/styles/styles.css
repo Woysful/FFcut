@@ -924,7 +924,139 @@ overflow: hidden;
     visibility: visible;
 }
 
-.control-group input[type="number"],
+.control-group input[type="number"] {
+    width: 100%;
+    padding: 10px 32px 10px 12px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    color: var(--color-text-secondary);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    transition: all var(--transition-fast);
+    outline: none;
+}
+
+/* Hide default spinners */
+.control-group input[type="number"]::-webkit-outer-spin-button,
+.control-group input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.control-group input[type="number"]:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background: var(--color-surface-hover);
+}
+
+/* Hide default spinners */
+.control-group input[type="number"]::-webkit-outer-spin-button,
+.control-group input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    appearance: none;
+    display: none;
+}
+
+/* Custom number input wrapper */
+.number-input-container {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+}
+
+.number-input-container input[type="number"] {
+    width: 100% !important;
+    padding-right: 40px !important;
+    box-sizing: border-box !important;
+}
+
+.number-input-spinner {
+    position: absolute;
+    right: 1px;
+    top: 1px;
+    bottom: 1px;
+    width: 24px;
+    display: flex;
+    flex-direction: column;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-left: none;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    overflow: hidden;
+    z-index: 5;
+}
+
+.number-input-spinner button {
+    flex: 1;
+    width: 100%;
+    background: transparent;
+    border: none;
+    color: var(--color-text-secondary);
+    font-size: 10px;
+    font-weight: bold;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all var(--transition-fast);
+    user-select: none;
+    padding: 0;
+    margin: 0;
+}
+
+.number-input-spinner button:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-primary);
+}
+
+.number-input-spinner button:active {
+    background: var(--color-primary);
+    color: var(--color-bg-primary);
+}
+
+.number-input-spinner button:first-child {
+    border-bottom: 1px solid var(--color-border);
+}
+
+.number-input-spinner button:first-child:hover {
+    border-bottom-color: var(--color-primary);
+}
+
+.control-group input[type="number"]::-webkit-outer-spin-button:hover,
+.control-group input[type="number"]::-webkit-inner-spin-button:hover {
+    background-color: var(--color-surface-hover);
+    border-color: var(--color-primary);
+}
+
+.control-group input[type="number"]::-webkit-outer-spin-button:active,
+.control-group input[type="number"]::-webkit-inner-spin-button:active {
+    background-color: var(--color-primary);
+}
+
+/* Firefox spinner styling */
+.control-group input[type="number"]::-moz-number-spin-up,
+.control-group input[type="number"]::-moz-number-spin-down {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    width: 24px;
+    height: 50%;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.control-group input[type="number"]::-moz-number-spin-up:hover,
+.control-group input[type="number"]::-moz-number-spin-down:hover {
+    background: var(--color-surface-hover);
+    border-color: var(--color-primary);
+}
+
+.control-group input[type="number"]::-moz-number-spin-up:active,
+.control-group input[type="number"]::-moz-number-spin-down:active {
+    background: var(--color-primary);
+}
+
 .select-input {
     width: 100%;
     padding: 10px 12px;
@@ -1073,7 +1205,8 @@ overflow: hidden;
     height: 16px;
     width: 16px;
     left: 3px;
-    bottom: 3px;
+    top: 50%;
+    transform: translateY(-50%);
     background: var(--color-text-tertiary);
     transition: var(--transition-base);
     border-radius: 50%;
@@ -1085,7 +1218,7 @@ overflow: hidden;
 }
 
 .toggle-switch input:checked + .toggle-slider:before {
-    transform: translateX(20px);
+    transform: translateX(20px) translateY(-50%);
     background: white;
 }
 
@@ -1740,7 +1873,8 @@ overflow: hidden;
     height: 18px;
     width: 18px;
     left: 3px;
-    bottom: 3px;
+    top: 50%;
+    transform: translateY(-50%);
     background-color: white;
     transition: all 0.2s ease;
     border-radius: 50%;
@@ -1751,7 +1885,7 @@ overflow: hidden;
 }
 
 .toggle-switch input:checked + .toggle-slider:before {
-    transform: translateX(20px);
+    transform: translateX(20px) translateY(-50%);
 }
 
 .toggle-switch input:disabled + .toggle-slider {

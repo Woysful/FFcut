@@ -210,6 +210,16 @@ process.on('unhandledRejection', (reason, promise) => {
 // IPC Handlers - Video Operations
 // =============================================================================
 
+// =============================================================================
+// IPC Handlers - App Info
+
+ipcMain.handle('get-version', async () => {
+    return app.getVersion();
+});
+
+// =============================================================================
+// IPC Handlers - Video Operations
+
 ipcMain.handle('select-video', async () => {
     const result = await dialog.showOpenDialog({
         properties: ['openFile'],

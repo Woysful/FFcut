@@ -2797,7 +2797,7 @@ document.getElementById('contextMenuToggle').addEventListener('change', async (e
     }
 });
 
-document.getElementById('menuAbout').addEventListener('click', () => {
+document.getElementById('menuAbout').addEventListener('click', async () => {
     closeAllMenus();
     let platformStr;
     if (isMacOS) {
@@ -2807,7 +2807,10 @@ document.getElementById('menuAbout').addEventListener('click', () => {
     } else {
         platformStr = 'Linux';
     }
-    alert(`FFcut v1.4.0
+
+    try {
+        const version = await window.electronAPI.getVersion();
+        alert(`FFcut v${version}
 
     Fast and reliable video editor
     Built with Electron 40.1.0 + FFmpeg
@@ -2816,6 +2819,19 @@ document.getElementById('menuAbout').addEventListener('click', () => {
     License: MIT
 
     GitHub: https://github.com/Woysful/FFcut`);
+    } catch (error) {
+        console.error('Error getting app version:', error);
+        // Fallback to hardcoded version if API fails
+        alert(`FFcut v1.4.0
+
+    Fast and reliable video editor
+    Built with Electron 40.1.0 + FFmpeg
+
+    Platform: ${platformStr}
+    License: MIT
+
+    GitHub: https://github.com/Woysful/FFcut`);
+    }
 });
 
 function closeAllMenus() {
@@ -3524,6 +3540,9 @@ presetNameInput.addEventListener('keydown', (e) => {
 // Load presets on startup
 loadPresetsFromStorage();
 
+// Initialize custom spinners for number inputs
+initializeCustomSpinners();
+
 // Listen for file-open requests from the main process (CLI arg, second
 // instance, or macOS open-file event) and feed the path directly into
 // importVideo, which will skip the file-dialog when a path is provided.
@@ -3731,6 +3750,41 @@ if (menuCheckUpdates) {
             console.error('Failed to check for updates:', error);
             showNotification('Failed to check for updates', 'error');
         }
+    });
+}
+
+// Initialize custom number input spinners
+function initializeCustomSpinners() {
+    document.querySelectorAll('.control-group input[type="number"]:not(.number-input-container *)').forEach(input => {
+        // Create wrapper and spinner structure
+        const container = Object.assign(document.createElement('div'), { className: 'number-input-container' });
+        const spinner = Object.assign(document.createElement('div'), { className: 'number-input-spinner' });
+
+        // Create buttons with event handlers
+        const updateValue = (delta) => {
+            const step = parseFloat(input.step) || 1;
+            const currentValue = parseFloat(input.value) || 0;
+            const limit = delta > 0 ? (input.min ? parseFloat(input.min) : -Infinity) : (input.max ? parseFloat(input.max) : Infinity);
+            const newValue = delta > 0 ? Math.max(limit, currentValue + step) : Math.min(limit, currentValue - step);
+            input.value = newValue;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+
+        [['▲', 'Increase value', 1], ['▼', 'Decrease value', -1]].forEach(([symbol, title, delta]) => {
+            const button = Object.assign(document.createElement('button'), {
+                type: 'button',
+                innerHTML: symbol,
+                title
+            });
+            button.addEventListener('click', () => updateValue(delta));
+            spinner.appendChild(button);
+        });
+
+        // Replace input with wrapped version
+        input.parentNode.insertBefore(container, input);
+        container.appendChild(input);
+        container.appendChild(spinner);
     });
 }
 

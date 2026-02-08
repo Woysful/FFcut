@@ -4,6 +4,9 @@ const path = require('path');
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
+  // App info
+  getVersion: () => ipcRenderer.invoke('get-version'),
+
   // Video operations
   selectVideo: () => ipcRenderer.invoke('select-video'),
   getVideoInfo: (filePath) => ipcRenderer.invoke('get-video-info', filePath),
