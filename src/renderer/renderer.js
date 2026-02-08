@@ -44,47 +44,18 @@ let state = {
 
 // Codec pixel format support mapping
 const codecPixelFormatSupport = {
-    // H.264 codecs
-    'libx264': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'nv12', 'nv16', 'nv21', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le'],
-    'h264_nvenc': ['yuv420p', 'yuv444p', 'yuv420p10le', 'yuv444p10le'],
-    'h264_qsv': ['yuv420p', 'nv12'],
-    'h264_amf': ['yuv420p', 'nv12'],
-    'h264_vaapi': ['yuv420p', 'nv12'],
-    
-    // H.265/HEVC codecs
-    'libx265': ['yuv420p', 'yuvj420p', 'yuv422p', 'yuvj422p', 'yuv444p', 'yuvj444p', 'gbrp', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'gbrp10le', 'yuv420p12le', 'yuv422p12le', 'yuv444p12le', 'gbrp12le', 'gray', 'gray10le', 'gray12le'],
-    'hevc_nvenc': ['yuv420p', 'nv12', 'p010le', 'yuv444p', 'p016le', 'yuv444p16le'],
-    'hevc_qsv': ['yuv420p', 'yuv420p10le', 'nv12'],
-    'hevc_amf': ['yuv420p', 'yuv420p10le', 'nv12'],
-    'hevc_vaapi': ['yuv420p', 'yuv420p10le', 'nv12'],
-    
-    // VP8/VP9 codecs
-    'libvpx': ['yuv420p'],
-    'libvpx-vp9': ['yuv420p', 'yuva420p', 'yuv422p', 'yuv440p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'yuv440p10le', 'yuv444p10le', 'yuv420p12le', 'yuv422p12le', 'yuv440p12le', 'yuv444p12le', 'gbrp', 'gbrp10le', 'gbrp12le'],
-    'vp8_vaapi': ['yuv420p', 'nv12'],
-    'vp9_vaapi': ['yuv420p', 'nv12'],
-    'vp9_qsv': ['yuv420p', 'yuv420p10le'],
-    
-    // AV1 codecs
-    'libaom-av1': ['yuv420p', 'yuv422p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le'],
-    'libsvtav1': ['yuv420p', 'yuv420p10le'],
-    'av1_nvenc': ['yuv420p', 'yuv420p10le'],
-    'av1_qsv': ['yuv420p', 'yuv420p10le'],
-    'av1_amf': ['yuv420p', 'yuv420p10le'],
-    'av1_vaapi': ['yuv420p', 'yuv420p10le'],
-    
-    // ProRes codecs
-    'prores': ['yuv422p10le', 'yuv444p10le'],
-    'prores_ks': ['yuv422p10le', 'yuv444p10le'],
-    
-    // Other codecs
-    'mpeg4': ['yuv420p'],
-    'mpeg2video': ['yuv420p', 'yuv422p'],
-    'mpeg2_vaapi': ['yuv420p', 'nv12'],
-    'libtheora': ['yuv420p', 'yuv422p', 'yuv444p'],
-    'dnxhd': ['yuv422p'],
-    'huffyuv': ['yuv422p', 'yuv420p', 'yuv444p', 'rgb24', 'bgr24'],
-    'ffv1': ['yuv420p', 'yuv422p', 'yuv444p', 'yuv420p10le', 'yuv422p10le', 'yuv444p10le', 'yuv420p12le', 'yuv422p12le', 'yuv444p12le', 'yuv420p16le', 'yuv422p16le', 'yuv444p16le', 'rgb24', 'bgr24', 'gbrp', 'gbrp10le', 'gbrp12le', 'gbrp16le']
+    'libx264': ['yuv420p','yuvj420p','yuv422p','yuvj422p','yuv444p','yuvj444p','nv12','nv16','nv21','yuv420p10le','yuv422p10le','yuv444p10le'],
+    'h264_nvenc': ['yuv420p','yuv444p','yuv420p10le','yuv444p10le'], 'h264_qsv': ['yuv420p','nv12'], 'h264_amf': ['yuv420p','nv12'], 'h264_vaapi': ['yuv420p','nv12'],
+    'libx265': ['yuv420p','yuvj420p','yuv422p','yuvj422p','yuv444p','yuvj444p','gbrp','yuv420p10le','yuv422p10le','yuv444p10le','gbrp10le','yuv420p12le','yuv422p12le','yuv444p12le','gbrp12le','gray','gray10le','gray12le'],
+    'hevc_nvenc': ['yuv420p','nv12','p010le','yuv444p','p016le','yuv444p16le'], 'hevc_qsv': ['yuv420p','yuv420p10le','nv12'], 'hevc_amf': ['yuv420p','yuv420p10le','nv12'], 'hevc_vaapi': ['yuv420p','yuv420p10le','nv12'],
+    'libvpx': ['yuv420p'], 'libvpx-vp9': ['yuv420p','yuva420p','yuv422p','yuv440p','yuv444p','yuv420p10le','yuv422p10le','yuv440p10le','yuv444p10le','yuv420p12le','yuv422p12le','yuv440p12le','yuv444p12le','gbrp','gbrp10le','gbrp12le'],
+    'vp8_vaapi': ['yuv420p','nv12'], 'vp9_vaapi': ['yuv420p','nv12'], 'vp9_qsv': ['yuv420p','yuv420p10le'],
+    'libaom-av1': ['yuv420p','yuv422p','yuv444p','yuv420p10le','yuv422p10le','yuv444p10le'], 'libsvtav1': ['yuv420p','yuv420p10le'],
+    'av1_nvenc': ['yuv420p','yuv420p10le'], 'av1_qsv': ['yuv420p','yuv420p10le'], 'av1_amf': ['yuv420p','yuv420p10le'], 'av1_vaapi': ['yuv420p','yuv420p10le'],
+    'prores': ['yuv422p10le','yuv444p10le'], 'prores_ks': ['yuv422p10le','yuv444p10le'],
+    'mpeg4': ['yuv420p'], 'mpeg2video': ['yuv420p','yuv422p'], 'mpeg2_vaapi': ['yuv420p','nv12'], 'libtheora': ['yuv420p','yuv422p','yuv444p'], 'dnxhd': ['yuv422p'],
+    'huffyuv': ['yuv422p','yuv420p','yuv444p','rgb24','bgr24'],
+    'ffv1': ['yuv420p','yuv422p','yuv444p','yuv420p10le','yuv422p10le','yuv444p10le','yuv420p12le','yuv422p12le','yuv444p12le','yuv420p16le','yuv422p16le','yuv444p16le','rgb24','bgr24','gbrp','gbrp10le','gbrp12le','gbrp16le']
 };
 
 // Pixel format display names and grouping
@@ -127,68 +98,31 @@ const pixelFormatInfo = {
 // Codec name mapping: FFmpeg decoder name -> FFmpeg encoder name
 // This maps codec_name from metadata to the correct encoder to use
 const codecEncoderMapping = {
-    // H.264 variants
-    'h264': 'libx264',
-    'avc': 'libx264',
-    'avc1': 'libx264',
-    
-    // H.265/HEVC variants
-    'hevc': 'libx265',
-    'h265': 'libx265',
-    'hvc1': 'libx265',
-    
-    // VP8/VP9
-    'vp8': 'libvpx',
-    'vp9': 'libvpx-vp9',
-    
-    // AV1
-    'av1': 'libsvtav1',  // Use SVT-AV1 as it's faster than libaom-av1
-    
-    // MPEG variants
-    'mpeg4': 'mpeg4',
-    'msmpeg4': 'mpeg4',
-    'msmpeg4v2': 'mpeg4',
-    'msmpeg4v3': 'mpeg4',
-    'mpeg2video': 'mpeg2video',
-    'mpeg1video': 'mpeg2video',
-    
-    // ProRes
-    'prores': 'prores_ks',
-    
-    // Other codecs
-    'theora': 'libtheora',
-    'dnxhd': 'dnxhd',
-    'huffyuv': 'huffyuv',
-    'ffv1': 'ffv1',
-    'mjpeg': 'mjpeg',
-    'png': 'png',
-    'qtrle': 'qtrle',
-    'svq1': 'svq1',
-    'wmv1': 'wmv1',
-    'wmv2': 'wmv2',
-    'wmv3': 'wmv2'
+    'h264':'libx264', 'avc':'libx264', 'avc1':'libx264', 'hevc':'libx265', 'h265':'libx265', 'hvc1':'libx265',
+    'vp8':'libvpx', 'vp9':'libvpx-vp9', 'av1':'libsvtav1',
+    'mpeg4':'mpeg4', 'msmpeg4':'mpeg4', 'msmpeg4v2':'mpeg4', 'msmpeg4v3':'mpeg4', 'mpeg2video':'mpeg2video', 'mpeg1video':'mpeg2video',
+    'prores':'prores_ks', 'theora':'libtheora', 'dnxhd':'dnxhd', 'huffyuv':'huffyuv', 'ffv1':'ffv1',
+    'mjpeg':'mjpeg', 'png':'png', 'qtrle':'qtrle', 'svq1':'svq1', 'wmv1':'wmv1', 'wmv2':'wmv2', 'wmv3':'wmv2'
 };
 
 // Get the correct encoder name for a given codec from metadata
 function getEncoderForCodec(codecName) {
     if (!codecName) return 'libx264'; // Default fallback
-    
+
     // Convert to lowercase for case-insensitive matching
     const codec = codecName.toLowerCase();
-    
+
     // Check if we have a mapping for this codec
     if (codecEncoderMapping[codec]) {
         return codecEncoderMapping[codec];
     }
-    
+
     // Fallback: return libx264 for unknown codecs
     console.warn(`Unknown codec "${codecName}", falling back to libx264`);
     return 'libx264';
 }
 
-// ---------------------------------------------------------------------------
 // Cross-platform helpers
-// ---------------------------------------------------------------------------
 
 // file:// URL builder.
 // Windows: C:\Users\... → file:///C:/Users/...
@@ -328,13 +262,13 @@ function debounce(func, wait) {
 // Format file path to "path > to > file.mp4" format
 function formatPathDisplay(filePath) {
     if (!filePath) return '-';
-    
+
     // Normalize path separators to forward slashes
     const normalized = filePath.replace(/\\/g, '/');
-    
+
     // Split the path into segments
     const segments = normalized.split('/').filter(seg => seg.length > 0);
-    
+
     // Join with " > " separator
     return segments.join(' > ');
 }
@@ -375,7 +309,7 @@ function updateFileInfo() {
     } else {
         document.getElementById('profileInfo').textContent = '-';
     }
-    
+
     // Pixel format
     if (state.videoMetadata.pix_fmt) {
         document.getElementById('pixelFormatInfo').textContent = state.videoMetadata.pix_fmt;
@@ -428,7 +362,7 @@ function updateFileInfo() {
 
     // Setup audio track selector
     setupAudioTrackSelector();
-    
+
     // Update Auto codec option text
     updateAutoCodecOption();
 }
@@ -436,7 +370,7 @@ function updateFileInfo() {
 // Update Auto codec option to show current video codec
 function updateAutoCodecOption() {
     if (!state.videoMetadata || !state.videoMetadata.streams) return;
-    
+
     const videoStream = state.videoMetadata.streams.find(s => s.codec_type === 'video');
     if (videoStream && videoStream.codec_name) {
         const codecName = videoStream.codec_name.toUpperCase();
@@ -500,13 +434,13 @@ function setupAudioTrackSelector() {
         // Set default to 'all'
         audioExportTrack.value = 'all';
         state.exportSettings.audioTrack = 'all';
-        
+
         // Initialize selected tracks array
         state.exportSettings.selectedAudioTracks = [];
-        
+
         // Hide picker initially
         audioTrackPickerGroup.style.display = 'none';
-        
+
         // Create track picker checkboxes
         createAudioTrackPicker();
     } else {
@@ -520,7 +454,7 @@ function setupAudioTrackSelector() {
         noSoundExportOption.value = 'none';
         noSoundExportOption.textContent = 'No Sound';
         audioExportTrack.appendChild(noSoundExportOption);
-        
+
         audioTrackPickerGroup.style.display = 'none';
     }
 }
@@ -528,40 +462,40 @@ function setupAudioTrackSelector() {
 // Create audio track picker with checkboxes
 function createAudioTrackPicker() {
     audioTrackPicker.innerHTML = '';
-    
+
     state.audioStreams.forEach((stream, index) => {
         const trackItem = document.createElement('div');
         trackItem.className = 'audio-track-item';
-        
+
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.id = `audio-track-${index}`;
         checkbox.value = index;
         checkbox.checked = false;
-        
+
         const trackInfo = document.createElement('div');
         trackInfo.className = 'audio-track-info';
-        
+
         const trackName = document.createElement('div');
         trackName.className = 'audio-track-name';
         const codec = stream.codec_name.toUpperCase();
         const language = stream.tags && stream.tags.language ? ` (${stream.tags.language})` : '';
         const title = stream.tags && stream.tags.title ? ` - ${stream.tags.title}` : '';
         trackName.textContent = `Track ${index + 1}${language}${title}`;
-        
+
         const trackDetails = document.createElement('div');
         trackDetails.className = 'audio-track-details';
         const channels = stream.channels ? `${stream.channels}ch` : 'Unknown channels';
         const sampleRate = stream.sample_rate ? `${(stream.sample_rate / 1000).toFixed(1)}kHz` : '';
         const bitrate = stream.bit_rate ? `${(stream.bit_rate / 1000).toFixed(0)}kbps` : '';
         trackDetails.textContent = `${codec} • ${channels}${sampleRate ? ` • ${sampleRate}` : ''}${bitrate ? ` • ${bitrate}` : ''}`;
-        
+
         trackInfo.appendChild(trackName);
         trackInfo.appendChild(trackDetails);
-        
+
         trackItem.appendChild(checkbox);
         trackItem.appendChild(trackInfo);
-        
+
         // Make the whole item clickable
         trackItem.addEventListener('click', (e) => {
             if (e.target !== checkbox) {
@@ -569,9 +503,9 @@ function createAudioTrackPicker() {
                 updateSelectedAudioTracks();
             }
         });
-        
+
         checkbox.addEventListener('change', updateSelectedAudioTracks);
-        
+
         audioTrackPicker.appendChild(trackItem);
     });
 }
@@ -603,7 +537,7 @@ function buildFFmpegCommand() {
 
         // Handle audio track selection for lossless mode
         const audioTrackMode = state.exportSettings.audioTrack;
-        
+
         if (audioTrackMode === 'none') {
             cmd += ` -map 0:v:0 -an`;
         } else if (audioTrackMode === 'all') {
@@ -677,9 +611,9 @@ function buildFFmpegCommandWithEncoding() {
         const videoStream = state.videoMetadata?.streams?.find(s => s.codec_type === 'video');
         const originalCodecName = videoStream?.codec_name;
         const encoder = getEncoderForCodec(originalCodecName);
-        
+
         cmd += `-c:v ${encoder} `;
-        
+
         // For auto mode with CPU encoders, use reasonable quality settings
         if (encoder === 'libx264' || encoder === 'libx265') {
             cmd += `-crf 23 -preset medium `;
@@ -688,7 +622,7 @@ function buildFFmpegCommandWithEncoding() {
         } else if (encoder === 'libsvtav1') {
             cmd += `-crf 23 -preset 6 `;
         }
-        
+
         // For auto mode, try to preserve source pixel format if compatible
         const sourcePixFmt = state.videoMetadata?.pix_fmt || videoStream?.pix_fmt;
         if (sourcePixFmt) {
@@ -730,7 +664,7 @@ function buildFFmpegCommandWithEncoding() {
             if (codec.includes('264') || codec.includes('265') || codec.includes('libvpx') || codec.includes('libaom')) {
                 cmd += `-preset ${state.exportSettings.preset} `;
             }
-            
+
             // Pixel format handling
             if (state.exportSettings.pixelFormat !== 'auto') {
                 // User explicitly selected a format
@@ -739,7 +673,7 @@ function buildFFmpegCommandWithEncoding() {
                 // Auto mode: use source format if supported, otherwise fallback to yuv420p
                 const supportedFormats = codecPixelFormatSupport[codec] || ['yuv420p'];
                 const sourcePixFmt = state.videoMetadata?.pix_fmt;
-                
+
                 if (sourcePixFmt && supportedFormats.includes(sourcePixFmt)) {
                     // Source format is supported, use it
                     cmd += `-pix_fmt ${sourcePixFmt} `;
@@ -775,7 +709,7 @@ function buildFFmpegCommandWithEncoding() {
         // Export selected audio tracks
         if (state.exportSettings.selectedAudioTracks.length > 0) {
             cmd += `-map 0:v:0 `;
-            
+
             state.exportSettings.selectedAudioTracks.forEach(trackIndex => {
                 cmd += `-map 0:a:${trackIndex} `;
             });
@@ -799,7 +733,7 @@ function buildFFmpegCommandWithEncoding() {
             if (state.exportSettings.selectedAudioTracks.length === 1) {
                 // Single track - just map it normally
                 cmd += `-map 0:v:0 -map 0:a:${state.exportSettings.selectedAudioTracks[0]} `;
-                
+
                 if (audioCopy) {
                     cmd += `-c:a copy `;
                 } else {
@@ -814,10 +748,10 @@ function buildFFmpegCommandWithEncoding() {
                 const trackInputs = state.exportSettings.selectedAudioTracks
                     .map(trackIndex => `[0:a:${trackIndex}]`)
                     .join('');
-                
+
                 cmd += `-filter_complex "${trackInputs}amix=inputs=${state.exportSettings.selectedAudioTracks.length}:duration=longest:dropout_transition=0[aout]" `;
                 cmd += `-map 0:v:0 -map [aout] `;
-                
+
                 // Always need to encode when merging
                 cmd += `-c:a ${state.exportSettings.audioCodec} `;
                 if (!state.exportSettings.audioCodec.startsWith('pcm')) {
@@ -886,13 +820,13 @@ function initializeCodecUI() {
 function updatePixelFormatOptions(codec) {
     const supportedFormats = codecPixelFormatSupport[codec] || ['yuv420p']; // Default to yuv420p if codec not found
     const currentValue = pixelFormat.value;
-    
+
     // Save current selection
     const wasAuto = currentValue === 'auto';
-    
+
     // Clear existing options except "Auto"
     pixelFormat.innerHTML = '<option value="auto">Auto | from source</option>';
-    
+
     // Group formats by category
     const groups = {
         '420-8bit': { label: '8-bit 4:2:0 (Most Compatible)', formats: [] },
@@ -905,7 +839,7 @@ function updatePixelFormatOptions(codec) {
         '422-12bit': { label: '12-bit 4:2:2', formats: [] },
         '444-12bit': { label: '12-bit 4:4:4', formats: [] }
     };
-    
+
     // Sort supported formats into groups
     supportedFormats.forEach(format => {
         const info = pixelFormatInfo[format];
@@ -913,25 +847,25 @@ function updatePixelFormatOptions(codec) {
             groups[info.group].formats.push({ value: format, name: info.name });
         }
     });
-    
+
     // Add optgroups with formats
     Object.keys(groups).forEach(groupKey => {
         const group = groups[groupKey];
         if (group.formats.length > 0) {
             const optgroup = document.createElement('optgroup');
             optgroup.label = group.label;
-            
+
             group.formats.forEach(format => {
                 const option = document.createElement('option');
                 option.value = format.value;
                 option.textContent = format.name;
                 optgroup.appendChild(option);
             });
-            
+
             pixelFormat.appendChild(optgroup);
         }
     });
-    
+
     // Restore selection if still available, otherwise reset to auto
     if (!wasAuto && supportedFormats.includes(currentValue)) {
         pixelFormat.value = currentValue;
@@ -1140,7 +1074,7 @@ async function importVideo(filePath) {
 
             // Initialize UI elements visibility based on default codec settings
             initializeCodecUI();
-            
+
             // Update pixel format options based on current codec
             if (state.exportSettings.videoCodec !== 'copy') {
                 updatePixelFormatOptions(state.exportSettings.videoCodec);
@@ -1153,7 +1087,6 @@ async function importVideo(filePath) {
         // Show editor
         emptyState.style.display = 'none';
         editorState.style.display = 'grid';
-
     } catch (error) {
         console.error('Error importing video:', error);
 
@@ -1204,12 +1137,12 @@ dropZone.addEventListener('drop', async (e) => {
     console.log('Drop event on dropZone:', e);
     const files = e.dataTransfer.files;
     console.log('Files count:', files.length);
-    
+
     if (files.length > 0) {
         const file = files[0];
         console.log('File object:', file);
         console.log('File.name:', file.name);
-        
+
         // Use webUtils.getPathForFile through electronAPI
         let filePath;
         try {
@@ -1219,7 +1152,7 @@ dropZone.addEventListener('drop', async (e) => {
             console.error('Error getting file path:', error);
             filePath = null;
         }
-        
+
         if (!filePath) {
             console.error('Could not get file path');
             alert('Error: Could not access file path. Please use the Import button instead.');
@@ -1392,7 +1325,6 @@ dropZone.addEventListener('drop', async (e) => {
 
                 emptyState.style.display = 'none';
                 editorState.style.display = 'grid';
-
             } catch (error) {
                 console.error('Error loading video:', error);
 
@@ -1439,12 +1371,12 @@ editorState.addEventListener('drop', async (e) => {
     console.log('Drop event on editorState:', e);
     const files = e.dataTransfer.files;
     console.log('Files count:', files.length);
-    
+
     if (files.length > 0) {
         const file = files[0];
         console.log('File object:', file);
         console.log('File.name:', file.name);
-        
+
         // Use webUtils.getPathForFile through electronAPI
         let filePath;
         try {
@@ -1454,7 +1386,7 @@ editorState.addEventListener('drop', async (e) => {
             console.error('Error getting file path:', error);
             filePath = null;
         }
-        
+
         if (!filePath) {
             console.error('Could not get file path');
             alert('Error: Could not access file path. Please use the Import button instead.');
@@ -1625,7 +1557,6 @@ editorState.addEventListener('drop', async (e) => {
                     initializeCodecUI();
                     updateFFmpegCommand();
                 });
-
             } catch (error) {
                 console.error('Error loading video:', error);
 
@@ -2116,7 +2047,7 @@ cropToggle.addEventListener('change', (e) => {
 
     if (state.cropEnabled) {
         updateCropOverlay();
-        
+
         // Automatically switch to Auto codec when crop is enabled, but only if Copy is selected
         // If user already selected a specific encoder, respect their choice
         if (videoCodec.value === 'copy') {
@@ -2233,7 +2164,7 @@ function processCropDrag() {
     if (handle === 'move') {
         const newX = cropDragStartState.x + deltaX;
         const newY = cropDragStartState.y + deltaY;
-        
+
         // Clamp to video boundaries
         state.crop.x = clamp(newX, 0, videoWidth - cropDragStartState.width);
         state.crop.y = clamp(newY, 0, videoHeight - cropDragStartState.height);
@@ -2322,7 +2253,7 @@ videoCodec.addEventListener('change', (e) => {
 
     // Update pixel format visibility - show for all encoding codecs
     pixelFormatGroup.style.display = (!isCopy && !isAuto) ? 'block' : 'none';
-    
+
     // Update available pixel formats based on codec
     if (!isCopy && !isAuto) {
         updatePixelFormatOptions(codec);
@@ -2447,12 +2378,12 @@ audioTrackSelect.addEventListener('change', (e) => {
 audioExportTrack.addEventListener('change', (e) => {
     const value = e.target.value;
     state.exportSettings.audioTrack = value;
-    
+
     // Show/hide track picker based on selection
     if (value === 'pick-export') {
         audioTrackPickerGroup.style.display = 'block';
         audioTrackPickerLabel.textContent = 'Select tracks to export';
-        
+
         // Clear all checkboxes
         audioTrackPicker.querySelectorAll('input[type="checkbox"]').forEach(cb => {
             cb.checked = false;
@@ -2461,7 +2392,7 @@ audioExportTrack.addEventListener('change', (e) => {
     } else if (value === 'pick-merge') {
         audioTrackPickerGroup.style.display = 'block';
         audioTrackPickerLabel.textContent = 'Select tracks to merge';
-        
+
         // Clear all checkboxes
         audioTrackPicker.querySelectorAll('input[type="checkbox"]').forEach(cb => {
             cb.checked = false;
@@ -2471,7 +2402,7 @@ audioExportTrack.addEventListener('change', (e) => {
         audioTrackPickerGroup.style.display = 'none';
         state.exportSettings.selectedAudioTracks = [];
     }
-    
+
     updateFFmpegCommand();
 });
 
@@ -2555,7 +2486,6 @@ exportBtn.addEventListener('click', async () => {
                 exportModal.remove();
             });
         }
-
     } catch (error) {
         console.error('Export error:', error);
         const exportModal = document.getElementById('exportModal');
@@ -2755,7 +2685,7 @@ document.getElementById('menuShortcuts').addEventListener('click', () => {
     ${m}+S - Export Video
     ${m}+Q - Quit
     ${m}+F - Video Fullscreen
-    F11 - Application Fullscreen    
+    F11 - Application Fullscreen
 
     Space - Play/Pause
     ← → - Previous/Next frame
@@ -3108,7 +3038,6 @@ function toggleVideoFullscreen() {
     }
 }
 
-// ===== PRESET MANAGEMENT =====
 let presets = {};
 let currentEditingPreset = null;
 
@@ -3146,7 +3075,7 @@ async function loadPresetsFromStorage() {
 // Update presets dropdown in menu bar
 function updatePresetsDropdown() {
     const presetNames = Object.keys(presets);
-    
+
     if (presetNames.length === 0) {
         presetsListContainer.innerHTML = '<div class="menu-option disabled" style="opacity: 0.5; cursor: default;">No presets saved</div>';
     } else {
@@ -3159,7 +3088,7 @@ function updatePresetsDropdown() {
                 ${escapeHtml(name)}
             </div>
         `).join('');
-        
+
         // Add event listeners to load presets
         document.querySelectorAll('.preset-load-option').forEach(option => {
             option.addEventListener('click', () => {
@@ -3175,7 +3104,7 @@ function updatePresetsDropdown() {
 function loadPreset(name) {
     const preset = presets[name];
     if (!preset) return;
-    
+
     // Update UI elements
     videoCodec.value = preset.videoCodec || 'copy';
     audioCodec.value = preset.audioCodec || 'copy';
@@ -3188,17 +3117,17 @@ function loadPreset(name) {
     encoderPreset.value = preset.preset || 'medium';
     pixelFormat.value = preset.pixelFormat || 'auto';
     container.value = preset.container || 'mp4';
-    
+
     // Update state
     state.exportSettings = { ...preset };
-    
+
     // Handle audio track picker visibility and restore selected tracks
     if (preset.audioTrack === 'pick-export' || preset.audioTrack === 'pick-merge') {
         audioTrackPickerGroup.style.display = 'block';
-        audioTrackPickerLabel.textContent = preset.audioTrack === 'pick-export' 
-            ? 'Select tracks to export' 
+        audioTrackPickerLabel.textContent = preset.audioTrack === 'pick-export'
+            ? 'Select tracks to export'
             : 'Select tracks to merge';
-        
+
         // Restore selected tracks
         if (preset.selectedAudioTracks && preset.selectedAudioTracks.length > 0) {
             audioTrackPicker.querySelectorAll('input[type="checkbox"]').forEach(cb => {
@@ -3209,15 +3138,15 @@ function loadPreset(name) {
     } else {
         audioTrackPickerGroup.style.display = 'none';
     }
-    
+
     // Dispatch change events to trigger UI updates
     videoCodec.dispatchEvent(new Event('change'));
     audioCodec.dispatchEvent(new Event('change'));
     qualityMode.dispatchEvent(new Event('change'));
     audioExportTrack.dispatchEvent(new Event('change'));
-    
+
     updateFFmpegCommand();
-    
+
     console.log(`Loaded preset: ${name}`);
 }
 
@@ -3253,23 +3182,23 @@ function hidePresetManager() {
 // Render preset list in manager
 function renderPresetList() {
     const presetNames = Object.keys(presets);
-    
+
     if (presetNames.length === 0) {
         presetList.innerHTML = '<div class="empty-preset-message">No presets saved yet</div>';
         return;
     }
-    
+
     presetList.innerHTML = presetNames.map(name => {
         const preset = presets[name];
         const details = [];
-        
+
         // Build details string
         if (preset.videoCodec) details.push(`Video: ${preset.videoCodec}`);
         if (preset.audioCodec) details.push(`Audio: ${preset.audioCodec}`);
         if (preset.qualityMode === 'crf') details.push(`CRF: ${preset.crf}`);
         if (preset.qualityMode === 'bitrate') details.push(`Bitrate: ${preset.videoBitrate}k`);
         if (preset.container) details.push(`${preset.container.toUpperCase()}`);
-        
+
         return `
             <div class="preset-item">
                 <div class="preset-info">
@@ -3305,7 +3234,7 @@ function renderPresetList() {
             </div>
         `;
     }).join('');
-    
+
     // Add event listeners
     presetList.querySelectorAll('[data-action]').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -3323,7 +3252,7 @@ async function handlePresetAction(action, presetName) {
             loadPreset(presetName);
             hidePresetManager();
             break;
-            
+
         case 'rename':
             currentEditingPreset = presetName;
             presetNameInput.value = presetName;
@@ -3331,13 +3260,13 @@ async function handlePresetAction(action, presetName) {
             savePresetDialog.style.display = 'flex';
             setTimeout(() => presetNameInput.select(), 100);
             break;
-            
+
         case 'overwrite':
             if (confirm(`Overwrite preset "${presetName}" with current settings?`)) {
                 await savePresetWithName(presetName);
             }
             break;
-            
+
         case 'delete':
             if (confirm(`Delete preset "${presetName}"?`)) {
                 await deletePreset(presetName);
@@ -3365,10 +3294,10 @@ function hideSavePresetDialog() {
 // Save preset with name
 async function savePresetWithName(name) {
     if (!name || name.trim() === '') return;
-    
+
     const settings = getCurrentExportSettings();
     const result = await window.electronAPI.savePreset(name.trim(), settings);
-    
+
     if (result.success) {
         presets[name.trim()] = settings;
         updatePresetsDropdown();
@@ -3382,7 +3311,7 @@ async function savePresetWithName(name) {
 // Delete preset
 async function deletePreset(name) {
     const result = await window.electronAPI.deletePreset(name);
-    
+
     if (result.success) {
         delete presets[name];
         updatePresetsDropdown();
@@ -3396,9 +3325,9 @@ async function deletePreset(name) {
 // Rename preset
 async function renamePreset(oldName, newName) {
     if (!newName || newName.trim() === '') return;
-    
+
     const result = await window.electronAPI.renamePreset(oldName, newName.trim());
-    
+
     if (result.success) {
         presets[newName.trim()] = presets[oldName];
         if (oldName !== newName.trim()) {
@@ -3425,7 +3354,7 @@ async function exportPresets() {
         alert('No presets to export');
         return;
     }
-    
+
     try {
         // Create export data with metadata
         const exportData = {
@@ -3433,10 +3362,10 @@ async function exportPresets() {
             exportDate: new Date().toISOString(),
             presets: presets
         };
-        
+
         const jsonString = JSON.stringify(exportData, null, 2);
         const blob = new Blob([jsonString], { type: 'application/json' });
-        
+
         // Create download link
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -3446,7 +3375,7 @@ async function exportPresets() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
+
         console.log('Presets exported successfully');
     } catch (err) {
         console.error('Failed to export presets:', err);
@@ -3459,35 +3388,35 @@ async function importPresets(file) {
     try {
         const text = await file.text();
         const importData = JSON.parse(text);
-        
+
         // Validate import data structure
         if (!importData.presets || typeof importData.presets !== 'object') {
             throw new Error('Invalid preset file format');
         }
-        
+
         const importedPresets = importData.presets;
         const presetNames = Object.keys(importedPresets);
-        
+
         if (presetNames.length === 0) {
             alert('No presets found in the file');
             return;
         }
-        
+
         // Check for conflicts
         const conflicts = presetNames.filter(name => presets[name]);
         let shouldProceed = true;
-        
+
         if (conflicts.length > 0) {
             const message = `The following presets already exist and will be overwritten:\n${conflicts.join(', ')}\n\nContinue?`;
             shouldProceed = confirm(message);
         }
-        
+
         if (!shouldProceed) return;
-        
+
         // Import presets one by one
         let successCount = 0;
         let failCount = 0;
-        
+
         for (const [name, settings] of Object.entries(importedPresets)) {
             try {
                 const result = await window.electronAPI.savePreset(name, settings);
@@ -3503,18 +3432,18 @@ async function importPresets(file) {
                 console.error(`Failed to import preset "${name}":`, err);
             }
         }
-        
+
         // Update UI
         updatePresetsDropdown();
         renderPresetList();
-        
+
         // Show result
         let message = `Successfully imported ${successCount} preset(s)`;
         if (failCount > 0) {
             message += `\n${failCount} preset(s) failed to import`;
         }
         alert(message);
-        
+
         console.log(`Presets imported: ${successCount} succeeded, ${failCount} failed`);
     } catch (err) {
         console.error('Failed to import presets:', err);
@@ -3566,7 +3495,7 @@ confirmSavePreset.addEventListener('click', async () => {
         alert('Please enter a preset name');
         return;
     }
-    
+
     if (currentEditingPreset) {
         // Renaming
         await renamePreset(currentEditingPreset, name);
@@ -3579,7 +3508,7 @@ confirmSavePreset.addEventListener('click', async () => {
         }
         await savePresetWithName(name);
     }
-    
+
     hideSavePresetDialog();
 });
 
@@ -3602,9 +3531,8 @@ window.electronAPI.onOpenFile((filePath) => {
     console.log('Received open-file event:', filePath);
     importVideo(filePath);
 });
-// ============================================================================
+
 // Update System
-// ============================================================================
 
 let updateDialog = null;
 let updateData = null;
@@ -3652,30 +3580,30 @@ function createUpdateDialog() {
 function showUpdateDialog(data) {
     if (!updateDialog) {
         updateDialog = createUpdateDialog();
-        
+
         // Setup event listeners
         const laterBtn = updateDialog.querySelector('#updateLaterBtn');
         const installBtn = updateDialog.querySelector('#updateInstallBtn');
-        
+
         laterBtn.addEventListener('click', hideUpdateDialog);
         installBtn.addEventListener('click', handleInstallUpdate);
     }
-    
+
     updateData = data;
-    
+
     // Update dialog content
     const versionEl = updateDialog.querySelector('#updateVersion');
     const notesEl = updateDialog.querySelector('#updateNotes');
     const progressEl = updateDialog.querySelector('#updateProgress');
     const installBtn = updateDialog.querySelector('#updateInstallBtn');
     const laterBtn = updateDialog.querySelector('#updateLaterBtn');
-    
+
     versionEl.textContent = data.version;
     notesEl.textContent = data.releaseNotes || 'No release notes available.';
     progressEl.style.display = 'none';
     installBtn.disabled = false;
     laterBtn.disabled = false;
-    
+
     updateDialog.style.display = 'flex';
 }
 
@@ -3691,11 +3619,11 @@ async function handleInstallUpdate() {
     const installBtn = updateDialog.querySelector('#updateInstallBtn');
     const laterBtn = updateDialog.querySelector('#updateLaterBtn');
     const progressEl = updateDialog.querySelector('#updateProgress');
-    
+
     installBtn.disabled = true;
     laterBtn.disabled = true;
     progressEl.style.display = 'block';
-    
+
     try {
         await window.electronAPI.updater.downloadAndInstall();
     } catch (error) {
@@ -3709,19 +3637,19 @@ async function handleInstallUpdate() {
 // Update progress handlers
 window.electronAPI.onUpdateDownloadProgress((data) => {
     if (!updateDialog) return;
-    
+
     const progressFill = updateDialog.querySelector('#updateProgressFill');
     const progressText = updateDialog.querySelector('#updateProgressText');
-    
+
     progressFill.style.width = `${data.progress}%`;
     progressText.textContent = `Downloading... ${data.downloaded} / ${data.total} (${data.progress}%)`;
 });
 
 window.electronAPI.onUpdateDownloadStatus((data) => {
     if (!updateDialog) return;
-    
+
     const progressText = updateDialog.querySelector('#updateProgressText');
-    
+
     if (data.status === 'downloading') {
         progressText.textContent = data.message;
     } else if (data.status === 'completed') {
@@ -3737,11 +3665,11 @@ window.electronAPI.onUpdateDownloadStatus((data) => {
 
 window.electronAPI.onUpdateInstallStatus((data) => {
     if (!updateDialog) return;
-    
+
     const progressText = updateDialog.querySelector('#updateProgressText');
     const installBtn = updateDialog.querySelector('#updateInstallBtn');
     const laterBtn = updateDialog.querySelector('#updateLaterBtn');
-    
+
     if (data.status === 'installing') {
         progressText.textContent = data.message;
     } else if (data.status === 'completed') {
@@ -3750,7 +3678,7 @@ window.electronAPI.onUpdateInstallStatus((data) => {
         installBtn.disabled = false;
         laterBtn.textContent = 'Restart Later';
         laterBtn.disabled = false;
-        
+
         // Change install button to restart app
         installBtn.onclick = () => {
             window.location.reload();
@@ -3781,7 +3709,7 @@ window.electronAPI.onUpdateCheckStatus((data) => {
 
 window.electronAPI.onUpdateAvailable((data) => {
     const updateIndicator = document.getElementById('updateIndicator');
-    
+
     if (data.silent) {
         // Silent check on startup - just show indicator
         if (updateIndicator) {
@@ -3828,15 +3756,15 @@ function showNotification(message, type = 'info') {
         transform: translateY(-20px);
         transition: all 0.3s ease;
     `;
-    
+
     document.body.appendChild(toast);
-    
+
     // Animate in
     setTimeout(() => {
         toast.style.opacity = '1';
         toast.style.transform = 'translateY(0)';
     }, 10);
-    
+
     // Remove after 3 seconds
     setTimeout(() => {
         toast.style.opacity = '0';

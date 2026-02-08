@@ -45,3 +45,6 @@ build.sh
 .env
 .env.local
 .env.production
+
+
+.old
