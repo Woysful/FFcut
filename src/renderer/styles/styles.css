@@ -95,7 +95,7 @@ overflow: hidden;
     align-items: center;
     padding: 0 var(--spacing-sm);
     /* padding: var(--spacing-xs) var(--spacing-sm); */
-    /* padding: 2px var(--spacing-sm); */
+    padding: 2px var(--spacing-sm);
     flex-shrink: 0;
     user-select: none;
     position: relative;
@@ -161,7 +161,7 @@ overflow: hidden;
 }
 
 .menu-dropdown {
-    margin-top: 9px;
+    margin-top: 11px;
     position: absolute;
     top: 100%;
     left: 0;
