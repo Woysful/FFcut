@@ -1,13 +1,16 @@
 # [<img src="https://github.com/Woysful/FFcut/blob/main/assets/icon.png" width="2.75%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
 
 Basically an Electron wrapper for FFmpeg
-![](https://github.com/user-attachments/assets/0a19981d-3f19-4a93-983c-338bf0322255)
+![](https://github.com/user-attachments/assets/a279369d-9ec7-4f92-9cd9-4f4982ed00ab)
 > Heavily vibe coded. Expect issues.
 
 ## Features
 - Editing:
   - Trim
   - Crop
+  - Rotate
+  - Flip
+  - Resize
   - Video/Audio codecs
   - Specific audio track export
   - Custom FFmpeg command
