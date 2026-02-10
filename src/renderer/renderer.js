@@ -10,12 +10,22 @@ let state = {
     previewAudioPaths: null,
     trimStart: 0,
     trimEnd: 0,
+    transformEnabled: false,
     cropEnabled: false,
     crop: {
         x: 0,
         y: 0,
         width: 0,
-        height: 0
+        height: 0,
+        originalWidth: 0,
+        originalHeight: 0
+    },
+    rotation: 0, // 0, 90, 180, 270
+    flipHorizontal: false,
+    flipVertical: false,
+    scale: {
+        width: -1,  // -1 means auto/original
+        height: -1
     },
     isPlaying: false,
     isLooping: false,
@@ -194,6 +204,8 @@ const trimEndInput = document.getElementById('trimEndInput');
 const resetTrimBtn = document.getElementById('resetTrimBtn');
 const trimInfo = document.getElementById('trimInfo');
 
+const transformToggle = document.getElementById('transformToggle');
+const transformControls = document.getElementById('transformControls');
 const cropToggle = document.getElementById('cropToggle');
 const cropControls = document.getElementById('cropControls');
 const quickCropBtn = document.getElementById('quickCropBtn');
@@ -202,6 +214,28 @@ const cropX = document.getElementById('cropX');
 const cropY = document.getElementById('cropY');
 const cropWidth = document.getElementById('cropWidth');
 const cropHeight = document.getElementById('cropHeight');
+
+// Crop magnifier
+const cropMagnifier = document.getElementById('cropMagnifier');
+const cropMagnifierInfo = document.getElementById('cropMagnifierInfo');
+const cropHandleCoords = document.getElementById('cropHandleCoords');
+const magnifierCanvas = document.getElementById('magnifierCanvas');
+const magnifierCtx = magnifierCanvas.getContext('2d');
+let MAGNIFIER_SIZE = 150; // Changed from const to let - can be adjusted with Ctrl+Wheel
+let magnifierZoom = 5; // Default 5x zoom, can be changed with mouse wheel
+magnifierCanvas.width = MAGNIFIER_SIZE;
+magnifierCanvas.height = MAGNIFIER_SIZE;
+
+// Transform buttons
+const rotateLeftBtn = document.getElementById('rotateLeftBtn');
+const rotateRightBtn = document.getElementById('rotateRightBtn');
+const flipHorizontalBtn = document.getElementById('flipHorizontalBtn');
+const flipVerticalBtn = document.getElementById('flipVerticalBtn');
+
+// Scale controls
+const scaleWidth = document.getElementById('scaleWidth');
+const scaleHeight = document.getElementById('scaleHeight');
+const scalePresets = document.querySelectorAll('.preset-btn');
 
 const videoCodec = document.getElementById('videoCodec');
 const audioCodec = document.getElementById('audioCodec');
@@ -244,6 +278,42 @@ function formatFileSize(bytes) {
 
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
+}
+
+// Helper function to get effective video dimensions considering rotation
+function getEffectiveVideoDimensions() {
+    if (!state.videoMetadata || !state.videoMetadata.streams || !state.videoMetadata.streams[0]) {
+        return { width: 0, height: 0 };
+    }
+    
+    const originalWidth = state.videoMetadata.streams[0].width;
+    const originalHeight = state.videoMetadata.streams[0].height;
+    
+    // Swap dimensions for 90 and 270 degree rotations
+    if (state.rotation === 90 || state.rotation === 270) {
+        return { width: originalHeight, height: originalWidth };
+    }
+    
+    return { width: originalWidth, height: originalHeight };
+}
+
+// Convert coordinates from rotated video space to original video space
+function rotatedToOriginalCoords(x, y, rotatedWidth, rotatedHeight, originalWidth, originalHeight, rotation) {
+    switch (rotation) {
+        case 0:
+            return { x, y };
+        case 90:
+            // 90° CW: rotated (x,y) -> original (y, originalHeight - x)
+            return { x: y, y: originalHeight - x };
+        case 180:
+            // 180°: rotated (x,y) -> original (originalWidth - x, originalHeight - y)
+            return { x: originalWidth - x, y: originalHeight - y };
+        case 270:
+            // 270° CW (or 90° CCW): rotated (x,y) -> original (originalWidth - y, x)
+            return { x: originalWidth - y, y: x };
+        default:
+            return { x, y };
+    }
 }
 
 // Debounce function for performance optimization
@@ -523,8 +593,8 @@ function buildFFmpegCommand() {
     const videoAuto = state.exportSettings.videoCodec === 'auto';
     const audioCopy = state.exportSettings.audioCodec === 'copy';
 
-    // Both copy - full lossless mode (not available with auto codec)
-    if (videoCopy && audioCopy && !state.cropEnabled) {
+    // Both copy - full lossless mode (not available with auto codec or transformations)
+    if (videoCopy && audioCopy && !hasAnyTransformations()) {
         let cmd = '-c copy';
 
         if (state.trimStart > 0) {
@@ -594,9 +664,44 @@ function buildFFmpegCommandWithEncoding() {
     // Video filters
     let filters = [];
 
-    // Crop filter (forces video encoding)
+    // Rotation filter - apply BEFORE crop to match preview behavior
+    if (state.rotation === 90) {
+        filters.push('transpose=1'); // 90 degrees clockwise
+    } else if (state.rotation === 180) {
+        filters.push('transpose=1,transpose=1'); // 180 degrees
+    } else if (state.rotation === 270) {
+        filters.push('transpose=2'); // 90 degrees counter-clockwise
+    }
+
+    // Crop filter - apply AFTER rotation to match preview
+    // Crop coordinates are relative to the rotated video
     if (state.cropEnabled) {
-        filters.push(`crop=${state.crop.width}:${state.crop.height}:${state.crop.x}:${state.crop.y}`);
+        const effectiveDims = getEffectiveVideoDimensions();
+        const hasCrop = state.crop.width !== effectiveDims.width || 
+                        state.crop.height !== effectiveDims.height ||
+                        state.crop.x !== 0 || 
+                        state.crop.y !== 0;
+        
+        if (hasCrop) {
+            filters.push(`crop=${state.crop.width}:${state.crop.height}:${state.crop.x}:${state.crop.y}`);
+        }
+    }
+
+    // Flip filters
+    if (state.flipHorizontal) {
+        filters.push('hflip');
+    }
+    if (state.flipVertical) {
+        filters.push('vflip');
+    }
+
+    // Scale filter - only add if values are set (not -1)
+    if (state.scale.width !== -1 || state.scale.height !== -1) {
+        const scaleW = state.scale.width !== -1 ? state.scale.width : -1;
+        const scaleH = state.scale.height !== -1 ? state.scale.height : -1;
+        filters.push(`scale=${scaleW}:${scaleH}`);
+        // Fix SAR (Sample Aspect Ratio) to prevent distortion in players
+        filters.push('setsar=1');
     }
 
     if (filters.length > 0) {
@@ -604,7 +709,7 @@ function buildFFmpegCommandWithEncoding() {
     }
 
     // Video codec
-    if (videoCopy && !state.cropEnabled) {
+    if (videoCopy && !hasAnyTransformations()) {
         cmd += `-c:v copy `;
     } else if (videoAuto) {
         // Auto mode: use the encoder matching the original video codec
@@ -1066,8 +1171,25 @@ async function importVideo(filePath) {
             cropY.max = videoHeight;
             cropWidth.value = videoWidth;
             cropHeight.value = videoHeight;
+            cropX.value = 0;
+            cropY.value = 0;
             state.crop.width = videoWidth;
             state.crop.height = videoHeight;
+            state.crop.originalWidth = videoWidth;
+            state.crop.originalHeight = videoHeight;
+            state.crop.x = 0;
+            state.crop.y = 0;
+            
+            // Reset transformations
+            state.rotation = 0;
+            state.flipHorizontal = false;
+            state.flipVertical = false;
+            state.scale.width = -1;
+            state.scale.height = -1;
+            scaleWidth.value = '';
+            scaleHeight.value = '';
+            updateTransformUI();
+            updatePreviewTransform();
 
             // Update file info
             updateFileInfo();
@@ -2020,36 +2142,107 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => {
     state.isDraggingTrim = null;
     state.isDraggingCrop = null;
+    // Hide magnifier and info
+    cropMagnifier.classList.remove('active');
+    cropMagnifierInfo.classList.remove('active');
+    cropHandleCoords.classList.remove('active');
     // Ensure final update happens
     updateFFmpegCommand();
+});
+
+// Hide magnifier when cursor leaves the preview area
+document.querySelector('.preview-container').addEventListener('mouseleave', () => {
+    cropMagnifier.classList.remove('active');
+    cropMagnifierInfo.classList.remove('active');
+    cropHandleCoords.classList.remove('active');
 });
 
 // Window resize handler
 window.addEventListener('resize', () => {
     updateTrimHandles();
-    if (state.cropEnabled) {
-        updateCropOverlay();
+    if (state.transformEnabled) {
+        // Re-calculate preview transform to fit in resized container
+        updatePreviewTransform();
+        if (state.cropEnabled) {
+            updateCropOverlay();
+        }
     }
 });
 
 // Quick Crop Toggle
 quickCropBtn.addEventListener('click', () => {
-    cropToggle.checked = !cropToggle.checked;
-    cropToggle.dispatchEvent(new Event('change'));
+    // If transform is disabled, enable both transform and crop
+    if (!state.transformEnabled) {
+        transformToggle.checked = true;
+        transformToggle.dispatchEvent(new Event('change'));
+        cropToggle.checked = true;
+        cropToggle.dispatchEvent(new Event('change'));
+    } else {
+        // If transform is enabled, just toggle crop
+        cropToggle.checked = !cropToggle.checked;
+        cropToggle.dispatchEvent(new Event('change'));
+    }
 });
 
-// Crop Controls
+// Transform Controls
+transformToggle.addEventListener('change', (e) => {
+    state.transformEnabled = e.target.checked;
+    transformControls.style.display = state.transformEnabled ? 'block' : 'none';
+
+    if (state.transformEnabled) {
+        updatePreviewTransform();
+        
+        // Restore crop overlay if crop is enabled
+        if (state.cropEnabled) {
+            cropOverlay.classList.add('active');
+        }
+        
+        // Automatically switch to Auto codec if any transformations are applied
+        if (hasAnyTransformations() && videoCodec.value === 'copy') {
+            videoCodec.value = 'auto';
+            videoCodec.dispatchEvent(new Event('change'));
+        }
+    } else {
+        // Remove preview transform and crop overlay when disabled
+        videoPreview.style.transform = '';
+        cropOverlay.classList.remove('active');
+        // Also turn off the quickCropBtn when transform is disabled
+        quickCropBtn.classList.remove('active');
+    }
+
+    updateFFmpegCommand();
+});
+
+// Crop Toggle (inside Transform section)
 cropToggle.addEventListener('change', (e) => {
     state.cropEnabled = e.target.checked;
     cropControls.style.display = state.cropEnabled ? 'block' : 'none';
-    cropOverlay.classList.toggle('active', state.cropEnabled);
+    cropOverlay.classList.toggle('active', state.cropEnabled && state.transformEnabled);
+    
+    // Update quickCropBtn visual state to reflect crop state
     quickCropBtn.classList.toggle('active', state.cropEnabled);
 
     if (state.cropEnabled) {
+        // Update crop input limits based on current rotation
+        updateCropInputLimits();
+        
+        // If crop dimensions are not set or invalid, initialize to full frame
+        const effectiveDims = getEffectiveVideoDimensions();
+        if (state.crop.width === 0 || state.crop.height === 0 || 
+            state.crop.width > effectiveDims.width || state.crop.height > effectiveDims.height) {
+            state.crop.x = 0;
+            state.crop.y = 0;
+            state.crop.width = effectiveDims.width;
+            state.crop.height = effectiveDims.height;
+            cropX.value = 0;
+            cropY.value = 0;
+            cropWidth.value = effectiveDims.width;
+            cropHeight.value = effectiveDims.height;
+        }
+        
         updateCropOverlay();
-
-        // Automatically switch to Auto codec when crop is enabled, but only if Copy is selected
-        // If user already selected a specific encoder, respect their choice
+        
+        // Switch to encoding if using copy codec
         if (videoCodec.value === 'copy') {
             videoCodec.value = 'auto';
             videoCodec.dispatchEvent(new Event('change'));
@@ -2068,10 +2261,505 @@ function updateCropValues() {
     updateFFmpegCommand();
 }
 
+// Reset crop to full frame
+function resetCrop() {
+    if (!state.cropEnabled || !state.videoMetadata) return;
+    
+    const effectiveDims = getEffectiveVideoDimensions();
+    
+    state.crop.x = 0;
+    state.crop.y = 0;
+    state.crop.width = effectiveDims.width;
+    state.crop.height = effectiveDims.height;
+    
+    cropX.value = 0;
+    cropY.value = 0;
+    cropWidth.value = effectiveDims.width;
+    cropHeight.value = effectiveDims.height;
+    
+    updateCropOverlay();
+    updateFFmpegCommand();
+}
+
+// Update magnifier view during crop dragging
+function updateMagnifier(clientX, clientY) {
+    if (!state.isDraggingCrop || !videoPreview.videoWidth) {
+        cropMagnifier.classList.remove('active');
+        cropMagnifierInfo.classList.remove('active');
+        cropHandleCoords.classList.remove('active');
+        return;
+    }
+    
+    // Show magnifier and info
+    cropMagnifier.classList.add('active');
+    cropMagnifierInfo.classList.add('active');
+    
+    // Position magnifier near cursor (offset to not block the view)
+    const offsetX = 30;
+    const offsetY = 30;
+    cropMagnifier.style.left = `${clientX + offsetX}px`;
+    cropMagnifier.style.top = `${clientY + offsetY}px`;
+    
+    // Update magnifier size dynamically
+    cropMagnifier.style.width = `${MAGNIFIER_SIZE}px`;
+    cropMagnifier.style.height = `${MAGNIFIER_SIZE}px`;
+    
+    // Position info above magnifier - only W and H horizontally
+    const infoHeight = 28; // Single line now
+    cropMagnifierInfo.style.left = `${clientX + offsetX}px`;
+    cropMagnifierInfo.style.top = `${clientY + offsetY - infoHeight - 8}px`;
+    
+    // Update info text - only width and height, horizontally
+    cropMagnifierInfo.textContent = `W: ${state.crop.width}  H: ${state.crop.height}`;
+    
+    // Get video position and scale
+    const videoRect = videoPreview.getBoundingClientRect();
+    
+    // Video dimensions on screen
+    const displayWidth = videoRect.width;
+    const displayHeight = videoRect.height;
+    
+    // Effective (rotated) video dimensions
+    const effectiveDims = getEffectiveVideoDimensions();
+    const rotatedWidth = effectiveDims.width;
+    const rotatedHeight = effectiveDims.height;
+    
+    // Original video dimensions
+    const originalWidth = videoPreview.videoWidth;
+    const originalHeight = videoPreview.videoHeight;
+    
+    // Scale factors (for rotated video)
+    const scaleX = rotatedWidth / displayWidth;
+    const scaleY = rotatedHeight / displayHeight;
+    
+    // Calculate the position of the handle/point being dragged in ROTATED video coordinates
+    const handle = state.isDraggingCrop;
+    let handleRotatedX, handleRotatedY;
+    
+    // Determine handle position based on what's being dragged (in rotated coordinates)
+    if (handle === 'move') {
+        // Center of crop area
+        handleRotatedX = state.crop.x + state.crop.width / 2;
+        handleRotatedY = state.crop.y + state.crop.height / 2;
+    } else if (handle === 'nw') {
+        handleRotatedX = state.crop.x;
+        handleRotatedY = state.crop.y;
+    } else if (handle === 'ne') {
+        handleRotatedX = state.crop.x + state.crop.width;
+        handleRotatedY = state.crop.y;
+    } else if (handle === 'sw') {
+        handleRotatedX = state.crop.x;
+        handleRotatedY = state.crop.y + state.crop.height;
+    } else if (handle === 'se') {
+        handleRotatedX = state.crop.x + state.crop.width;
+        handleRotatedY = state.crop.y + state.crop.height;
+    } else if (handle === 'n') {
+        handleRotatedX = state.crop.x + state.crop.width / 2;
+        handleRotatedY = state.crop.y;
+    } else if (handle === 's') {
+        handleRotatedX = state.crop.x + state.crop.width / 2;
+        handleRotatedY = state.crop.y + state.crop.height;
+    } else if (handle === 'e') {
+        handleRotatedX = state.crop.x + state.crop.width;
+        handleRotatedY = state.crop.y + state.crop.height / 2;
+    } else if (handle === 'w') {
+        handleRotatedX = state.crop.x;
+        handleRotatedY = state.crop.y + state.crop.height / 2;
+    }
+    
+    // Display handle coordinates above the handle (not for 'move')
+    if (handle !== 'move') {
+        cropHandleCoords.classList.add('active');
+        
+        // Convert handle position to screen coordinates
+        const handleScreenX = videoRect.left + (handleRotatedX / scaleX);
+        const handleScreenY = videoRect.top + (handleRotatedY / scaleY);
+        
+        // Position coords above the handle
+        cropHandleCoords.style.left = `${handleScreenX - 30}px`;
+        cropHandleCoords.style.top = `${handleScreenY - 30}px`;
+        cropHandleCoords.textContent = `X: ${Math.round(handleRotatedX)}  Y: ${Math.round(handleRotatedY)}`;
+    } else {
+        cropHandleCoords.classList.remove('active');
+    }
+    
+    // Convert handle position from rotated to original video coordinates
+    const handleOriginal = rotatedToOriginalCoords(
+        handleRotatedX, 
+        handleRotatedY, 
+        rotatedWidth, 
+        rotatedHeight,
+        originalWidth,
+        originalHeight,
+        state.rotation
+    );
+    
+    // Size of the area to capture (in original video pixels)
+    const captureSize = MAGNIFIER_SIZE / magnifierZoom;
+    
+    // Calculate source rectangle (centered on handle position in original coordinates)
+    const sx = Math.max(0, Math.min(originalWidth - captureSize, handleOriginal.x - captureSize / 2));
+    const sy = Math.max(0, Math.min(originalHeight - captureSize, handleOriginal.y - captureSize / 2));
+    
+    // Clear canvas
+    magnifierCtx.clearRect(0, 0, MAGNIFIER_SIZE, MAGNIFIER_SIZE);
+    
+    // Save context state
+    magnifierCtx.save();
+    
+    // Apply rotation to canvas around its center
+    const centerX = MAGNIFIER_SIZE / 2;
+    const centerY = MAGNIFIER_SIZE / 2;
+    
+    magnifierCtx.translate(centerX, centerY);
+    magnifierCtx.rotate((state.rotation * Math.PI) / 180);
+    
+    // Draw magnified video centered at the rotated origin
+    // By drawing at (-centerX, -centerY), the image center will be at (0, 0)
+    // which is now the center of the canvas after translation
+    try {
+        magnifierCtx.drawImage(
+            videoPreview,
+            sx, sy, captureSize, captureSize,
+            -centerX, -centerY, MAGNIFIER_SIZE, MAGNIFIER_SIZE
+        );
+    } catch (e) {
+        // Video not ready yet
+        magnifierCtx.restore();
+        return;
+    }
+    
+    // Restore context state (removes rotation)
+    magnifierCtx.restore();
+    
+    // Draw center crosshair (always in the center, not rotated)
+    const crosshairCenterX = MAGNIFIER_SIZE / 2;
+    const crosshairCenterY = MAGNIFIER_SIZE / 2;
+    const crosshairSize = 10;
+    
+    magnifierCtx.strokeStyle = '#ff0066';
+    magnifierCtx.lineWidth = 2;
+    
+    // Horizontal line
+    magnifierCtx.beginPath();
+    magnifierCtx.moveTo(crosshairCenterX - crosshairSize, crosshairCenterY);
+    magnifierCtx.lineTo(crosshairCenterX + crosshairSize, crosshairCenterY);
+    magnifierCtx.stroke();
+    
+    // Vertical line
+    magnifierCtx.beginPath();
+    magnifierCtx.moveTo(crosshairCenterX, crosshairCenterY - crosshairSize);
+    magnifierCtx.lineTo(crosshairCenterX, crosshairCenterY + crosshairSize);
+    magnifierCtx.stroke();
+    
+    // Draw center dot
+    magnifierCtx.fillStyle = '#ff0066';
+    magnifierCtx.beginPath();
+    magnifierCtx.arc(crosshairCenterX, crosshairCenterY, 2, 0, Math.PI * 2);
+    magnifierCtx.fill();
+}
+
+// Update crop input max values based on current rotation
+function updateCropInputLimits() {
+    if (!state.videoMetadata || !state.videoMetadata.streams || !state.videoMetadata.streams[0]) {
+        return;
+    }
+    
+    const effectiveDims = getEffectiveVideoDimensions();
+    cropWidth.max = effectiveDims.width;
+    cropHeight.max = effectiveDims.height;
+    cropX.max = effectiveDims.width;
+    cropY.max = effectiveDims.height;
+    
+    // Adjust current crop values if they exceed new limits
+    if (state.crop.x > effectiveDims.width) {
+        state.crop.x = 0;
+        cropX.value = 0;
+    }
+    if (state.crop.y > effectiveDims.height) {
+        state.crop.y = 0;
+        cropY.value = 0;
+    }
+    if (state.crop.width > effectiveDims.width) {
+        state.crop.width = effectiveDims.width;
+        cropWidth.value = effectiveDims.width;
+    }
+    if (state.crop.height > effectiveDims.height) {
+        state.crop.height = effectiveDims.height;
+        cropHeight.value = effectiveDims.height;
+    }
+    
+    // Ensure crop area fits within boundaries
+    if (state.crop.x + state.crop.width > effectiveDims.width) {
+        state.crop.x = effectiveDims.width - state.crop.width;
+        cropX.value = state.crop.x;
+    }
+    if (state.crop.y + state.crop.height > effectiveDims.height) {
+        state.crop.y = effectiveDims.height - state.crop.height;
+        cropY.value = state.crop.y;
+    }
+}
+
 cropX.addEventListener('change', updateCropValues);
 cropY.addEventListener('change', updateCropValues);
 cropWidth.addEventListener('change', updateCropValues);
 cropHeight.addEventListener('change', updateCropValues);
+
+// Helper function to check if any transformations are applied
+function hasAnyTransformations() {
+    const hasCrop = state.cropEnabled && (
+        state.crop.width !== state.crop.originalWidth || 
+        state.crop.height !== state.crop.originalHeight ||
+        state.crop.x !== 0 || 
+        state.crop.y !== 0
+    );
+    const hasScale = state.scale.width !== -1 || state.scale.height !== -1;
+    return hasCrop || state.rotation !== 0 || state.flipHorizontal || state.flipVertical || hasScale;
+}
+
+// Transform Controls
+rotateLeftBtn.addEventListener('click', () => {
+    const previousRotation = state.rotation;
+    state.rotation = (state.rotation - 90 + 360) % 360;
+    updateTransformUI();
+    updatePreviewTransform();
+    
+    // Reset crop to full frame when rotation changes to avoid confusion
+    // (crop coordinates are relative to rotated video, so changing rotation
+    // would make the crop area appear in wrong place)
+    if (state.cropEnabled && previousRotation !== state.rotation) {
+        const effectiveDims = getEffectiveVideoDimensions();
+        state.crop.x = 0;
+        state.crop.y = 0;
+        state.crop.width = effectiveDims.width;
+        state.crop.height = effectiveDims.height;
+        cropX.value = 0;
+        cropY.value = 0;
+        cropWidth.value = effectiveDims.width;
+        cropHeight.value = effectiveDims.height;
+        updateCropInputLimits();
+        updateCropOverlay();
+    }
+    
+    // Enable transform mode if not already enabled
+    if (!state.transformEnabled) {
+        transformToggle.checked = true;
+        transformToggle.dispatchEvent(new Event('change'));
+        return;
+    }
+    
+    // Switch to encoding if using copy codec
+    if (videoCodec.value === 'copy') {
+        videoCodec.value = 'auto';
+        videoCodec.dispatchEvent(new Event('change'));
+    }
+    
+    updateFFmpegCommand();
+});
+
+rotateRightBtn.addEventListener('click', () => {
+    const previousRotation = state.rotation;
+    state.rotation = (state.rotation + 90) % 360;
+    updateTransformUI();
+    updatePreviewTransform();
+    
+    // Reset crop to full frame when rotation changes to avoid confusion
+    // (crop coordinates are relative to rotated video, so changing rotation
+    // would make the crop area appear in wrong place)
+    if (state.cropEnabled && previousRotation !== state.rotation) {
+        const effectiveDims = getEffectiveVideoDimensions();
+        state.crop.x = 0;
+        state.crop.y = 0;
+        state.crop.width = effectiveDims.width;
+        state.crop.height = effectiveDims.height;
+        cropX.value = 0;
+        cropY.value = 0;
+        cropWidth.value = effectiveDims.width;
+        cropHeight.value = effectiveDims.height;
+        updateCropInputLimits();
+        updateCropOverlay();
+    }
+    
+    // Enable transform mode if not already enabled
+    if (!state.transformEnabled) {
+        transformToggle.checked = true;
+        transformToggle.dispatchEvent(new Event('change'));
+        return;
+    }
+    
+    // Switch to encoding if using copy codec
+    if (videoCodec.value === 'copy') {
+        videoCodec.value = 'auto';
+        videoCodec.dispatchEvent(new Event('change'));
+    }
+    
+    updateFFmpegCommand();
+});
+
+flipHorizontalBtn.addEventListener('click', () => {
+    state.flipHorizontal = !state.flipHorizontal;
+    updateTransformUI();
+    updatePreviewTransform();
+    
+    // Enable transform mode if not already enabled
+    if (!state.transformEnabled) {
+        transformToggle.checked = true;
+        transformToggle.dispatchEvent(new Event('change'));
+        return;
+    }
+    
+    // Switch to encoding if using copy codec
+    if (videoCodec.value === 'copy') {
+        videoCodec.value = 'auto';
+        videoCodec.dispatchEvent(new Event('change'));
+    }
+    
+    updateFFmpegCommand();
+});
+
+flipVerticalBtn.addEventListener('click', () => {
+    state.flipVertical = !state.flipVertical;
+    updateTransformUI();
+    updatePreviewTransform();
+    
+    // Enable transform mode if not already enabled
+    if (!state.transformEnabled) {
+        transformToggle.checked = true;
+        transformToggle.dispatchEvent(new Event('change'));
+        return;
+    }
+    
+    // Switch to encoding if using copy codec
+    if (videoCodec.value === 'copy') {
+        videoCodec.value = 'auto';
+        videoCodec.dispatchEvent(new Event('change'));
+    }
+    
+    updateFFmpegCommand();
+});
+
+function updateTransformUI() {
+    // Update button states - only show active when that specific transformation is applied
+    const hasRotation = state.rotation !== 0;
+    rotateLeftBtn.classList.toggle('active', hasRotation);
+    rotateRightBtn.classList.toggle('active', hasRotation);
+    
+    flipHorizontalBtn.classList.toggle('active', state.flipHorizontal);
+    flipVerticalBtn.classList.toggle('active', state.flipVertical);
+}
+
+function updatePreviewTransform() {
+    if (!state.transformEnabled) {
+        videoPreview.style.transform = '';
+        videoPreview.style.width = '';
+        videoPreview.style.height = '';
+        return;
+    }
+
+    let transforms = [];
+    
+    // Get effective dimensions considering rotation
+    const effectiveDims = getEffectiveVideoDimensions();
+    const isRotated90or270 = state.rotation === 90 || state.rotation === 270;
+    
+    // For 90/270 degree rotations, we need to adjust the preview size
+    // to properly fit the swapped dimensions
+    if (isRotated90or270 && state.videoMetadata) {
+        const originalWidth = state.videoMetadata.streams[0].width;
+        const originalHeight = state.videoMetadata.streams[0].height;
+        
+        // Calculate the scale factor to fit the rotated video in the container
+        const container = document.querySelector('.preview-container');
+        if (container) {
+            const containerWidth = container.clientWidth;
+            const containerHeight = container.clientHeight;
+            
+            // After rotation, height becomes width and width becomes height
+            const rotatedWidth = originalHeight;
+            const rotatedHeight = originalWidth;
+            
+            // Calculate scale to fit in container
+            const scaleToFit = Math.min(
+                containerWidth / rotatedWidth,
+                containerHeight / rotatedHeight
+            );
+            
+            // Set the video preview size before rotation so it fits correctly after rotation
+            videoPreview.style.width = `${originalWidth * scaleToFit}px`;
+            videoPreview.style.height = `${originalHeight * scaleToFit}px`;
+        }
+    } else {
+        // For 0/180 degree rotations, use default sizing
+        videoPreview.style.width = '';
+        videoPreview.style.height = '';
+    }
+    
+    // Rotation
+    if (state.rotation !== 0) {
+        transforms.push(`rotate(${state.rotation}deg)`);
+    }
+    
+    // Flip
+    let scaleX = state.flipHorizontal ? -1 : 1;
+    let scaleY = state.flipVertical ? -1 : 1;
+    
+    if (scaleX !== 1 || scaleY !== 1) {
+        transforms.push(`scale(${scaleX}, ${scaleY})`);
+    }
+    
+    videoPreview.style.transform = transforms.join(' ');
+    
+    // Update crop overlay if crop is enabled
+    if (state.cropEnabled) {
+        updateCropOverlay();
+    }
+}
+
+// Scale Controls
+function updateScaleValues() {
+    state.scale.width = parseInt(scaleWidth.value) || -1;
+    state.scale.height = parseInt(scaleHeight.value) || -1;
+    updateFFmpegCommand();
+}
+
+scaleWidth.addEventListener('change', updateScaleValues);
+scaleHeight.addEventListener('change', updateScaleValues);
+
+// Scale presets
+scalePresets.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const width = parseInt(btn.dataset.width);
+        const height = parseInt(btn.dataset.height);
+        
+        if (width === -1 && height === -1) {
+            // Reset
+            scaleWidth.value = '';
+            scaleHeight.value = '';
+            state.scale.width = -1;
+            state.scale.height = -1;
+        } else {
+            scaleWidth.value = width;
+            scaleHeight.value = height;
+            state.scale.width = width;
+            state.scale.height = height;
+        }
+        
+        // Enable transform mode if not already enabled
+        if (!state.transformEnabled && (state.scale.width !== -1 || state.scale.height !== -1)) {
+            transformToggle.checked = true;
+            transformToggle.dispatchEvent(new Event('change'));
+            return;
+        }
+        
+        // Switch to encoding if using copy codec
+        if ((state.scale.width !== -1 || state.scale.height !== -1) && videoCodec.value === 'copy') {
+            videoCodec.value = 'auto';
+            videoCodec.dispatchEvent(new Event('change'));
+        }
+        
+        updateFFmpegCommand();
+    });
+});
 
 function updateCropOverlay() {
     if (!state.cropEnabled) return;
@@ -2079,8 +2767,10 @@ function updateCropOverlay() {
     const videoRect = videoPreview.getBoundingClientRect();
     const containerRect = document.querySelector('.preview-container').getBoundingClientRect();
 
-    const videoWidth = state.videoMetadata.streams[0].width;
-    const videoHeight = state.videoMetadata.streams[0].height;
+    // Use effective dimensions considering rotation
+    const effectiveDims = getEffectiveVideoDimensions();
+    const videoWidth = effectiveDims.width;
+    const videoHeight = effectiveDims.height;
 
     const scaleX = videoRect.width / videoWidth;
     const scaleY = videoRect.height / videoHeight;
@@ -2144,19 +2834,112 @@ document.querySelector('.crop-handles').addEventListener('mousedown', (e) => {
     };
 });
 
+// Double click to reset crop to full frame
+document.querySelector('.crop-handles').addEventListener('dblclick', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resetCrop();
+});
+
+// Right click context menu for crop reset
+document.querySelector('.crop-handles').addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Remove any existing menu
+    const existingMenu = document.querySelector('.crop-context-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+    
+    const menu = document.createElement('div');
+    menu.className = 'crop-context-menu';
+    menu.style.cssText = `
+        position: fixed;
+        left: ${e.clientX}px;
+        top: ${e.clientY}px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 4px 0;
+        z-index: 10000;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        min-width: 120px;
+    `;
+    
+    const resetItem = document.createElement('div');
+    resetItem.textContent = 'Reset';
+    resetItem.style.cssText = `
+        padding: 8px 16px;
+        cursor: pointer;
+        color: #fff;
+        font-size: 13px;
+    `;
+    resetItem.addEventListener('mouseenter', () => {
+        resetItem.style.background = '#3a3a3a';
+    });
+    resetItem.addEventListener('mouseleave', () => {
+        resetItem.style.background = 'transparent';
+    });
+    resetItem.addEventListener('click', (evt) => {
+        evt.stopPropagation();
+        resetCrop();
+        menu.remove();
+        document.removeEventListener('click', closeMenu);
+        document.removeEventListener('contextmenu', closeMenu);
+        document.removeEventListener('keydown', handleEscape);
+    });
+    
+    menu.appendChild(resetItem);
+    document.body.appendChild(menu);
+    
+    // Close menu on any click outside
+    const closeMenu = (evt) => {
+        if (!menu.contains(evt.target)) {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+            document.removeEventListener('contextmenu', closeMenu);
+            document.removeEventListener('keydown', handleEscape);
+        }
+    };
+    
+    // Close menu on Escape key
+    const handleEscape = (evt) => {
+        if (evt.key === 'Escape') {
+            menu.remove();
+            document.removeEventListener('click', closeMenu);
+            document.removeEventListener('contextmenu', closeMenu);
+            document.removeEventListener('keydown', handleEscape);
+        }
+    };
+    
+    // Add listeners with a small delay to prevent immediate closing
+    setTimeout(() => {
+        document.addEventListener('click', closeMenu);
+        document.addEventListener('contextmenu', closeMenu);
+        document.addEventListener('keydown', handleEscape);
+    }, 10);
+});
+
 function processCropDrag() {
     if (!isDraggingCropRAF || !lastCropDragEvent) return;
 
     const e = lastCropDragEvent;
     const videoRect = videoPreview.getBoundingClientRect();
-    const videoWidth = state.videoMetadata.streams[0].width;
-    const videoHeight = state.videoMetadata.streams[0].height;
+    
+    // Use effective dimensions considering rotation
+    const effectiveDims = getEffectiveVideoDimensions();
+    const videoWidth = effectiveDims.width;
+    const videoHeight = effectiveDims.height;
 
     const scaleX = videoWidth / videoRect.width;
     const scaleY = videoHeight / videoRect.height;
 
-    const deltaX = Math.round((e.clientX - cropDragStartX) * scaleX);
-    const deltaY = Math.round((e.clientY - cropDragStartY) * scaleY);
+    // Apply sensitivity reduction when Shift is held
+    const sensitivity = e.shiftKey ? 0.2 : 1.0;
+
+    const deltaX = Math.round((e.clientX - cropDragStartX) * scaleX * sensitivity);
+    const deltaY = Math.round((e.clientY - cropDragStartY) * scaleY * sensitivity);
 
     const handle = state.isDraggingCrop;
 
@@ -2221,12 +3004,45 @@ document.addEventListener('mousemove', (e) => {
     }
 
     lastCropDragEvent = e;
+    
+    // Update magnifier
+    updateMagnifier(e.clientX, e.clientY);
 
     if (!isDraggingCropRAF) {
         isDraggingCropRAF = true;
         requestAnimationFrame(processCropDrag);
     }
 });
+
+// Mouse wheel event for magnifier zoom control and size adjustment
+document.addEventListener('wheel', (e) => {
+    // Only handle wheel events when magnifier is active
+    if (!state.isDraggingCrop || !cropMagnifier.classList.contains('active')) {
+        return;
+    }
+    
+    e.preventDefault();
+    
+    // Ctrl+Wheel: Change magnifier window size
+    if (e.ctrlKey) {
+        const sizeDelta = e.deltaY > 0 ? -10 : 10;
+        MAGNIFIER_SIZE = Math.max(100, Math.min(400, MAGNIFIER_SIZE + sizeDelta));
+        
+        // Update canvas size
+        magnifierCanvas.width = MAGNIFIER_SIZE;
+        magnifierCanvas.height = MAGNIFIER_SIZE;
+    } 
+    // Normal Wheel: Change zoom level
+    else {
+        const delta = e.deltaY > 0 ? -0.5 : 0.5;
+        magnifierZoom = Math.max(2, Math.min(15, magnifierZoom + delta));
+    }
+    
+    // Update magnifier with new zoom level or size
+    if (lastCropDragEvent) {
+        updateMagnifier(lastCropDragEvent.clientX, lastCropDragEvent.clientY);
+    }
+}, { passive: false });
 
 // Export Settings
 videoCodec.addEventListener('change', (e) => {
@@ -2993,8 +3809,18 @@ document.addEventListener('keydown', (e) => {
 
     if (e.code === 'KeyC') {
         e.preventDefault();
-        cropToggle.checked = !cropToggle.checked;
-        cropToggle.dispatchEvent(new Event('change'));
+        // Same logic as quickCropBtn
+        // If transform is disabled, enable both transform and crop
+        if (!state.transformEnabled) {
+            transformToggle.checked = true;
+            transformToggle.dispatchEvent(new Event('change'));
+            cropToggle.checked = true;
+            cropToggle.dispatchEvent(new Event('change'));
+        } else {
+            // If transform is enabled, just toggle crop
+            cropToggle.checked = !cropToggle.checked;
+            cropToggle.dispatchEvent(new Event('change'));
+        }
     }
 });
 
@@ -3775,7 +4601,8 @@ function initializeCustomSpinners() {
             const button = Object.assign(document.createElement('button'), {
                 type: 'button',
                 innerHTML: symbol,
-                title
+                title,
+                tabIndex: -1  // Prevent tab focus
             });
             button.addEventListener('click', () => updateValue(delta));
             spinner.appendChild(button);

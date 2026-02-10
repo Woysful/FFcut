@@ -224,6 +224,12 @@
                 <div class="crop-handle crop-handle-e"></div>
               </div>
             </div>
+            <!-- Magnifier for precise crop adjustment -->
+            <div class="crop-magnifier" id="cropMagnifier">
+              <canvas id="magnifierCanvas"></canvas>
+            </div>
+            <div class="crop-magnifier-info" id="cropMagnifierInfo"></div>
+            <div class="crop-handle-coords" id="cropHandleCoords"></div>
           </div>
 
           <!-- Quick Crop Toggle -->
@@ -387,39 +393,109 @@
             </div>
           </div>
 
-          <!-- Crop Section -->
+          <!-- Transform Section -->
           <div class="control-section">
             <div class="section-header">
               <h3>
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
                   <path d="M6 4V14H16M4 6H14V16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                 </svg>
-                Crop
+                Transform
               </h3>
               <label class="toggle-switch">
-                <input type="checkbox" id="cropToggle">
+                <input type="checkbox" id="transformToggle">
                 <span class="toggle-slider"></span>
               </label>
             </div>
-            <div id="cropControls" class="crop-controls" style="display: none;">
-              <div class="control-row">
-                <div class="control-group">
-                  <label>X</label>
-                  <input type="number" id="cropX" min="0" step="1" value="0">
+            <div id="transformControls" class="transform-controls" style="display: none;">
+              <!-- Rotation and Flip Controls -->
+              <div class="subsection-label">Rotate & Flip</div>
+              <div class="transform-buttons">
+                <div class="transform-row">
+                  <span class="transform-label">Rotate:</span>
+                  <button id="rotateLeftBtn" class="transform-btn" title="Rotate 90° counter-clockwise">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <path d="M21.5 12C21.5 7.52166 17.9783 3.99999 13.5 4M13.5 4L16 6.5M13.5 4L16 1.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M2.5 12C2.5 16.4783 6.02166 20 10.5 20C12.6758 20 14.6404 19.0929 16.0308 17.6426" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    90°
+                  </button>
+                  <button id="rotateRightBtn" class="transform-btn" title="Rotate 90° clockwise">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <path d="M2.5 12C2.5 7.52166 6.02166 3.99999 10.5 4M10.5 4L8 6.5M10.5 4L8 1.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M21.5 12C21.5 16.4783 17.9783 20 13.5 20C11.3242 20 9.35955 19.0929 7.96924 17.6426" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    90°
+                  </button>
                 </div>
-                <div class="control-group">
-                  <label>Y</label>
-                  <input type="number" id="cropY" min="0" step="1" value="0">
+                <div class="transform-row">
+                  <span class="transform-label">Flip:</span>
+                  <button id="flipHorizontalBtn" class="transform-btn" title="Flip horizontally">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <path d="M3 12H21M3 12L7 8M3 12L7 16M21 12L17 8M21 12L17 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M12 3V9M12 15V21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    Horizontal
+                  </button>
+                  <button id="flipVerticalBtn" class="transform-btn" title="Flip vertically">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <path d="M12 3V21M12 3L8 7M12 3L16 7M12 21L8 17M12 21L16 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                      <path d="M3 12H9M15 12H21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                    Vertical
+                  </button>
                 </div>
               </div>
-              <div class="control-row">
-                <div class="control-group">
-                  <label>Width</label>
-                  <input type="number" id="cropWidth" min="0" step="1">
+              
+              <!-- Crop Controls -->
+              <div class="subsection-header">
+                <div class="subsection-label">Crop</div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="cropToggle">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+              <div id="cropControls" class="crop-values" style="display: none;">
+                <div class="control-row control-row-two-column">
+                  <div class="control-group">
+                    <label>X</label>
+                    <input type="number" id="cropX" min="0" step="1" value="0">
+                  </div>
+                  <div class="control-group">
+                    <label>Y</label>
+                    <input type="number" id="cropY" min="0" step="1" value="0">
+                  </div>
                 </div>
-                <div class="control-group">
-                  <label>Height</label>
-                  <input type="number" id="cropHeight" min="0" step="1">
+                <div class="control-row control-row-two-column">
+                  <div class="control-group">
+                    <label>Width</label>
+                    <input type="number" id="cropWidth" min="0" step="1">
+                  </div>
+                  <div class="control-group">
+                    <label>Height</label>
+                    <input type="number" id="cropHeight" min="0" step="1">
+                  </div>
+                </div>
+              </div>
+
+              <!-- Scale Controls -->
+              <div class="subsection-label">Scale</div>
+              <div class="scale-controls">
+                <div class="control-row control-row-two-column">
+                  <div class="control-group">
+                    <label>Width</label>
+                    <input type="number" id="scaleWidth" min="0" step="2" placeholder="Auto">
+                  </div>
+                  <div class="control-group">
+                    <label>Height</label>
+                    <input type="number" id="scaleHeight" min="0" step="2" placeholder="Auto">
+                  </div>
+                </div>
+                <div class="scale-presets">
+                  <button class="preset-btn" data-width="1920" data-height="1080">1080p</button>
+                  <button class="preset-btn" data-width="1280" data-height="720">720p</button>
+                  <button class="preset-btn" data-width="854" data-height="480">480p</button>
+                  <button class="preset-btn" data-width="-1" data-height="-1">Reset</button>
                 </div>
               </div>
             </div>
