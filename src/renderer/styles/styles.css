@@ -119,16 +119,23 @@ overflow: hidden;
     margin-left: auto;
     display: flex;
     align-items: center;
+    justify-content: flex-end;
+    flex: 0 1 75%;      /* occupy up to 75% of header width */
+    max-width: 75%;
+    min-width: 0;       /* allow shrinking */
+    overflow: hidden;   /* hide overflowed text inside */
 }
 
 .timeline-filename .filename-text {
     font-size: 11px;
     color: var(--color-text-tertiary);
     font-family: var(--font-mono);
-    max-width: 1200px;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    direction: rtl;      /* show end of path, hide start */
+    text-align: left;    /* keep text alignment visually correct */
 }
 
 .menu-item {
@@ -380,7 +387,7 @@ overflow: hidden;
 .editor-state {
     flex: 1;
     display: grid;
-    grid-template-columns: 1fr 360px;
+    grid-template-columns: minmax(0, 1fr) 360px;
     grid-template-rows: 1fr auto;
     gap: 0;
     overflow: hidden;
@@ -721,6 +728,7 @@ overflow: hidden;
     height: 100px;
     display: flex;
     flex-direction: column;
+    min-width: 0; /* Allow grid column to shrink */
 }
 
 .timeline-header {
@@ -728,6 +736,7 @@ overflow: hidden;
     justify-content: space-between;
     align-items: center;
     margin-bottom: var(--spacing-sm);
+    min-width: 0; /* Prevent intrinsic min-width overflow */
 }
 
 .timeline-header h3 {
@@ -747,6 +756,7 @@ overflow: hidden;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0; /* Allow flex item to shrink */
 }
 
 .timeline-container {
