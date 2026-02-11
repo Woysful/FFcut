@@ -1701,7 +1701,7 @@ editorState.addEventListener('drop', async (e) => {
     }
 });
 
-// Event Listeners - Import (фиксим двойной вызов)
+// Event listeners - import (prevent double invocation)
 let isImporting = false;
 
 document.getElementById('menuImport').addEventListener('click', async () => {
@@ -1709,7 +1709,7 @@ document.getElementById('menuImport').addEventListener('click', async () => {
     isImporting = true;
     closeAllMenus();
     await importVideo();
-    // Сбрасываем флаг после небольшой задержки
+    // Reset the flag after a short delay
     setTimeout(() => {
         isImporting = false;
     }, 300);
@@ -2080,7 +2080,7 @@ resetTrimBtn.addEventListener('click', () => {
     updateFFmpegCommand();
 });
 
-// Trim Handle Dragging (оптимизированный с RAF и debounce)
+// Trim handle dragging (optimized with requestAnimationFrame and debounce)
 let trimDragStartX = 0;
 let trimDragStartValue = 0;
 let isDraggingTrimRAF = false;
@@ -2785,7 +2785,7 @@ function updateCropOverlay() {
     cropHandles.style.height = `${state.crop.height * scaleY}px`;
 }
 
-// Crop Handle Dragging (оптимизированный)
+// Crop handle dragging (optimized)
 let cropDragStartX = 0;
 let cropDragStartY = 0;
 let cropDragStartState = null;
@@ -3670,7 +3670,7 @@ document.querySelectorAll('.menu-dropdown').forEach(dropdown => {
     });
 });
 
-// Keyboard Shortcuts (исправленные - с проверкой focus)
+// Keyboard shortcuts (with focus checks)
 document.addEventListener('keydown', (e) => {
     // Check if user is typing in an input field or textarea
     // Exclude range inputs (scrubber, volume) to allow hotkeys while scrubbing
@@ -3684,7 +3684,7 @@ document.addEventListener('keydown', (e) => {
     // On macOS shortcuts use Cmd (metaKey); on Windows/Linux they use Ctrl.
     const modPressed = isMacOS ? e.metaKey : e.ctrlKey;
 
-    // Global shortcuts (всегда активны)
+    // Global shortcuts (always active)
     if (modPressed && e.code === 'KeyN') {
         e.preventDefault();
         if (!isImporting) {
