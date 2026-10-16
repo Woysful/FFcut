@@ -38,9 +38,5 @@ Thumbs.db
 .env
 .env.*
 
-# Old Electron version leftovers (if you keep it in a folder)
-.old
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
+# Else
+TODO
