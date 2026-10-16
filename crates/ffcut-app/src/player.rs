@@ -1,0 +1,308 @@
+//! libmpv wrapper. All video decoding/preview goes through here (H.265, ProRes, 10-bit... just work).
+//!
+//! Rendering: mpv draws into our own FBO the size of the video rectangle; we then blit that
+//! FBO into egui's framebuffer inside an `egui::PaintCallback`.
+
+use eframe::egui;
+use eframe::egui_glow;
+use eframe::glow::{self, HasContext};
+use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
+use libmpv2::Mpv;
+use std::ffi::{c_void, CStr, CString};
+use std::cell::{Cell, RefCell};
+use std::mem::ManuallyDrop;
+use std::time::{Duration, Instant};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+type GetProc = Arc<dyn Fn(&CStr) -> *const c_void + Send + Sync>;
+
+fn gpa(ctx: &GetProc, name: &str) -> *mut c_void {
+    match CString::new(name) {
+        Ok(c) => ctx(&c) as *mut c_void,
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+struct Fbo {
+    fbo: glow::Framebuffer,
+    tex: glow::Texture,
+    w: i32,
+    h: i32,
+}
+
+/// Shared with the paint callback (which must be `Send + Sync`).
+/// SAFETY: the render context is only ever touched from the GL/UI thread:
+/// `render()` is called inside the paint callback, which eframe runs on the main thread.
+struct Shared {
+    render: ManuallyDrop<RenderContext<'static>>,
+    fbo: Mutex<Option<Fbo>>,
+}
+unsafe impl Send for Shared {}
+unsafe impl Sync for Shared {}
+
+pub struct Player {
+    mpv: &'static Mpv, // leaked on purpose: lives as long as the process
+    shared: Arc<Shared>,
+    pub loaded: bool,
+    pub duration: f64,
+    /// After any command mpv needs a few UI frames to deliver the new picture.
+    settle_until: Cell<Instant>,
+    /// Last rotate/flip pushed to mpv. Re-setting the video filter chain drops the paused frame
+    /// (black picture until the next seek), so we only touch mpv when something really changed.
+    applied: RefCell<(i64, String)>,
+    /// mpv drops the first frame if nobody renders it within ~200 ms (slow first paint, e.g. a file
+    /// opened from the command line). One re-seek shortly after loading brings the picture back.
+    kick_at: Cell<Option<Instant>>,
+    /// Further re-seeks after the first one: on a slow first paint one kick is not always enough.
+    kicks_left: Cell<u8>,
+}
+
+impl Player {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Result<Player, String> {
+        let get_proc: GetProc = cc.get_proc_address.clone().ok_or("no OpenGL context (glow renderer required)")?;
+
+        let mpv = Mpv::with_initializer(|init| {
+            init.set_property("vo", "libmpv")?;
+            init.set_property("hwdec", "auto-safe")?;
+            init.set_property("keep-open", "yes")?; // stay on the last frame instead of unloading
+            init.set_property("osc", false)?;
+            init.set_property("input-default-bindings", false)?;
+            init.set_property("input-vo-keyboard", false)?;
+            init.set_property("idle", "yes")?;
+            init.set_property("audio-display", "no")?;
+            // Preview only: plain scaling and no extra passes keep every frame cheap, so the picture is
+            // always rendered within mpv's ~200 ms window (slow GL stacks otherwise lose frames).
+            for (k, v) in [
+                ("scale", "bilinear"),
+                ("cscale", "bilinear"),
+                ("dscale", "bilinear"),
+                ("dither-depth", "no"),
+                ("sigmoid-upscaling", "no"),
+                ("correct-downscaling", "no"),
+                ("interpolation", "no"),
+                ("deband", "no"),
+                ("hdr-compute-peak", "no"),
+                ("sub-auto", "no"),
+            ] {
+                init.set_property(k, v)?;
+            }
+            init.set_property("video-timing-offset", 0i64)?; // don't block the UI thread waiting for vsync
+            if let Some(f) = std::env::var_os("FFCUT_MPV_LOG") {
+                init.set_property("log-file", f.to_string_lossy().as_ref())?;
+                init.set_property("msg-level", "all=v")?;
+            }
+            // Decoder direct-rendering into GPU buffers produced torn/stuck frames after rotate on
+            // software GL (llvmpipe). A plain copy costs a few % CPU for preview and is reliable.
+            // Override with FFCUT_MPV_DR=auto|yes to experiment.
+            let dr = std::env::var("FFCUT_MPV_DR").unwrap_or_else(|_| "no".into());
+            init.set_property("vd-lavc-dr", dr.as_str())?;
+            if std::env::var_os("FFCUT_NO_AUDIO").is_some() {
+                init.set_property("ao", "null")?;
+            }
+            Ok(())
+        })
+        .map_err(|e| format!("cannot start libmpv: {e}"))?;
+        let mpv: &'static Mpv = Box::leak(Box::new(mpv));
+
+        let mut render = mpv
+            .create_render_context(vec![
+                RenderParam::ApiType(RenderParamApiType::OpenGl),
+                RenderParam::InitParams(OpenGLInitParams { get_proc_address: gpa, ctx: get_proc }),
+            ])
+            .map_err(|e| format!("cannot create mpv render context: {e}"))?;
+
+        // mpv tells us when a new frame is ready -> wake the UI.
+        let egui_ctx = cc.egui_ctx.clone();
+        render.set_update_callback(move || egui_ctx.request_repaint());
+
+        Ok(Player {
+            mpv,
+            shared: Arc::new(Shared { render: ManuallyDrop::new(render), fbo: Mutex::new(None) }),
+            loaded: false,
+            duration: 0.0,
+            settle_until: Cell::new(Instant::now()),
+            applied: RefCell::new((0, String::new())),
+            kick_at: Cell::new(None),
+            kicks_left: Cell::new(0),
+        })
+    }
+
+    /// True for a moment after something changed: the UI keeps repainting so the new frame shows up.
+    pub fn settling(&self) -> bool {
+        if let Some(t) = self.kick_at.get() {
+            if Instant::now() >= t {
+                let left = self.kicks_left.get();
+                if self.paused() {
+                    // re-seek to where we are: makes mpv deliver the frame again
+                    let pos = self.time().max(0.0);
+                    let _ = self.mpv.command("seek", &[&format!("{pos:.3}"), "absolute+exact"]);
+                }
+                if left > 0 {
+                    self.kicks_left.set(left - 1);
+                    self.kick_at.set(Some(Instant::now() + Duration::from_millis(900)));
+                } else {
+                    self.kick_at.set(None);
+                }
+            }
+        }
+        self.kick_at.get().is_some() || Instant::now() < self.settle_until.get()
+    }
+    fn bump(&self) {
+        self.settle_until.set(Instant::now() + Duration::from_millis(1200));
+    }
+
+    pub fn open(&mut self, path: &Path, duration: f64) {
+        let p = path.to_string_lossy();
+        // a mix graph of the previous file refers to tracks the new file does not have
+        let _ = self.mpv.set_property("lavfi-complex", "");
+        let _ = self.mpv.command("loadfile", &[&p, "replace"]);
+        let _ = self.mpv.set_property("pause", true);
+        self.loaded = true;
+        self.duration = duration;
+        self.bump();
+        self.kicks_left.set(4);
+        self.kick_at.set(Some(Instant::now() + Duration::from_millis(500)));
+        self.reset_view();
+    }
+
+    /// The libmpv handle (for the multi-track audio preview).
+    pub fn mpv(&self) -> &Mpv {
+        self.mpv
+    }
+
+    pub fn reset_view(&self) {
+        self.set_transform(0, false, false);
+        self.set_loop(None);
+    }
+
+    // ---- state ----
+    pub fn time(&self) -> f64 {
+        self.mpv.get_property::<f64>("time-pos").unwrap_or(0.0)
+    }
+    pub fn paused(&self) -> bool {
+        self.mpv.get_property::<bool>("pause").unwrap_or(true)
+    }
+    pub fn at_end(&self) -> bool {
+        self.mpv.get_property::<bool>("eof-reached").unwrap_or(false)
+    }
+
+    // ---- control ----
+    pub fn set_paused(&self, p: bool) {
+        if !p && self.at_end() {
+            self.seek(0.0);
+        }
+        let _ = self.mpv.set_property("pause", p);
+    }
+    pub fn seek(&self, t: f64) {
+        let t = t.clamp(0.0, self.duration.max(0.0));
+        self.bump();
+        let _ = self.mpv.command("seek", &[&format!("{t:.3}"), "absolute+exact"]);
+    }
+    /// Cheap seek (snaps to keyframes) for scrubbing; finish with `seek` for the exact frame.
+    pub fn seek_fast(&self, t: f64) {
+        let t = t.clamp(0.0, self.duration.max(0.0));
+        self.bump();
+        let _ = self.mpv.command("seek", &[&format!("{t:.3}"), "absolute+keyframes"]);
+    }
+    pub fn step_frame(&self, forward: bool) {
+        self.bump();
+        let _ = self.mpv.set_property("pause", true);
+        let _ = self.mpv.command(if forward { "frame-step" } else { "frame-back-step" }, &[]);
+    }
+    pub fn set_volume(&self, v: f64) {
+        let _ = self.mpv.set_property("volume", v.clamp(0.0, 130.0));
+    }
+    pub fn set_mute(&self, m: bool) {
+        let _ = self.mpv.set_property("mute", m);
+    }
+    pub fn set_loop(&self, range: Option<(f64, f64)>) {
+        match range {
+            Some((a, b)) => {
+                let _ = self.mpv.set_property("ab-loop-a", a);
+                let _ = self.mpv.set_property("ab-loop-b", b);
+            }
+            None => {
+                let _ = self.mpv.set_property("ab-loop-a", "no");
+                let _ = self.mpv.set_property("ab-loop-b", "no");
+            }
+        }
+    }
+
+    /// Live preview of rotate/flip (crop is drawn as an overlay by the UI).
+    pub fn set_transform(&self, rotate_deg: i64, flip_h: bool, flip_v: bool) {
+        let mut vf = Vec::new();
+        if flip_h {
+            vf.push("hflip");
+        }
+        if flip_v {
+            vf.push("vflip");
+        }
+        let vf = vf.join(",");
+        let mut cur = self.applied.borrow_mut();
+        if cur.0 == rotate_deg && cur.1 == vf {
+            return;
+        }
+        self.bump();
+        if cur.0 != rotate_deg {
+            let _ = self.mpv.set_property("video-rotate", rotate_deg);
+        }
+        if cur.1 != vf {
+            let _ = self.mpv.set_property("vf", vf.as_str());
+        }
+        *cur = (rotate_deg, vf);
+    }
+
+    /// Draws the current frame into `rect`.
+    pub fn paint(&self, ui: &egui::Ui, rect: egui::Rect) {
+        let shared = self.shared.clone();
+        let cb = egui_glow::CallbackFn::new(move |info, painter| {
+            let vp = info.viewport_in_pixels();
+            let (w, h) = (vp.width_px.max(1), vp.height_px.max(1));
+            let gl = painter.gl();
+            unsafe {
+                let mut slot = shared.fbo.lock().unwrap();
+                if slot.as_ref().map_or(true, |f| f.w != w || f.h != h) {
+                    if let Some(old) = slot.take() {
+                        gl.delete_framebuffer(old.fbo);
+                        gl.delete_texture(old.tex);
+                    }
+                    let tex = gl.create_texture().unwrap();
+                    gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, w, h, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+                    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+                    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+                    let fbo = gl.create_framebuffer().unwrap();
+                    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                    gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(tex), 0);
+                    *slot = Some(Fbo { fbo, tex, w, h });
+                }
+                let f = slot.as_ref().unwrap();
+
+                // 1) mpv -> our FBO. `update()` makes mpv pick up the newest decoded frame; without
+                //    it render() keeps drawing "no frame" (black) forever.
+                let _ = shared.render.update();
+                if let Err(e) = shared.render.render::<GetProc>(f.fbo.0.get() as i32, w, h, true) {
+                    if std::env::var_os("FFCUT_DEBUG").is_some() {
+                        eprintln!("mpv render error: {e:?} (fbo {w}x{h})");
+                    }
+                }
+                if std::env::var_os("FFCUT_DEBUG").is_some() {
+                    let st = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+                    let err = gl.get_error();
+                    let mut px = [0u8; 4];
+                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
+                    gl.read_pixels(w / 2, h / 2, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut px)));
+                    eprintln!("fbo status {st:#x} gl err {err:#x} {w}x{h} centre pixel {px:?}");
+                }
+
+                // 2) our FBO -> screen, at the egui viewport position
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
+                gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, painter.intermediate_fbo());
+                gl.blit_framebuffer(0, 0, w, h, vp.left_px, vp.from_bottom_px, vp.left_px + w, vp.from_bottom_px + h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+                gl.bind_framebuffer(glow::FRAMEBUFFER, painter.intermediate_fbo());
+            }
+        });
+        ui.painter().add(egui::PaintCallback { rect, callback: Arc::new(cb) });
+    }
+}

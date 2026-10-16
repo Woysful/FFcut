@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=FFcut
+GenericName=Video Editor
+Comment=ffmpeg front-end with an editable final command
+Exec=ffcut %f
+Icon=ffcut
+Categories=AudioVideo;Video;
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;
+Keywords=video;trim;cut;ffmpeg;
+Terminal=false
