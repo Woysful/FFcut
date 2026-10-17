@@ -121,6 +121,9 @@ pub struct App {
     pub show_save_preset: bool,
     pub show_settings: bool,
     pub show_about: bool,
+    pub meter: crate::ui::MeterState,
+    pub settings_tab: usize,
+    pub window_title: String,
     pub show_update: bool,
     /// A newer release than this one (None = up to date / unknown).
     pub update_found: Option<crate::update::Release>,
@@ -185,6 +188,9 @@ impl App {
             show_save_preset: false,
             show_settings: false,
             show_about: false,
+            meter: Default::default(),
+            settings_tab: 0,
+            window_title: String::new(),
             show_update: false,
             update_found: None,
             update_rx: None,
@@ -375,8 +381,8 @@ impl App {
     }
 
     /// Pushes rotate/flip to mpv so the preview matches what ffmpeg will do.
-    /// ffmpeg: rotate, then flip. mpv: flip (vf), then rotate. Flipping after a quarter turn
-    /// equals flipping the *other* axis before it, hence the swap.
+    /// ffmpeg: rotate, then flip (in the picture you see). mpv rotates on the GPU; the flip is done by
+    /// the player when it draws the frame, so it is in the same displayed frame and needs no video filter.
     pub fn apply_preview_transform(&self) {
         let user = match self.s.rotation {
             Rotation::None => 0,
@@ -386,8 +392,7 @@ impl App {
         };
         let container = self.clip.as_ref().map_or(0, |c| c.info.rotation as i64);
         let total = (user + container) % 360;
-        let (fh, fv) = if total == 90 || total == 270 { (self.s.flip_v, self.s.flip_h) } else { (self.s.flip_h, self.s.flip_v) };
-        self.player.set_transform(total, fh, fv);
+        self.player.set_transform(total, self.s.flip_h, self.s.flip_v);
     }
 
     pub fn crop_rect(&self) -> Crop {
@@ -811,9 +816,10 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
 
-        if let Some(clip) = &self.clip {
-            let name = clip.path.file_name().unwrap_or_default().to_string_lossy();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!("{name} — FFcut")));
+        let title = crate::layout::render_title(&self.settings.title_template, self.clip.as_ref().map(|c| (c.path.as_path(), &c.info)), &self.settings.path_sep);
+        if title != self.window_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.window_title = title;
         }
 
         if self.fs != FsMode::Video {

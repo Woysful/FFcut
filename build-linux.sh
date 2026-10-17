@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds FFcut for Linux.
-#   ./build.sh              -> dist/FFcut-<ver>-x86_64.AppImage  (+ dist/ffcut-linux.tar.gz)
-#   BUNDLE_FFMPEG=1 ./build.sh   also put ffmpeg+ffprobe from this machine inside the AppImage
+#   ./build-linux.sh              -> dist/FFcut-<ver>-x86_64.AppImage  (+ dist/ffcut-linux.tar.gz)
+#   BUNDLE_FFMPEG=1 ./build-linux.sh   also put ffmpeg+ffprobe from this machine inside the AppImage
 set -euo pipefail
 cd "$(dirname "$0")"
 

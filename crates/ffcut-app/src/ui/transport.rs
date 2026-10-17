@@ -1,4 +1,6 @@
 use crate::app::{fmt_time, App, TlDrag};
+use super::icons::{icon_button, Icon};
+use super::meter::METER_W;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense, Stroke, StrokeKind, UiBuilder};
 
@@ -27,13 +29,21 @@ impl App {
                     ui.set_min_height(ui.available_height()); // fill the panel, so the size is what the user dragged
                     self.controls(ui);
                     ui.add_space(6.0);
-                    self.tracks_view(ui);
+                    let avail = ui.available_rect_before_wrap();
+                    let mrect = Rect::from_min_max(pos2(avail.right() - METER_W, avail.top() + 22.0), pos2(avail.right(), avail.bottom() - 40.0));
+                    let body = Rect::from_min_max(avail.min, pos2(avail.right() - METER_W - 8.0, avail.bottom()));
+                    ui.scope_builder(UiBuilder::new().max_rect(body), |ui| self.tracks_view(ui));
+                    self.level_meter(ui, mrect);
                 });
         } else {
             egui::Panel::bottom("transport").frame(frame).show(ui, |ui| {
                 self.controls(ui);
                 ui.add_space(6.0);
-                self.timeline(ui, 62.0);
+                let avail = ui.available_rect_before_wrap();
+                let mrect = Rect::from_min_max(pos2(avail.right() - METER_W, avail.top() + 22.0), pos2(avail.right(), avail.top() + 62.0 - 6.0));
+                let body = Rect::from_min_max(avail.min, pos2(avail.right() - METER_W - 8.0, avail.bottom()));
+                ui.scope_builder(UiBuilder::new().max_rect(body), |ui| self.timeline(ui, 62.0));
+                self.level_meter(ui, mrect);
             });
         }
     }
@@ -44,26 +54,36 @@ impl App {
         let t = self.player.time();
         let h = 30.0;
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
-        let centre = Rect::from_center_size(rect.center(), vec2(388.0, h));
+        let centre = Rect::from_center_size(rect.center(), vec2(320.0, h));
         let left = Rect::from_min_max(rect.min, pos2((centre.left() - 10.0).max(rect.left()), rect.max.y));
         let right = Rect::from_min_max(pos2((centre.right() + 10.0).min(rect.right()), rect.min.y), rect.max);
         let lay = |l: Layout, r: Rect| UiBuilder::new().max_rect(r).layout(l);
 
-        // ---- left: loop + time
+        // ---- left: loop + time (click the time to switch to frame numbers)
         ui.scope_builder(lay(Layout::left_to_right(Align::Center), left), |ui| {
             ui.set_clip_rect(left);
-            if ui.add_sized(vec2(54.0, 28.0), egui::Button::new("Loop").selected(self.loop_on)).on_hover_text("Loop the selection  (A)").clicked() {
+            if icon_button(ui, vec2(34.0, 28.0), Icon::Loop, self.loop_on, None).on_hover_text("Loop the selection  (A)").clicked() {
                 self.loop_on = !self.loop_on;
                 self.sync_loop();
             }
-            ui.add_space(8.0);
-            ui.label(RichText::new(format!("{} / {}", fmt_time(t), fmt_time(dur))).monospace().size(13.0));
+            ui.add_space(6.0);
+            let fps = self.clip.as_ref().map_or(0.0, |c| c.info.fps);
+            let frames = |x: f64| (x * fps).round() as i64;
+            let as_time = format!("{} / {}", fmt_time(t), fmt_time(dur));
+            let as_frames = format!("{} / {}", frames(t), frames(dur));
+            let (shown, other, unit) = if self.settings.show_frames && fps > 0.0 { (as_frames, as_time, "frames") } else { (as_time, as_frames, "time") };
+            let tip = if fps > 0.0 { format!("Showing {unit}. Click to switch.\n{other}") } else { "No frame rate known: showing time".to_string() };
+            let r = ui.add(egui::Label::new(RichText::new(shown).monospace().size(13.0)).sense(Sense::click())).on_hover_text(tip).on_hover_cursor(egui::CursorIcon::PointingHand);
+            if r.clicked() && fps > 0.0 {
+                self.settings.show_frames = !self.settings.show_frames;
+                self.settings.save();
+            }
         });
 
         // ---- centre: crop | media buttons | tracks
         ui.scope_builder(lay(Layout::left_to_right(Align::Center), centre), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if ui.add_sized(vec2(76.0, 28.0), egui::Button::new("⛶ Crop").selected(self.crop_on)).on_hover_text("Crop  (C)").clicked() {
+            if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop_on, None).on_hover_text("Crop  (C)").clicked() {
                 self.crop_on = !self.crop_on;
                 if self.crop_on {
                     let c = self.crop_rect();
@@ -74,24 +94,24 @@ impl App {
             }
             ui.add_space(8.0);
             let sz = vec2(34.0, 28.0);
-            if ui.add_sized(sz, egui::Button::new("⏮")).on_hover_text("Go to trim start").clicked() {
+            if icon_button(ui, sz, Icon::ToStart, false, None).on_hover_text("Go to trim start").clicked() {
                 self.player.seek(self.trim_start);
             }
-            if ui.add_sized(sz, egui::Button::new("◀")).on_hover_text("Previous frame  (←)").clicked() {
+            if icon_button(ui, sz, Icon::StepBack, false, None).on_hover_text("Previous frame  (←)").clicked() {
                 self.player.step_frame(false);
             }
-            let label = if self.player.paused() { "▶" } else { "⏸" };
-            if ui.add_sized(vec2(46.0, 28.0), egui::Button::new(RichText::new(label).size(16.0)).fill(theme::ACCENT.gamma_multiply(0.75))).on_hover_text("Play / pause  (Space)").clicked() {
+            let icon = if self.player.paused() { Icon::Play } else { Icon::Pause };
+            if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(theme::ACCENT.gamma_multiply(0.75))).on_hover_text("Play / pause  (Space)").clicked() {
                 self.play_pause();
             }
-            if ui.add_sized(sz, egui::Button::new("▶|")).on_hover_text("Next frame  (→)").clicked() {
+            if icon_button(ui, sz, Icon::StepForward, false, None).on_hover_text("Next frame  (→)").clicked() {
                 self.player.step_frame(true);
             }
-            if ui.add_sized(sz, egui::Button::new("⏭")).on_hover_text("Go to trim end").clicked() {
+            if icon_button(ui, sz, Icon::ToEnd, false, None).on_hover_text("Go to trim end").clicked() {
                 self.player.seek(self.trim_end);
             }
             ui.add_space(8.0);
-            if ui.add_sized(vec2(76.0, 28.0), egui::Button::new("Tracks").selected(self.multitrack)).on_hover_text("Switch the timeline: one bar / one lane per audio track").clicked() {
+            if icon_button(ui, vec2(34.0, 28.0), Icon::Tracks, self.multitrack, None).on_hover_text("Switch the timeline: one bar / one lane per audio track").clicked() {
                 self.multitrack = !self.multitrack;
             }
         });

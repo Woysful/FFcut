@@ -1,6 +1,6 @@
 //! Grouped codec drop-downs, shared by the sidebar and the presets editor.
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32};
 use ffcut_core::probe::Encoders;
 use ffcut_core::{AudioCodec, VideoCodec};
 
@@ -57,9 +57,23 @@ fn all_audio() -> impl Iterator<Item = &'static Item> {
     [A_LOSSY, A_LOSSLESS].into_iter().flat_map(|g| g.iter())
 }
 
+/// A group title in a drop-down: a full-width band with its own background, so the groups stand out
+/// from the entries.
 fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(4.0);
-    ui.label(RichText::new(text).small().strong().color(Color32::from_gray(150)));
+    let w = ui.available_width().max(160.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 24.0), egui::Sense::hover());
+    let p = ui.painter();
+    p.rect_filled(rect, 4.0, Color32::from_rgb(62, 65, 75));
+    p.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())), 2.0, crate::theme::ACCENT);
+    p.text(
+        egui::pos2(rect.left() + 12.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text.to_uppercase(),
+        egui::FontId::proportional(12.0),
+        Color32::from_gray(225),
+    );
+    ui.add_space(2.0);
 }
 
 fn group<T: PartialEq + Clone>(

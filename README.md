@@ -1,7 +1,7 @@
-# [<img src="https://github.com/Woysful/FFcut/blob/main/assets/icon.png" width="2.75%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
+# [<img src="https://github.com/Woysful/FFcut/blob/main/packaging/ffcut.png" width="3%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
 
-A small, fast, native wrapper for FFmpeg. Written in Rust (egui + libmpv) — no Electron, no Chromium, no transcoding for the preview.
-![](https://github.com/user-attachments/assets/a279369d-9ec7-4f92-9cd9-4f4982ed00ab)
+Small and fast wrapper for FFmpeg.
+![](https://github.com/user-attachments/assets/ed99c006-1ea0-4d34-8d26-4f34fd5b3446)
 > Heavily vibe coded. Expect issues.
 
 ## Features
@@ -11,17 +11,12 @@ A small, fast, native wrapper for FFmpeg. Written in Rust (egui + libmpv) — no
   - Rotate
   - Flip
   - Resize
-  - Video/Audio codecs (CPU, NVENC, AMF, QSV, VAAPI)
-  - Multi-track audio timeline: per-track trim, shift, volume, Solo/Mute, replace or add sound from another file, waveforms
   - Specific audio track export, or mix all tracks into one
   - **Custom FFmpeg command** — the final command is shown and fully editable, and exactly that text is what runs
 - Environment:
-  - Export Presets (edit, import, export)
+  - Multi-track audio timeline
+  - Presets (edit, import, export)
   - Hotkeys
-  - File info
-  - Loop playback/Lock timeline
-  - Two fullscreen modes (interface / video only)
-  - Update notification (can be turned off)
 
 ## Supported Formats
 
@@ -57,8 +52,8 @@ A small, fast, native wrapper for FFmpeg. Written in Rust (egui + libmpv) — no
 ```bash
 git clone https://github.com/woysful/FFcut.git
 cd ./FFcut
-./build.sh                    # -> dist/FFcut-<version>-x86_64.AppImage and dist/ffcut-linux-x86_64.tar.gz
-BUNDLE_FFMPEG=1 ./build.sh    # also put ffmpeg/ffprobe from this machine inside
+./build-linux.sh                    # -> dist/FFcut-<version>-x86_64.AppImage and dist/ffcut-linux-x86_64.tar.gz
+BUNDLE_FFMPEG=1 ./build-linux.sh    # also put ffmpeg/ffprobe from this machine inside
 ```
 For a quick run without packaging: `cargo run --release -p ffcut-app`.
 
@@ -86,7 +81,7 @@ git clone https://github.com/woysful/FFcut.git
 cd FFcut
 set MPV_DIR=C:\libmpv
 set FFMPEG_DIR=C:\ffmpeg\bin
-build.bat
+build-windows.bat
 ```
 `FFMPEG_DIR` is optional (it bundles ffmpeg/ffprobe into the zip). Result: `dist\FFcut-windows-x64.zip`.
 
@@ -109,7 +104,6 @@ build.bat
 | R            | Reset Trim                          |
 | C            | Toggle crop                         |
 | A            | Toggle loop                         |
-| Shift+A      | Toggle timeline lock                |
 
 ## Development
 - `crates/ffcut-core` — all logic without UI: `model` (export settings), `builder` (settings → ffmpeg argv), `cmdline` (argv ⇄ editable text), `probe` (ffprobe), `run` (runs exactly the argv you see: progress, cancel, cleanup). Tested, including against real ffmpeg.

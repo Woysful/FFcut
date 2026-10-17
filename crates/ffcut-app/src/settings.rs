@@ -15,6 +15,14 @@ pub struct Settings {
     pub no_update_check: bool,
     /// A release the user chose to ignore (the lamp stays off for it).
     pub skipped_version: String,
+    /// Window title template, e.g. "{file} — {app}" (empty = default). See `layout::TITLE_VARS`.
+    pub title_template: String,
+    /// Fields of the file-info line in the menu bar, in order.
+    pub info_items: Vec<crate::layout::InfoItem>,
+    /// The timer above the timeline shows frame numbers instead of time.
+    pub show_frames: bool,
+    /// Shown instead of `/` and `\\` in paths (title, info line). Empty = the path as it is.
+    pub path_sep: String,
     pub volume: Option<f32>,
     pub muted: bool,
 }
@@ -28,7 +36,11 @@ impl Settings {
         config_dir().join("settings.json")
     }
     pub fn load() -> Self {
-        std::fs::read_to_string(Self::file()).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        std::fs::read_to_string(Self::file()).ok().and_then(|t| serde_json::from_str::<Settings>(&t).ok()).unwrap_or_default().normalized()
+    }
+    fn normalized(mut self) -> Self {
+        crate::layout::normalize_info_items(&mut self.info_items);
+        self
     }
     pub fn save(&self) {
         let _ = std::fs::create_dir_all(config_dir());

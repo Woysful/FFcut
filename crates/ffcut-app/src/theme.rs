@@ -9,7 +9,7 @@ pub const BG: Color32 = Color32::from_rgb(22, 23, 26);
 pub const PANEL: Color32 = Color32::from_rgb(30, 31, 35);
 pub const TRACK: Color32 = Color32::from_rgb(44, 46, 52);
 
-/// The fonts of the old FFcut: Manrope for the interface, JetBrains Mono for numbers and the command.
+/// JetBrains Mono for the whole interface and the command field (Manrope only as a fallback).
 /// egui's built-in fonts stay behind them as a fallback for symbols they do not have.
 fn install_fonts(ctx: &egui::Context) {
     use egui::{FontData, FontDefinitions, FontFamily};
@@ -18,8 +18,9 @@ fn install_fonts(ctx: &egui::Context) {
     f.font_data.insert("Manrope".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/Manrope-Medium.ttf"))));
     f.font_data.insert("JetBrainsMono".into(), Arc::new(FontData::from_static(include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"))));
     let prop = f.families.entry(FontFamily::Proportional).or_default();
-    prop.insert(0, "Manrope".into());
-    prop.insert(1, "JetBrainsMono".into());
+    // JetBrains Mono is the interface font (like the timer); Manrope stays behind it as a fallback for symbols
+    prop.insert(0, "JetBrainsMono".into());
+    prop.insert(1, "Manrope".into());
     f.families.entry(FontFamily::Monospace).or_default().insert(0, "JetBrainsMono".into());
     ctx.set_fonts(f);
 }
@@ -47,5 +48,11 @@ pub fn apply(ctx: &egui::Context) {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
         s.spacing.button_padding = egui::vec2(10.0, 5.0);
         s.spacing.interact_size.y = 26.0;
+        // JetBrains Mono is wide: slightly smaller sizes keep the layout as it was
+        use egui::{FontId, TextStyle::*};
+        for (st, size) in [(Body, 12.5), (Button, 12.5), (Small, 10.5), (Monospace, 12.5), (Heading, 16.0)] {
+            let fam = if st == Monospace { egui::FontFamily::Monospace } else { egui::FontFamily::Proportional };
+            s.text_styles.insert(st, FontId::new(size, fam));
+        }
     });
 }

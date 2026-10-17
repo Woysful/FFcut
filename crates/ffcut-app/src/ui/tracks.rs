@@ -3,6 +3,7 @@
 //! replace the sound with another file, and add new tracks. Lanes show a waveform.
 
 use super::transport::HEADER_W;
+use crate::app::fmt_time;
 use crate::app::{App, TrkDrag, Wave};
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, DragValue, FontId, Layout, Rect, RichText, Sense, Stroke, StrokeKind, UiBuilder};
@@ -19,7 +20,7 @@ enum Act {
     Reset(usize),
 }
 
-fn peak_in(peaks: &[f32], t0: f64, t1: f64) -> f32 {
+pub(super) fn peak_in(peaks: &[f32], t0: f64, t1: f64) -> f32 {
     let a = (t0 * PEAKS_PER_SEC as f64).floor().max(0.0) as usize;
     if a >= peaks.len() {
         return 0.0;
@@ -32,10 +33,15 @@ impl App {
     pub fn tracks_view(&mut self, ui: &mut egui::Ui) {
         // row 0: the trim range, aligned with the lanes below
         ui.horizontal(|ui| {
-            ui.allocate_ui(vec2(HEADER_W, 50.0), |ui| {
+            ui.allocate_ui_with_layout(vec2(HEADER_W, 50.0), Layout::top_down(Align::Min), |ui| {
                 ui.set_width(HEADER_W);
-                ui.add_space(20.0);
-                ui.label(RichText::new("Video · trim range").size(12.5).color(Color32::from_gray(160)));
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.add_space(8.0);
+                // what will be exported: in / out and the resulting length
+                let end = if self.trim_end > 0.0 { self.trim_end } else { self.dur() };
+                let dim = Color32::from_gray(140);
+                ui.label(RichText::new(format!("{} → {}", fmt_time(self.trim_start), fmt_time(end))).monospace().size(11.5).color(Color32::from_gray(200)));
+                ui.label(RichText::new(format!("length {}", fmt_time((end - self.trim_start).max(0.0)))).monospace().size(11.5).color(dim));
             });
             self.timeline(ui, 50.0);
         });
@@ -132,13 +138,16 @@ impl App {
                 }
                 return;
             }
-            // volume · replace · solo · mute · delete
+            // volume · replace · delete · solo · mute
             let mut pct = t.volume * 100.0;
             if ui.add_sized(vec2(58.0, 24.0), DragValue::new(&mut pct).range(0.0..=300.0).speed(1.0).suffix("%").fixed_decimals(0)).on_hover_text("Track volume (drag or type)").changed() {
                 t.volume = pct / 100.0;
             }
             if ui.add_sized(sz, egui::Button::new(icon("⟳"))).on_hover_text("Replace the sound of this track with another file").clicked() {
                 *act = Some(Act::Replace(i));
+            }
+            if ui.add_sized(sz, egui::Button::new(icon("🗑"))).on_hover_text("Remove this track from the export").clicked() {
+                *act = Some(Act::Delete(i));
             }
             // solo / mute are exclusive on one track
             let solo = egui::Button::new(letter("S")).fill(if t.solo { theme::WARN.gamma_multiply(0.7) } else { ui.visuals().widgets.inactive.weak_bg_fill });
@@ -154,9 +163,6 @@ impl App {
                 if t.muted {
                     t.solo = false;
                 }
-            }
-            if ui.add_sized(sz, egui::Button::new(icon("🗑"))).on_hover_text("Remove this track from the export").clicked() {
-                *act = Some(Act::Delete(i));
             }
         });
     }

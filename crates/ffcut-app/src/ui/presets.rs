@@ -43,7 +43,7 @@ impl App {
             return;
         }
         let enc = self.encoders.lock().unwrap().clone();
-        let mut open = true;
+        let open;
         let mut apply: Option<String> = None;
         let mut delete: Option<String> = None;
         let mut export_one: Option<String> = None;
@@ -51,25 +51,32 @@ impl App {
         let mut changed = false;
         let (mut export_all, mut import) = (false, false);
 
-        egui::Window::new("Presets").open(&mut open).collapsible(false).default_size([620.0, 520.0]).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if ui.button("Import…").on_hover_text("Add presets from a .json file (also reads presets exported from the old FFcut)").clicked() {
-                    import = true;
-                }
-                if ui.add_enabled(!self.presets.is_empty(), egui::Button::new("Export all…")).clicked() {
-                    export_all = true;
-                }
-                ui.weak(format!("{} preset(s)", self.presets.len()));
+        open = super::os_window_raw(ctx, "presets", "Presets", [700.0, 600.0], |ui| {
+            egui::Panel::top("presets_head").frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(18, 12))).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Presets").size(18.0).strong());
+                    ui.label(RichText::new(format!("{}", self.presets.len())).size(12.0).color(Color32::from_gray(140)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.add_enabled(!self.presets.is_empty(), egui::Button::new("Export all…")).clicked() {
+                            export_all = true;
+                        }
+                        if ui.button("Import…").on_hover_text("Add presets from a .json file (also reads presets exported from the old FFcut)").clicked() {
+                            import = true;
+                        }
+                    });
+                });
             });
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin::symmetric(18, 14))).show(ui, |ui| {
             if let Some(m) = &self.preset_msg {
                 ui.add(egui::Label::new(RichText::new(m).size(12.5).color(theme::WARN)).wrap());
+                ui.add_space(6.0);
             }
-            ui.separator();
 
             if self.presets.is_empty() {
-                ui.add_space(20.0);
+                ui.add_space(30.0);
                 ui.vertical_centered(|ui| {
-                    ui.weak("No presets yet.");
+                    ui.label(RichText::new("No presets yet").size(15.0).color(Color32::from_gray(190)));
+                    ui.add_space(4.0);
                     ui.weak("Set up codec, quality and audio in the sidebar, then Presets → Save preset…");
                 });
                 return;
@@ -78,7 +85,7 @@ impl App {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 let names: Vec<String> = self.presets.keys().cloned().collect();
                 for name in names {
-                    egui::Frame::NONE.fill(theme::BG).corner_radius(8).inner_margin(egui::Margin::same(8)).show(ui, |ui| {
+                    egui::Frame::NONE.fill(Color32::from_rgb(40, 42, 48)).stroke(egui::Stroke::new(1.0, Color32::from_gray(54))).corner_radius(10).inner_margin(egui::Margin::same(14)).show(ui, |ui| {
                         ui.set_width(ui.available_width());
                         let renaming = self.preset_rename.as_ref().map_or(false, |(old, _)| *old == name);
                         ui.horizontal(|ui| {
@@ -106,7 +113,7 @@ impl App {
                                 if ui.small_button("Rename").clicked() {
                                     self.preset_rename = Some((name.clone(), name.clone()));
                                 }
-                                if ui.add_enabled(self.clip.is_some(), egui::Button::new("Apply").small()).on_hover_text("Use this preset for the open video").clicked() {
+                                if ui.add_enabled(self.clip.is_some(), egui::Button::new(RichText::new("Apply").color(Color32::BLACK)).fill(theme::ACCENT).small()).on_hover_text("Use this preset for the open video").clicked() {
                                     apply = Some(name.clone());
                                 }
                             });
@@ -197,8 +204,9 @@ impl App {
                             });
                         });
                     });
-                    ui.add_space(4.0);
+                    ui.add_space(8.0);
                 }
+            });
             });
         });
         if !open {

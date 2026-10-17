@@ -96,14 +96,16 @@ impl App {
                     text.push_str(&format!("   ~{:.0}s left", el * (100.0 - p) / p));
                 }
             }
-            ui.add(egui::ProgressBar::new(frac.unwrap_or(0.0)).text(text).animate(frac.is_none()).fill(theme::ACCENT).desired_width(w));
+            // a darker fill and white text: the text stays readable on both the filled and the empty part
+            ui.add(egui::ProgressBar::new(frac.unwrap_or(0.0)).text(RichText::new(text).color(Color32::WHITE).size(13.0)).animate(frac.is_none()).fill(theme::ACCENT.gamma_multiply(0.6)).desired_width(w).corner_radius(6));
             if ui.add_sized(vec2(w, 30.0), egui::Button::new("Cancel")).clicked() {
                 run.job.cancel();
             }
         } else {
             let can = self.clip.is_some() && self.tools_ok() && command_ok;
+            // add_sized centres the label (a plain min_size button keeps it left-aligned in a left-to-right layout)
             let b = egui::Button::new(RichText::new("Export…").size(15.0).strong().color(Color32::BLACK)).fill(theme::ACCENT);
-            if ui.add_enabled(can, b.min_size(vec2(w, 34.0))).on_hover_text("Choose where to save, then run the command above exactly as written  (Ctrl+E)").clicked() {
+            if ui.add_enabled_ui(can, |ui| ui.add_sized(vec2(w, 34.0), b)).inner.on_hover_text("Choose where to save, then run the command above exactly as written  (Ctrl+E)").clicked() {
                 self.export_clicked();
             }
         }

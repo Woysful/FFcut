@@ -41,5 +41,8 @@ pub fn set_mix(mpv: &Mpv, parts: &[(i64, f32)]) -> Result<(), String> {
 /// Back to plain playback of one audio track (`aid`, 1-based).
 pub fn single_track(mpv: &Mpv, aid: i64) -> Result<(), String> {
     mpv.set_property("lavfi-complex", "").map_err(|e| e.to_string())?;
+    // leaving the mix graph keeps `aid` at its old value and mpv then does not reconnect the track
+    // (silence until you pick another one); deselecting first forces a fresh selection
+    mpv.set_property("aid", "no").map_err(|e| e.to_string())?;
     mpv.set_property("aid", aid).map_err(|e| e.to_string())
 }

@@ -2,7 +2,7 @@
 /target/
 **/*.rs.bk
 
-# Build outputs (build.sh / build-windows.sh / build.bat)
+# Build outputs (build-linux.sh / build-windows.sh / build-windows.bat)
 /dist/
 *.AppImage
 *.exe
@@ -38,5 +38,4 @@ Thumbs.db
 .env
 .env.*
 
-# Else
 TODO

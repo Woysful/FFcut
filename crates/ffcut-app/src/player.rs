@@ -13,7 +13,8 @@ use std::cell::{Cell, RefCell};
 use std::mem::ManuallyDrop;
 use std::time::{Duration, Instant};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 type GetProc = Arc<dyn Fn(&CStr) -> *const c_void + Send + Sync>;
 
@@ -41,7 +42,56 @@ struct Shared {
 unsafe impl Send for Shared {}
 unsafe impl Sync for Shared {}
 
+/// Talks to mpv from a helper thread so that the UI never waits for it.
+/// * seeks are "latest wins": while mpv is busy decoding, older targets are dropped, the preview catches up as it can;
+/// * `time-pos` / `pause` / `eof-reached` are polled there and published as atomics (reading a property can block
+///   for as long as a seek takes, which made scrubbing stutter).
+struct Bridge {
+    pending: Mutex<Option<(f64, bool)>>, // (target, exact)
+    wake: Condvar,
+    time: AtomicU64,
+    paused: AtomicBool,
+    eof: AtomicBool,
+}
+
+struct MpvRef(&'static Mpv);
+// SAFETY: libmpv's client API is documented thread-safe.
+unsafe impl Send for MpvRef {}
+
+fn spawn_bridge(mpv: &'static Mpv) -> Arc<Bridge> {
+    let b = Arc::new(Bridge { pending: Mutex::new(None), wake: Condvar::new(), time: AtomicU64::new(0f64.to_bits()), paused: AtomicBool::new(true), eof: AtomicBool::new(false) });
+    let (bb, m) = (b.clone(), MpvRef(mpv));
+    std::thread::Builder::new()
+        .name("mpv-bridge".into())
+        .spawn(move || {
+            let mpv = m.0;
+            loop {
+                let job = {
+                    let mut g = bb.pending.lock().unwrap();
+                    if g.is_none() {
+                        g = bb.wake.wait_timeout(g, Duration::from_millis(15)).unwrap().0;
+                    }
+                    g.take()
+                };
+                if let Some((t, exact)) = job {
+                    let mode = if exact { "absolute+exact" } else { "absolute+keyframes" };
+                    let _ = mpv.command("seek", &[&format!("{t:.3}"), mode]);
+                }
+                if let Ok(t) = mpv.get_property::<f64>("time-pos") {
+                    bb.time.store(t.to_bits(), Ordering::Relaxed);
+                }
+                bb.paused.store(mpv.get_property::<bool>("pause").unwrap_or(true), Ordering::Relaxed);
+                bb.eof.store(mpv.get_property::<bool>("eof-reached").unwrap_or(false), Ordering::Relaxed);
+            }
+        })
+        .expect("mpv bridge thread");
+    b
+}
+
 pub struct Player {
+    bridge: Arc<Bridge>,
+    /// Where the user last asked to go. Shown as the playhead right away (the real position follows).
+    target: Cell<Option<(f64, Instant)>>,
     mpv: &'static Mpv, // leaked on purpose: lives as long as the process
     shared: Arc<Shared>,
     pub loaded: bool,
@@ -51,6 +101,8 @@ pub struct Player {
     /// Last rotate/flip pushed to mpv. Re-setting the video filter chain drops the paused frame
     /// (black picture until the next seek), so we only touch mpv when something really changed.
     applied: RefCell<(i64, String)>,
+    /// Mirror the drawn picture horizontally / vertically.
+    flip: Cell<(bool, bool)>,
     /// mpv drops the first frame if nobody renders it within ~200 ms (slow first paint, e.g. a file
     /// opened from the command line). One re-seek shortly after loading brings the picture back.
     kick_at: Cell<Option<Instant>>,
@@ -117,12 +169,15 @@ impl Player {
         render.set_update_callback(move || egui_ctx.request_repaint());
 
         Ok(Player {
+            bridge: spawn_bridge(mpv),
+            target: Cell::new(None),
             mpv,
             shared: Arc::new(Shared { render: ManuallyDrop::new(render), fbo: Mutex::new(None) }),
             loaded: false,
             duration: 0.0,
             settle_until: Cell::new(Instant::now()),
             applied: RefCell::new((0, String::new())),
+            flip: Cell::new((false, false)),
             kick_at: Cell::new(None),
             kicks_left: Cell::new(0),
         })
@@ -135,8 +190,8 @@ impl Player {
                 let left = self.kicks_left.get();
                 if self.paused() {
                     // re-seek to where we are: makes mpv deliver the frame again
-                    let pos = self.time().max(0.0);
-                    let _ = self.mpv.command("seek", &[&format!("{pos:.3}"), "absolute+exact"]);
+                    let pos = self.real_time().max(0.0);
+                    self.queue_seek(pos, true);
                 }
                 if left > 0 {
                     self.kicks_left.set(left - 1);
@@ -159,6 +214,7 @@ impl Player {
         let _ = self.mpv.command("loadfile", &[&p, "replace"]);
         let _ = self.mpv.set_property("pause", true);
         self.loaded = true;
+        self.target.set(None);
         self.duration = duration;
         self.bump();
         self.kicks_left.set(4);
@@ -177,14 +233,28 @@ impl Player {
     }
 
     // ---- state ----
+    /// Position to show. Right after a seek / during scrubbing it is the requested position (instant, smooth);
+    /// otherwise what mpv reports.
     pub fn time(&self) -> f64 {
-        self.mpv.get_property::<f64>("time-pos").unwrap_or(0.0)
+        if let Some((t, at)) = self.target.get() {
+            let el = at.elapsed();
+            if el < Duration::from_millis(350) {
+                // playing: the requested position moves on, like the real one will
+                return if self.paused() { t } else { t + el.as_secs_f64() };
+            }
+            self.target.set(None);
+        }
+        self.real_time()
+    }
+    /// What mpv really shows (may lag behind `time()` while scrubbing).
+    pub fn real_time(&self) -> f64 {
+        f64::from_bits(self.bridge.time.load(Ordering::Relaxed))
     }
     pub fn paused(&self) -> bool {
-        self.mpv.get_property::<bool>("pause").unwrap_or(true)
+        self.bridge.paused.load(Ordering::Relaxed)
     }
     pub fn at_end(&self) -> bool {
-        self.mpv.get_property::<bool>("eof-reached").unwrap_or(false)
+        self.bridge.eof.load(Ordering::Relaxed)
     }
 
     // ---- control ----
@@ -193,20 +263,26 @@ impl Player {
             self.seek(0.0);
         }
         let _ = self.mpv.set_property("pause", p);
+        self.bridge.paused.store(p, Ordering::Relaxed);
     }
-    pub fn seek(&self, t: f64) {
+    fn queue_seek(&self, t: f64, exact: bool) {
         let t = t.clamp(0.0, self.duration.max(0.0));
         self.bump();
-        let _ = self.mpv.command("seek", &[&format!("{t:.3}"), "absolute+exact"]);
+        self.target.set(Some((t, Instant::now())));
+        self.bridge.eof.store(false, Ordering::Relaxed);
+        *self.bridge.pending.lock().unwrap() = Some((t, exact));
+        self.bridge.wake.notify_one();
+    }
+    pub fn seek(&self, t: f64) {
+        self.queue_seek(t, true);
     }
     /// Cheap seek (snaps to keyframes) for scrubbing; finish with `seek` for the exact frame.
     pub fn seek_fast(&self, t: f64) {
-        let t = t.clamp(0.0, self.duration.max(0.0));
-        self.bump();
-        let _ = self.mpv.command("seek", &[&format!("{t:.3}"), "absolute+keyframes"]);
+        self.queue_seek(t, false);
     }
     pub fn step_frame(&self, forward: bool) {
         self.bump();
+        self.target.set(None);
         let _ = self.mpv.set_property("pause", true);
         let _ = self.mpv.command(if forward { "frame-step" } else { "frame-back-step" }, &[]);
     }
@@ -230,32 +306,26 @@ impl Player {
     }
 
     /// Live preview of rotate/flip (crop is drawn as an overlay by the UI).
+    /// Rotation goes to mpv (GPU, no filter). Flips are applied when the frame is drawn (see `paint`): a
+    /// software video filter (`vf=hflip/vflip`) broke hardware-decoded frames (solid blue picture).
     pub fn set_transform(&self, rotate_deg: i64, flip_h: bool, flip_v: bool) {
-        let mut vf = Vec::new();
-        if flip_h {
-            vf.push("hflip");
+        if self.flip.get() != (flip_h, flip_v) {
+            self.flip.set((flip_h, flip_v));
+            self.bump();
         }
-        if flip_v {
-            vf.push("vflip");
-        }
-        let vf = vf.join(",");
         let mut cur = self.applied.borrow_mut();
-        if cur.0 == rotate_deg && cur.1 == vf {
+        if cur.0 == rotate_deg {
             return;
         }
         self.bump();
-        if cur.0 != rotate_deg {
-            let _ = self.mpv.set_property("video-rotate", rotate_deg);
-        }
-        if cur.1 != vf {
-            let _ = self.mpv.set_property("vf", vf.as_str());
-        }
-        *cur = (rotate_deg, vf);
+        let _ = self.mpv.set_property("video-rotate", rotate_deg);
+        cur.0 = rotate_deg;
     }
 
     /// Draws the current frame into `rect`.
     pub fn paint(&self, ui: &egui::Ui, rect: egui::Rect) {
         let shared = self.shared.clone();
+        let (flip_h, flip_v) = self.flip.get();
         let cb = egui_glow::CallbackFn::new(move |info, painter| {
             let vp = info.viewport_in_pixels();
             let (w, h) = (vp.width_px.max(1), vp.height_px.max(1));
@@ -299,7 +369,10 @@ impl Player {
                 // 2) our FBO -> screen, at the egui viewport position
                 gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
                 gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, painter.intermediate_fbo());
-                gl.blit_framebuffer(0, 0, w, h, vp.left_px, vp.from_bottom_px, vp.left_px + w, vp.from_bottom_px + h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+                // swapping the destination corners mirrors the picture
+                let (x0, x1) = if flip_h { (vp.left_px + w, vp.left_px) } else { (vp.left_px, vp.left_px + w) };
+                let (y0, y1) = if flip_v { (vp.from_bottom_px + h, vp.from_bottom_px) } else { (vp.from_bottom_px, vp.from_bottom_px + h) };
+                gl.blit_framebuffer(0, 0, w, h, x0, y0, x1, y1, glow::COLOR_BUFFER_BIT, glow::NEAREST);
                 gl.bind_framebuffer(glow::FRAMEBUFFER, painter.intermediate_fbo());
             }
         });

@@ -1,8 +1,12 @@
 //! All widgets. Each file adds an `impl App` block for one area of the window.
 
 mod codecs;
+mod icons;
+mod meter;
+pub use meter::MeterState;
 mod command;
 mod presets;
+mod settings_ui;
 mod side;
 mod tracks;
 mod transport;
@@ -25,35 +29,6 @@ pub fn audio_label(a: &AudioStream) -> String {
         s.push_str(&format!(" · {l}"));
     }
     s
-}
-
-/// One line for the menu bar: codec · size · fps · pixel format · audio · bitrate · file size.
-fn file_info_line(i: &ffcut_core::SourceInfo) -> String {
-    let mut parts = vec![
-        i.video_codec.to_uppercase(),
-        format!("{}×{}", i.width, i.height),
-        format!("{:.2} fps", i.fps),
-    ];
-    if !i.pix_fmt.is_empty() {
-        parts.push(i.pix_fmt.clone());
-    }
-    match i.audio.first() {
-        Some(a) => parts.push(format!(
-            "{} {}ch{}",
-            a.codec.to_uppercase(),
-            a.channels,
-            if i.audio.len() > 1 { format!(" ({} tracks)", i.audio.len()) } else { String::new() }
-        )),
-        None => parts.push("no audio".into()),
-    }
-    if i.bit_rate > 0 {
-        parts.push(format!("{:.2} Mbps", i.bit_rate as f64 / 1_000_000.0));
-    }
-    parts.push(format!("{:.1} MB", i.file_size as f64 / 1_048_576.0));
-    if !i.format.is_empty() {
-        parts.push(i.format.clone());
-    }
-    parts.join("  ·  ")
 }
 
 impl App {
@@ -119,7 +94,7 @@ impl App {
 
                 // centre: what is open (painted over the free middle part, never pushes the menus)
                 if let Some(c) = &self.clip {
-                    let text = file_info_line(&c.info);
+                    let text = crate::layout::info_line(&c.path, &c.info, &self.settings.info_items, &self.settings.path_sep);
                     let w = (bar.width() - 2.0 * 190.0).max(100.0);
                     let r = Rect::from_center_size(bar.center(), vec2(w, bar.height()));
                     ui.put(r, egui::Label::new(RichText::new(text).size(12.5).color(egui::Color32::from_gray(170))).truncate());
@@ -160,8 +135,7 @@ impl App {
     pub fn windows(&mut self, ctx: &egui::Context) {
         self.presets_window(ctx);
         if let Some((title, body)) = self.error_window.clone() {
-            let mut open = true;
-            egui::Window::new(RichText::new(&title).color(theme::ERR)).open(&mut open).collapsible(false).default_width(560.0).show(ctx, |ui| {
+            let open = os_window(ctx, "error", &title, [620.0, 380.0], |ui| {
                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                     ui.add(egui::Label::new(RichText::new(&body).monospace()).selectable(true));
                 });
@@ -176,7 +150,7 @@ impl App {
         }
 
         if self.show_save_preset {
-            egui::Window::new("Save preset").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            let open = os_window(ctx, "save_preset", "Save preset", [420.0, 190.0], |ui| {
                 ui.label("Saves codec, quality, audio, scale and container.\n(Trim, crop and rotation belong to the clip and are not saved.)");
                 let r = ui.text_edit_singleline(&mut self.preset_name);
                 r.request_focus();
@@ -195,11 +169,13 @@ impl App {
                     }
                 });
             });
+            if !open {
+                self.show_save_preset = false;
+            }
         }
 
         if self.show_about {
-            let mut open = true;
-            egui::Window::new("About FFcut").open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            let open = os_window(ctx, "about", "About FFcut", [460.0, 230.0], |ui| {
                 ui.label(RichText::new(format!("FFcut {}", crate::update::VERSION)).size(18.0).strong());
                 ui.label("A small native ffmpeg front end: trim, crop, rotate, re-encode, audio tracks.");
                 ui.add_space(4.0);
@@ -225,9 +201,8 @@ impl App {
         }
 
         if self.show_update {
-            let mut open = true;
             let rel = self.update_found.clone();
-            egui::Window::new("Update available").open(&mut open).collapsible(false).default_width(460.0).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+            let open = os_window(ctx, "update", "Update available", [500.0, 420.0], |ui| {
                 let Some(r) = &rel else {
                     ui.label("You have the latest version.");
                     return;
@@ -261,87 +236,59 @@ impl App {
             }
         }
 
-        if self.show_settings {
-            let mut open = true;
-            egui::Window::new("Settings").open(&mut open).collapsible(false).default_width(520.0).show(ctx, |ui| {
-                ui.label("Leave a path empty to auto-detect (next to FFcut, then PATH).");
-                ui.add_space(4.0);
-                let mut changed = false;
-                egui::Grid::new("tools").num_columns(2).show(ui, |ui| {
-                    ui.label("ffmpeg");
-                    changed |= ui.add(egui::TextEdit::singleline(&mut self.settings.ffmpeg_path).desired_width(360.0).hint_text("auto")).lost_focus();
-                    ui.end_row();
-                    ui.label("ffprobe");
-                    changed |= ui.add(egui::TextEdit::singleline(&mut self.settings.ffprobe_path).desired_width(360.0).hint_text("auto")).lost_focus();
-                    ui.end_row();
-                });
-                if changed {
-                    self.locate_tools(ctx);
-                    self.settings.save();
-                }
-                ui.add_space(6.0);
-                match (&self.ffmpeg, &self.ffprobe) {
-                    (Some(f), Some(p)) => {
-                        ui.colored_label(theme::OK, format!("✔ {}", self.ffmpeg_version));
-                        ui.weak(format!("{}\n{}", f.display(), p.display()));
-                    }
-                    _ => {
-                        ui.colored_label(theme::ERR, "ffmpeg and/or ffprobe not found");
-                    }
-                }
-                #[cfg(all(unix, not(target_os = "macos")))]
-                {
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.label(RichText::new("Display server").strong());
-                    let mut cur = match self.settings.display_server.as_str() {
-                        v @ ("wayland" | "x11") => v.to_string(),
-                        _ => String::new(),
-                    };
-                    ui.horizontal(|ui| {
-                        for (v, label) in [("", "Auto"), ("wayland", "Wayland"), ("x11", "X11 (XWayland)")] {
-                            ui.radio_value(&mut cur, v.to_string(), label);
-                        }
-                    });
-                    if cur != self.settings.display_server {
-                        self.settings.display_server = cur;
-                        self.settings.save();
-                    }
-                    ui.label(format!("Running on: {}. A change takes effect after a restart.", self.backend.name()));
-                    ui.add(egui::Label::new(RichText::new("Dragging files into the window does not work on native Wayland (the windowing library has no support for it yet). Choose X11 to get it through XWayland.").size(11.5).color(egui::Color32::from_gray(135))).wrap());
-                    if crate::display::resolve(&self.settings.display_server) != self.backend && ui.button("Restart now").clicked() {
-                        let open = self.clip.as_ref().map(|c| c.path.clone());
-                        if crate::display::restart(open.as_deref()) {
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    }
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label(RichText::new(format!("Updates  ·  FFcut {}", crate::update::VERSION)).strong());
-                let mut check = !self.settings.no_update_check;
-                if ui.checkbox(&mut check, "Look for a new version at startup").on_hover_text("One small request to GitHub when FFcut starts. Nothing is downloaded or installed.").changed() {
-                    self.settings.no_update_check = !check;
-                    self.settings.save();
-                }
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(self.update_rx.is_none(), egui::Button::new("Check now")).clicked() {
-                        self.start_update_check(ui.ctx(), true);
-                    }
-                    if let Some(m) = &self.update_msg {
-                        ui.label(RichText::new(m).color(egui::Color32::from_gray(170)));
-                    }
-                });
-                ui.add_space(8.0);
-                ui.weak(format!("Settings file: {}", crate::settings::config_dir().join("settings.json").display()));
-            });
-            if !open {
-                self.show_settings = false;
-            }
-        }
+        self.settings_window(ctx);
     }
 
     pub fn show_in_folder(&self, p: &std::path::Path) {
         open_in_file_manager(p);
     }
+}
+
+/// A dialog as a real OS window (the system draws its title bar). Where the backend cannot open a second
+/// window, egui wraps the same content in an in-window frame, so it never goes missing.
+/// Returns `false` once the user has closed it (title-bar button or Esc).
+pub fn os_window(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], mut body: impl FnMut(&mut egui::Ui)) -> bool {
+    os_window_raw(ctx, id, title, size, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| body(ui));
+        });
+    })
+}
+
+/// Same, but `body` gets the bare window and lays out its own panels.
+pub fn os_window_raw(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], mut body: impl FnMut(&mut egui::Ui)) -> bool {
+    let mut open = true;
+    let builder = egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size(size)
+        .with_min_inner_size([480.0, 300.0])
+        .with_app_id("ffcut")
+        .with_minimize_button(false)
+        .with_maximize_button(false);
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("ffcut-dialog", id)), builder, |ui, _class| {
+        if ui.input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape)) {
+            open = false;
+        }
+        body(ui);
+    });
+    open
+}
+
+/// A rounded "card" with a title: the building block of the settings pages.
+pub fn card(ui: &mut egui::Ui, title: &str, hint: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(egui::Color32::from_rgb(40, 42, 48))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(54)))
+        .corner_radius(10)
+        .inner_margin(egui::Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(title).size(14.0).strong().color(egui::Color32::from_gray(235)));
+            if let Some(h) = hint {
+                ui.add(egui::Label::new(RichText::new(h).size(11.5).color(egui::Color32::from_gray(140))).wrap());
+            }
+            ui.add_space(8.0);
+            add(ui);
+        });
+    ui.add_space(12.0);
 }
