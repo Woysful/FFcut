@@ -1,7 +1,7 @@
 # [<img src="https://github.com/Woysful/FFcut/blob/main/packaging/ffcut.png" width="3%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
 
 Small and fast wrapper for FFmpeg.
-![](https://github.com/user-attachments/assets/ed99c006-1ea0-4d34-8d26-4f34fd5b3446)
+![](https://github.com/user-attachments/assets/ef9278e2-056f-45da-89e0-3bc2e75b232d)
 > Heavily vibe coded. Expect issues.
 
 ## Features
