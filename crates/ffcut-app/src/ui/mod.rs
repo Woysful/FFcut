@@ -1,6 +1,7 @@
 //! All widgets. Each file adds an `impl App` block for one area of the window.
 
 mod codecs;
+mod fx_ui;
 mod icons;
 mod meter;
 pub use meter::MeterState;
@@ -134,6 +135,7 @@ impl App {
     /// Windows: settings, save preset, presets editor, errors.
     pub fn windows(&mut self, ctx: &egui::Context) {
         self.presets_window(ctx);
+        self.fx_window(ctx);
         if let Some((title, body)) = self.error_window.clone() {
             let open = os_window(ctx, "error", &title, [620.0, 380.0], |ui| {
                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {

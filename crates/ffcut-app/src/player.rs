@@ -97,6 +97,7 @@ pub struct Player {
     pub loaded: bool,
     pub duration: f64,
     /// After any command mpv needs a few UI frames to deliver the new picture.
+    seek_gen: Cell<u64>,
     settle_until: Cell<Instant>,
     /// Last rotate/flip pushed to mpv. Re-setting the video filter chain drops the paused frame
     /// (black picture until the next seek), so we only touch mpv when something really changed.
@@ -175,6 +176,7 @@ impl Player {
             shared: Arc::new(Shared { render: ManuallyDrop::new(render), fbo: Mutex::new(None) }),
             loaded: false,
             duration: 0.0,
+            seek_gen: Cell::new(0),
             settle_until: Cell::new(Instant::now()),
             applied: RefCell::new((0, String::new())),
             flip: Cell::new((false, false)),
@@ -222,6 +224,11 @@ impl Player {
         self.reset_view();
     }
 
+    /// Counts every seek / frame step the app asked for.
+    pub fn seek_gen(&self) -> u64 {
+        self.seek_gen.get()
+    }
+
     /// The libmpv handle (for the multi-track audio preview).
     pub fn mpv(&self) -> &Mpv {
         self.mpv
@@ -266,6 +273,7 @@ impl Player {
         self.bridge.paused.store(p, Ordering::Relaxed);
     }
     fn queue_seek(&self, t: f64, exact: bool) {
+        self.seek_gen.set(self.seek_gen.get() + 1);
         let t = t.clamp(0.0, self.duration.max(0.0));
         self.bump();
         self.target.set(Some((t, Instant::now())));
@@ -281,6 +289,7 @@ impl Player {
         self.queue_seek(t, false);
     }
     pub fn step_frame(&self, forward: bool) {
+        self.seek_gen.set(self.seek_gen.get() + 1);
         self.bump();
         self.target.set(None);
         let _ = self.mpv.set_property("pause", true);

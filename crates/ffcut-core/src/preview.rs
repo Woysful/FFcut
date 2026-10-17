@@ -1,8 +1,9 @@
 //! Live preview of several audio tracks at once: an mpv `--lavfi-complex` graph.
 //!
 //! Pure string building, so it can be unit-tested; `tests/preview_mix.rs` feeds it to a real libmpv.
-//! The preview mixes what is *audible* with each track's volume. Trim and shift are not auditioned
-//! (they would need the graph to be rebuilt on every seek); they are applied on export.
+//! The preview mixes what is *audible* with each track's volume. Trim, shift and effects are not done in
+//! this graph: a track that has them is first rendered by ffmpeg with the export's own filters
+//! (`audiofx::preview_render_args`) and that file takes the track's place here.
 
 /// `parts`: (mpv audio track id, volume where 1.0 = unchanged). `None` = nothing to play.
 pub fn lavfi_mix(parts: &[(i64, f32)]) -> Option<String> {

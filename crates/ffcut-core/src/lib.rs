@@ -15,6 +15,7 @@
 //! The argv is the single source of truth at export time. Nothing is
 //! re-interpreted or filtered after the user edits it.
 
+pub mod audiofx;
 pub mod builder;
 pub mod cmdline;
 pub mod model;

@@ -17,8 +17,13 @@ impl App {
             // taller on demand: with many audio tracks the user drags the top edge up
             // no taller than needed to show every track (the video keeps the rest)
             let screen = ui.ctx().content_rect().height();
-            let lanes = self.s.tracks.len().max(1) as f32;
-            let fit = 16.0 + 36.0 + 54.0 + lanes * (super::tracks::LANE_H + 5.0) + 40.0;
+            // removed tracks are thin strips, so they count less
+            let lanes: f32 = if self.s.tracks.is_empty() {
+                super::tracks::LANE_H + 5.0
+            } else {
+                self.s.tracks.iter().map(|t| if t.deleted { super::tracks::DEL_H } else { super::tracks::LANE_H } + 5.0).sum()
+            };
+            let fit = 16.0 + 36.0 + 54.0 + lanes + 40.0 + 6.0; // + a few pixels: the sum is a hair short, and the list would scroll
             let max = fit.min(screen * 0.8).max(210.0);
             egui::Panel::bottom("transport_tracks")
                 .frame(frame)

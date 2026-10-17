@@ -128,14 +128,129 @@ pub struct TrackEdit {
     /// When any track is soloed only soloed tracks are heard / exported.
     #[serde(default)]
     pub solo: bool,
+    /// Fade in from silence over this many seconds, from the start of the clip.
+    #[serde(default)]
+    pub fade_in: f64,
+    /// Fade out to silence over this many seconds, ending at the end of the clip.
+    #[serde(default)]
+    pub fade_out: f64,
+    /// Volume keyframes (gain in dB at a point of the source), joined by straight lines. Empty = none.
+    #[serde(default)]
+    pub envelope: Vec<EnvPoint>,
+    /// The effect stack, applied top to bottom.
+    #[serde(default)]
+    pub effects: Vec<Effect>,
+}
+
+/// One effect of a track's stack.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Effect {
+    /// Off = bypassed (kept in the list, not applied).
+    pub on: bool,
+    pub kind: EffectKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EffectKind {
+    /// Parametric equalizer: its bands, applied in order.
+    Eq(Vec<EqBand>),
+    Comp(Compressor),
+    Norm(Normalize),
+}
+
+impl Effect {
+    pub fn new(kind: EffectKind) -> Self {
+        Effect { on: true, kind }
+    }
+    pub fn name(&self) -> &'static str {
+        match self.kind {
+            EffectKind::Eq(_) => "Equalizer",
+            EffectKind::Comp(_) => "Compressor",
+            EffectKind::Norm(_) => "Normalize",
+        }
+    }
+}
+
+/// A volume keyframe. `t` is on the source axis (it stays with the sound when the clip is moved or trimmed).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EnvPoint {
+    pub t: f64,
+    pub db: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EqKind {
+    Peak,
+    LowShelf,
+    HighShelf,
+    HighPass,
+    LowPass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EqBand {
+    pub kind: EqKind,
+    pub freq: f32,
+    /// dB (ignored by the pass filters).
+    pub gain: f32,
+    pub q: f32,
+    pub on: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Compressor {
+    pub threshold_db: f32,
+    pub ratio: f32,
+    pub attack_ms: f32,
+    pub release_ms: f32,
+    pub makeup_db: f32,
+}
+
+impl Default for Compressor {
+    fn default() -> Self {
+        Compressor { threshold_db: -18.0, ratio: 3.0, attack_ms: 20.0, release_ms: 250.0, makeup_db: 3.0 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NormMode {
+    /// Raise / lower the track so its peak reaches `target` dB.
+    Peak,
+    /// EBU R128 loudness (two passes) to `target` LUFS.
+    Loudness,
+}
+
+/// Result of the analysis pass (see `audiofx::measure`); valid only for the edit state it was measured on (`key`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Measured {
+    pub key: String,
+    pub i: f64,
+    pub tp: f64,
+    pub lra: f64,
+    pub thresh: f64,
+    pub offset: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Normalize {
+    pub mode: NormMode,
+    pub target: f32,
+    #[serde(default)]
+    pub measured: Option<Measured>,
+}
+
+impl Normalize {
+    pub fn new(mode: NormMode) -> Self {
+        Normalize { mode, target: if mode == NormMode::Peak { -1.0 } else { -16.0 }, measured: None }
+    }
 }
 
 impl TrackEdit {
     pub fn original(index: usize, label: String, duration: f64) -> Self {
-        TrackEdit { source: TrackSource::Original(index), label, trim_start: 0.0, trim_end: duration, shift: 0.0, volume: 1.0, deleted: false, muted: false, solo: false }
+        TrackEdit { source: TrackSource::Original(index), label, trim_start: 0.0, trim_end: duration, shift: 0.0, volume: 1.0, deleted: false, muted: false, solo: false, fade_in: 0.0, fade_out: 0.0, envelope: Vec::new(), effects: Vec::new() }
     }
     pub fn external(path: String, label: String, duration: f64) -> Self {
-        TrackEdit { source: TrackSource::External { path, duration }, label, trim_start: 0.0, trim_end: duration, shift: 0.0, volume: 1.0, deleted: false, muted: false, solo: false }
+        TrackEdit { source: TrackSource::External { path, duration }, label, trim_start: 0.0, trim_end: duration, shift: 0.0, volume: 1.0, deleted: false, muted: false, solo: false, fade_in: 0.0, fade_out: 0.0, envelope: Vec::new(), effects: Vec::new() }
     }
     pub fn source_duration(&self, clip_duration: f64) -> f64 {
         match &self.source {
@@ -150,6 +265,15 @@ impl TrackEdit {
             || self.trim_end < clip_duration - 0.001
             || self.shift.abs() > 0.001
             || (self.volume - 1.0).abs() > 0.001
+            || self.has_fx()
+    }
+    /// Fades, keyframes, equalizer, compressor or normalization: anything beyond trim / shift / volume.
+    pub fn has_fx(&self) -> bool {
+        self.fade_in > 0.001 || self.fade_out > 0.001 || !self.envelope.is_empty() || self.effects.iter().any(|e| e.on)
+    }
+    /// Does the preview need this track rendered by ffmpeg (shift, trim and effects cannot be done live)?
+    pub fn needs_bake(&self, clip_duration: f64) -> bool {
+        self.trim_start > 0.001 || self.trim_end < self.source_duration(clip_duration) - 0.001 || self.shift.abs() > 0.001 || self.has_fx()
     }
     /// Anything differs from the untouched original (including removed / muted / solo).
     pub fn is_modified(&self, clip_duration: f64) -> bool {

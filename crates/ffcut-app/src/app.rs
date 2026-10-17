@@ -50,6 +50,10 @@ pub enum TrkDrag {
     TrimStart,
     TrimEnd,
     Move,
+    FadeIn,
+    FadeOut,
+    /// A volume keyframe (index into the track's sorted `envelope`).
+    EnvPt(usize),
 }
 
 pub struct Clip {
@@ -122,6 +126,9 @@ pub struct App {
     pub show_settings: bool,
     pub show_about: bool,
     pub meter: crate::ui::MeterState,
+    pub fx: crate::fx::FxState,
+    /// After an audio change: (position to hold, when, seek counter). See `watch_audio_jump`.
+    pub audio_hold: Option<(f64, Instant, u64)>,
     pub settings_tab: usize,
     pub window_title: String,
     pub show_update: bool,
@@ -189,6 +196,8 @@ impl App {
             show_settings: false,
             show_about: false,
             meter: Default::default(),
+            fx: Default::default(),
+            audio_hold: None,
             settings_tab: 0,
             window_title: String::new(),
             show_update: false,
@@ -317,6 +326,7 @@ impl App {
         self.s.audio_mode = AudioMode::Separate;
         self.s.tracks = info.audio.iter().map(|a| TrackEdit::original(a.index, crate::ui::audio_label(a), info.duration)).collect();
         self.waves.lock().unwrap().clear();
+        self.fx.clear();
         self.trk_drag = None;
         self.applied_audio = None;
         self.trim_start = 0.0;
@@ -594,14 +604,37 @@ impl App {
 
     /// Keeps mpv's audio in step with the interface: in the track view every audible track plays
     /// together (volume applies; mute / solo decide who is audible), otherwise the chosen single track.
+    /// mpv answers an audio change with a seek of its own a moment later (to the next keyframe, which can be
+    /// seconds away). For a short while after a change, put the playhead back if that happened.
+    fn watch_audio_jump(&mut self, ctx: &egui::Context) {
+        let Some((pos, at, gen)) = self.audio_hold else { return };
+        let el = at.elapsed().as_secs_f64();
+        if self.player.seek_gen() != gen || el > 1.5 {
+            self.audio_hold = None; // the user moved the playhead, or nothing happened
+            return;
+        }
+        let expected = if self.player.paused() { pos } else { pos + el };
+        if el > 0.12 && (self.player.real_time() - expected).abs() > 0.6 {
+            self.player.seek(expected);
+            self.audio_hold = Some((expected, Instant::now(), self.player.seek_gen()));
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(60));
+    }
+
     pub fn sync_preview_audio(&mut self, ctx: &egui::Context) {
+        self.watch_audio_jump(ctx);
         if self.clip.is_none() {
             return;
         }
         let want = if self.multitrack {
-            PreviewAudio::Mix(audible(&self.s.tracks).iter().map(|t| (t.source.clone(), (t.volume.max(0.0) * 1000.0).round() as u32)).collect())
+            self.want_mix(ctx)
         } else {
-            PreviewAudio::Single(self.preview_audio)
+            // one chosen track; if it carries edits (shift, trim, effects) it is played rendered, like in the track view
+            let pick = self.s.tracks.iter().find(|t| t.source == TrackSource::Original(self.preview_audio) && !t.deleted).filter(|t| t.needs_bake(self.dur()) || (t.volume - 1.0).abs() > 0.001).cloned();
+            match pick {
+                Some(t) => PreviewAudio::Mix(vec![(self.preview_source(ctx, &t), (t.volume.max(0.0) * 1000.0).round() as u32)]),
+                None => PreviewAudio::Single(self.preview_audio),
+            }
         };
         if self.applied_audio.as_ref() == Some(&want) {
             return;
@@ -609,10 +642,13 @@ impl App {
         // not while a slider is being dragged (every step would restart mpv's audio), and not before the file is open
         let m = self.player.mpv();
         let ready = m.get_property::<i64>("track-list/count").unwrap_or(0) > 0;
-        if !ready || ctx.input(|i| i.pointer.any_down()) {
+        if !ready || !self.settled() || ctx.input(|i| i.pointer.any_down()) {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
             return;
         }
+        // changing the audio graph while playing makes mpv jump ahead (to the end of its read-ahead
+        // buffer, seconds away); put the playhead back where it was
+        let keep = self.player.real_time();
         let result = match &want {
             PreviewAudio::Single(i) => audiomix::single_track(m, *i as i64 + 1),
             PreviewAudio::Mix(parts) => {
@@ -632,6 +668,8 @@ impl App {
         if let Err(e) = result {
             eprintln!("audio preview: {e}");
         }
+        self.player.seek(keep);
+        self.audio_hold = Some((keep, Instant::now(), self.player.seek_gen()));
         self.applied_audio = Some(want);
     }
 
@@ -806,6 +844,8 @@ impl eframe::App for App {
         self.handle_hotkeys(&ctx);
         self.poll_job();
         self.poll_update();
+        self.track_changes(&ctx);
+        self.drive_measures(&ctx);
         self.sync_preview_audio(&ctx);
         self.enforce_range();
         self.refresh_command();

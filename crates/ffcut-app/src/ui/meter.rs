@@ -9,7 +9,7 @@ use super::tracks::peak_in;
 use crate::app::{App, Wave};
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, Rect, Sense, Stroke};
-use ffcut_core::{audible, TrackSource};
+use ffcut_core::{audible, TrackEdit, TrackSource};
 use std::time::Instant;
 
 pub const METER_W: f32 = 9.0;
@@ -41,16 +41,25 @@ impl App {
             return 0.0;
         }
         let t = self.player.time();
-        let parts: Vec<(TrackSource, f32)> = if self.multitrack {
-            audible(&self.s.tracks).iter().map(|x| (x.source.clone(), x.volume.max(0.0))).collect()
+        // (track, volume); the single-track preview plays one stream as it is
+        let parts: Vec<TrackEdit> = if self.multitrack {
+            audible(&self.s.tracks).into_iter().cloned().collect()
         } else {
-            vec![(TrackSource::Original(self.preview_audio), 1.0)]
+            match self.s.tracks.iter().find(|t| t.source == TrackSource::Original(self.preview_audio) && !t.deleted) {
+                Some(t) => vec![t.clone()],
+                None => vec![TrackEdit::original(self.preview_audio, String::new(), self.dur())],
+            }
         };
         let mut sum = 0.0;
-        for (src, vol) in parts {
-            self.want_wave(ctx, &src);
-            if let Some(Wave::Ready(p)) = self.waves.lock().unwrap().get(&self.wave_key(&src)) {
-                sum += peak_in(p, t - 0.03, t + 0.05) * vol;
+        for tr in parts {
+            self.want_wave(ctx, &tr.source);
+            // position in the track's own sound (shift moves it), and only inside the kept part
+            let s = t - tr.shift;
+            if s < tr.trim_start || s > tr.trim_end {
+                continue;
+            }
+            if let Some(Wave::Ready(p)) = self.waves.lock().unwrap().get(&self.wave_key(&tr.source)) {
+                sum += peak_in(p, s - 0.03, s + 0.05) * tr.volume.max(0.0) * ffcut_core::audiofx::gain_at(&tr, s);
             }
         }
         sum * (self.volume / 100.0)

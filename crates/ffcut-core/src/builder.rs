@@ -240,14 +240,8 @@ impl AudioPlan {
             let le = it.vis_b - it.t.shift - seek_off;
             let delay_ms = ((it.vis_a - t0) * 1000.0).round() as i64;
             let label = format!("a{}", chains.len());
-            let mut c = format!("[{input}:a:{ordinal}]atrim=start={}:end={},asetpts=PTS-STARTPTS", secs(ls.max(0.0)), secs(le));
-            if delay_ms > 0 {
-                c.push_str(&format!(",adelay={delay_ms}:all=1"));
-            }
-            if (it.t.volume - 1.0).abs() > 0.001 {
-                c.push_str(&format!(",volume={:.3}", it.t.volume));
-            }
-            c.push_str(&format!("[{label}]"));
+            let body = crate::audiofx::track_chain(it.t, ls.max(0.0), le, (it.vis_a - it.t.shift).max(0.0), delay_ms);
+            let c = format!("[{input}:a:{ordinal}]{body}[{label}]");
             chains.push((c, label));
         }
         AudioPlan { advanced: true, orig_seek, external_paths, chains }

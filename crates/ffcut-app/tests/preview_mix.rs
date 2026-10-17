@@ -129,3 +129,33 @@ fn going_back_to_a_single_track_clears_the_mix() {
     });
     assert!(tone(&wav, 2000) > PRESENT && tone(&wav, 1000) < ABSENT, "{} / {}", tone(&wav, 1000), tone(&wav, 2000));
 }
+
+fn window_db(file: &Path, from: f64, to: f64) -> f64 {
+    let out = Command::new("ffmpeg")
+        .args(["-hide_banner", "-nostats", "-ss", &from.to_string(), "-t", &(to - from).to_string(), "-i"])
+        .arg(file)
+        .args(["-af", "volumedetect", "-f", "null", "-"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    err.lines().find_map(|l| l.split("mean_volume:").nth(1)).and_then(|v| v.trim().trim_end_matches(" dB").parse().ok()).unwrap_or(-91.0)
+}
+
+/// The shift of a track really is heard: the track is rendered by ffmpeg with the export's filters and
+/// mpv plays that file next to the video (this is what the app does for edited tracks).
+#[test]
+fn a_shifted_track_is_heard_late() {
+    let v = video(); // 3 s, track #0 = 1000 Hz
+    let mut t = ffcut_core::TrackEdit::original(0, "a".into(), 3.0);
+    t.shift = 1.5;
+    t.trim_end = 1.5; // placed 1.5 .. 3.0
+    let rendered = tmp("shifted.flac");
+    let args = ffcut_core::audiofx::preview_render_args(&v, 0, &t, &rendered);
+    assert!(Command::new("ffmpeg").args(&args).status().unwrap().success());
+    let wav = render(&v, "shifted.wav", |m| {
+        let id = ensure_external(m, rendered.to_str().unwrap()).expect("rendered track was not added");
+        set_mix(m, &[(id, 1.0)]).unwrap();
+    });
+    assert!(window_db(&wav, 0.1, 1.3) < -60.0, "first part should be silent: {}", window_db(&wav, 0.1, 1.3));
+    assert!(window_db(&wav, 1.8, 2.8) > -35.0, "sound after the shift: {}", window_db(&wav, 1.8, 2.8));
+}

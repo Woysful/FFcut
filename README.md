@@ -1,22 +1,21 @@
-# [<img src="https://github.com/Woysful/FFcut/blob/main/packaging/ffcut.png" width="3%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
+# [<img src="packaging/ffcut.png" width="4%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
 
 Small and fast wrapper for FFmpeg.
-![](https://github.com/user-attachments/assets/ef9278e2-056f-45da-89e0-3bc2e75b232d)
+![preview](assets/preview.webp)
 > Heavily vibe coded. Expect issues.
 
 ## Features
-- Editing:
-  - Trim
-  - Crop
-  - Rotate
-  - Flip
-  - Resize
-  - Specific audio track export, or mix all tracks into one
-  - **Custom FFmpeg command** — the final command is shown and fully editable, and exactly that text is what runs
-- Environment:
-  - Multi-track audio timeline
-  - Presets (edit, import, export)
-  - Hotkeys
+- Trim
+- Crop
+- Rotate
+- Flip
+- Resize
+- Video/Audio codecs (CPU, NVENC, AMF, QSV, VAAPI)
+- Multi-track audio timeline
+- Audio effects per track: fade in / out, volume keyframes, parametric equalizer, compressor, normalization.
+- Specific audio track export, or mix all tracks into one
+- **Custom FFmpeg command** — the final command is shown and fully editable, and exactly that text is what runs
+- Export Presets (edit, import, export)
 
 ## Supported Formats
 
