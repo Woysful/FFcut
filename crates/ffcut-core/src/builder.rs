@@ -255,7 +255,10 @@ fn secs(v: f64) -> String {
 }
 
 fn video_filters(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
+    use crate::videofx as vfx;
     let mut f = Vec::new();
+    // colour / restoration work on the decoded picture, before it is turned
+    f.extend(vfx::pixel_filters(&s.vfx));
     match s.rotation {
         Rotation::None => {}
         Rotation::Cw90 => f.push("transpose=1".into()),
@@ -269,16 +272,22 @@ fn video_filters(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
     if s.flip_v {
         f.push("vflip".into());
     }
+    let (fw, fh) = match s.rotation {
+        Rotation::Cw90 | Rotation::Ccw90 => (src.height, src.width),
+        _ => (src.width, src.height),
+    };
+    // areas and text sit in that same frame, so the crop does not move them
+    f.extend(vfx::overlay_filters(&s.vfx, fw, fh, s.trim_start));
+    let (mut cw, mut ch) = (fw, fh);
     if let Some(c) = s.crop {
-        let (fw, fh) = match s.rotation {
-            Rotation::Cw90 | Rotation::Ccw90 => (src.height, src.width),
-            _ => (src.width, src.height),
-        };
         let full = c.x == 0 && c.y == 0 && c.w == fw && c.h == fh;
         if !full && c.w > 0 && c.h > 0 {
             f.push(format!("crop={}:{}:{}:{}", c.w, c.h, c.x, c.y));
+            cw = c.w;
+            ch = c.h;
         }
     }
+    f.extend(vfx::caption_filters(&s.vfx, cw, ch));
     if s.scale.w.is_some() || s.scale.h.is_some() {
         let w = s.scale.w.map_or(-2, |v| v as i64);
         let h = s.scale.h.map_or(-2, |v| v as i64);

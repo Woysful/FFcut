@@ -101,6 +101,8 @@ pub struct App {
     pub loop_on: bool,
     pub lock_trim: bool,
     pub tl_drag: Option<TlDrag>,
+    /// Trim handle the context menu was opened on (`true` = start).
+    pub trim_menu: Option<bool>,
 
     pub crop_on: bool,
     /// Crop edges in frame pixels (x0, y0, x1, y1) of the rotated+flipped frame. Floats so slow drags work.
@@ -127,6 +129,7 @@ pub struct App {
     pub show_about: bool,
     pub meter: crate::ui::MeterState,
     pub fx: crate::fx::FxState,
+    pub vfx: crate::vfx::VfxState,
     /// After an audio change: (position to hold, when, seek counter). See `watch_audio_jump`.
     pub audio_hold: Option<(f64, Instant, u64)>,
     pub settings_tab: usize,
@@ -177,6 +180,7 @@ impl App {
             loop_on: false,
             lock_trim: false,
             tl_drag: None,
+            trim_menu: None,
             crop_on: false,
             crop_edges: [0.0; 4],
             preview_audio: 0,
@@ -197,6 +201,7 @@ impl App {
             show_about: false,
             meter: Default::default(),
             fx: Default::default(),
+            vfx: Default::default(),
             audio_hold: None,
             settings_tab: 0,
             window_title: String::new(),
@@ -327,6 +332,8 @@ impl App {
         self.s.tracks = info.audio.iter().map(|a| TrackEdit::original(a.index, crate::ui::audio_label(a), info.duration)).collect();
         self.waves.lock().unwrap().clear();
         self.fx.clear();
+        self.s.vfx = Default::default();
+        self.vfx.clear();
         self.trk_drag = None;
         self.applied_audio = None;
         self.trim_start = 0.0;
@@ -357,6 +364,12 @@ impl App {
         if let Some(p) = dlg.pick_file() {
             self.open_file(&p);
         }
+    }
+
+    /// The frame rate when the user chose to see frame numbers instead of time codes.
+    pub fn frame_fps(&self) -> Option<f64> {
+        let fps = self.clip.as_ref().map_or(0.0, |c| c.info.fps);
+        (self.settings.show_frames && fps > 0.0).then_some(fps)
     }
 
     pub fn dur(&self) -> f64 {
@@ -402,7 +415,11 @@ impl App {
         };
         let container = self.clip.as_ref().map_or(0, |c| c.info.rotation as i64);
         let total = (user + container) % 360;
-        self.player.set_transform(total, self.s.flip_h, self.s.flip_v);
+        if self.vfx.rotates {
+            self.player.set_transform(0, false, false); // the video filter turns the picture itself
+        } else {
+            self.player.set_transform(total, self.s.flip_h, self.s.flip_v);
+        }
     }
 
     pub fn crop_rect(&self) -> Crop {
@@ -846,6 +863,7 @@ impl eframe::App for App {
         self.poll_update();
         self.track_changes(&ctx);
         self.drive_measures(&ctx);
+        self.sync_video_preview(&ctx);
         self.sync_preview_audio(&ctx);
         self.enforce_range();
         self.refresh_command();

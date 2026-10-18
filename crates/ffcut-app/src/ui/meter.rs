@@ -1,6 +1,7 @@
 //! A thin level meter at the right edge of the timeline.
 //!
-//! It is read from the waveform data (the same peaks the lanes draw), at the playhead, for the tracks you
+//! It is read from the waveform data at the playhead (a track with effects: from its rendered preview, so the
+//! effects count), for the tracks you
 //! currently hear: the single preview track, or in the track view every audible track with its volume,
 //! mute and solo; the master volume applies too. That makes it independent of mpv and exact while seeking.
 //! It rises at once and falls back smoothly; the thin line is the peak hold.
@@ -52,6 +53,16 @@ impl App {
         };
         let mut sum = 0.0;
         for tr in parts {
+            // an edited track is measured on the rendered preview, which already has its effects, fades and
+            // keyframes (and its trim and shift: the file is on the timeline); only the volume is live
+            if let Some(path) = self.baked_path(&tr) {
+                let src = TrackSource::External { path: path.to_string_lossy().into_owned(), duration: self.dur() };
+                self.want_wave(ctx, &src);
+                if let Some(Wave::Ready(p)) = self.waves.lock().unwrap().get(&self.wave_key(&src)) {
+                    sum += peak_in(p, t - 0.03, t + 0.05) * tr.volume.max(0.0);
+                    continue;
+                }
+            }
             self.want_wave(ctx, &tr.source);
             // position in the track's own sound (shift moves it), and only inside the kept part
             let s = t - tr.shift;

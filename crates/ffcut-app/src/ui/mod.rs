@@ -11,6 +11,7 @@ mod settings_ui;
 mod side;
 mod tracks;
 mod transport;
+mod vfx_ui;
 mod video;
 
 use crate::app::{open_in_file_manager, App, Status};

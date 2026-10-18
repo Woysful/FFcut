@@ -11,6 +11,7 @@ Small and fast wrapper for FFmpeg.
 - Flip
 - Resize
 - Video/Audio codecs (CPU, NVENC, AMF, QSV, VAAPI)
+- Video effects: colour, vignette, sharpen, denoise, deblock, deband, deflicker, blur, pixelate or cover an area, text blocks, top / bottom caption
 - Multi-track audio timeline
 - Audio effects per track: fade in / out, volume keyframes, parametric equalizer, compressor, normalization.
 - Specific audio track export, or mix all tracks into one

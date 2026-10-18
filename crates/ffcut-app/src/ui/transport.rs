@@ -210,6 +210,49 @@ impl App {
                 self.player.seek(x2t(p.x));
             }
         }
+        // right-click on a handle: exact value as a time code or a frame number
+        if resp.secondary_clicked() {
+            self.trim_menu = resp.interact_pointer_pos().and_then(|p| {
+                let (ds, de) = ((p.x - xs).abs(), (p.x - xe).abs());
+                (!self.lock_trim && ds.min(de) <= 12.0).then_some(ds <= de)
+            });
+        }
+        resp.context_menu(|ui| {
+            let Some(is_start) = self.trim_menu else {
+                ui.close();
+                return;
+            };
+            let (lo, hi) = if is_start { (0.0, (self.trim_end - 0.05).max(0.0)) } else { (self.trim_start + 0.05, dur) };
+            let mut v = if is_start { self.trim_start } else { self.trim_end };
+            let fps = self.clip.as_ref().map_or(0.0, |c| c.info.fps);
+            ui.label(RichText::new(if is_start { "Trim start" } else { "Trim end" }).strong());
+            let mut changed = false;
+            egui::Grid::new("trim-menu").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label("Timecode");
+                changed |= super::side::time_field(ui, &mut v, lo, hi, None);
+                ui.end_row();
+                if fps > 0.0 {
+                    ui.label("Frame");
+                    changed |= super::side::time_field(ui, &mut v, lo, hi, Some(fps));
+                    ui.end_row();
+                }
+            });
+            if ui.button("Set to playhead").clicked() {
+                v = self.player.time().clamp(lo, hi);
+                changed = true;
+                ui.close();
+            }
+            if changed {
+                v = v.clamp(lo, hi);
+                if is_start {
+                    self.trim_start = v;
+                } else {
+                    self.trim_end = v;
+                }
+                self.player.seek(v);
+                self.sync_loop();
+            }
+        });
         // cursor feedback
         if let Some(p) = resp.hover_pos() {
             if !self.lock_trim && ((p.x - xs).abs() <= 10.0 || (p.x - xe).abs() <= 10.0) {

@@ -18,12 +18,14 @@
 pub mod audiofx;
 pub mod builder;
 pub mod cmdline;
+pub mod fonts;
 pub mod model;
 pub mod presets;
 pub mod preview;
 pub mod probe;
 pub mod run;
 pub mod tools;
+pub mod videofx;
 pub mod waveform;
 
 pub use builder::build_args;

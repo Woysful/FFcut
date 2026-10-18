@@ -15,15 +15,21 @@ fn section<R>(ui: &mut egui::Ui, title: &str, default_open: bool, f: impl FnOnce
     });
 }
 
-fn time_field(ui: &mut egui::Ui, v: &mut f64, min: f64, max: f64) -> bool {
-    ui.add(
-        DragValue::new(v)
-            .range(min..=max)
-            .speed(0.02)
-            .custom_formatter(|n, _| fmt_time(n))
-            .custom_parser(parse_time),
-    )
-    .changed()
+/// A time value as a time code, or as a frame number when `fps` is given.
+pub(super) fn time_field(ui: &mut egui::Ui, v: &mut f64, min: f64, max: f64, fps: Option<f64>) -> bool {
+    match fps {
+        None => ui.add(DragValue::new(v).range(min..=max).speed(0.02).custom_formatter(|n, _| fmt_time(n)).custom_parser(parse_time)).changed(),
+        Some(fps) => ui
+            .add(
+                DragValue::new(v)
+                    .range(min..=max)
+                    .speed(1.0 / fps)
+                    .custom_formatter(move |n, _| format!("{}", (n * fps).round() as i64))
+                    // a plain number is a frame number; "1:30" is still read as a time
+                    .custom_parser(move |s| if s.contains(':') { parse_time(s) } else { s.trim().parse::<f64>().ok().map(|f| f / fps) }),
+            )
+            .changed(),
+    }
 }
 
 impl App {
@@ -37,6 +43,7 @@ impl App {
                 self.info_section(ui);
                 self.trim_section(ui);
                 self.transform_section(ui);
+                self.vfx_section(ui);
                 self.video_section(ui);
                 self.audio_section(ui);
                 self.export_section(ui);
@@ -75,12 +82,13 @@ impl App {
     fn trim_section(&mut self, ui: &mut egui::Ui) {
         section(ui, "Trim", true, |ui| {
             let dur = self.dur();
+            let fps = self.frame_fps();
             ui.checkbox(&mut self.lock_trim, "Lock trim handles").on_hover_text("Shift+A");
             ui.add_enabled_ui(!self.lock_trim, |ui| {
                 egui::Grid::new("trim").num_columns(3).show(ui, |ui| {
                     ui.label("Start");
                     let mut v = self.trim_start;
-                    if time_field(ui, &mut v, 0.0, (self.trim_end - 0.05).max(0.0)) {
+                    if time_field(ui, &mut v, 0.0, (self.trim_end - 0.05).max(0.0), fps) {
                         self.trim_start = v;
                         self.player.seek(v);
                         self.sync_loop();
@@ -92,7 +100,7 @@ impl App {
                     ui.end_row();
                     ui.label("End");
                     let mut v = self.trim_end;
-                    if time_field(ui, &mut v, self.trim_start + 0.05, dur) {
+                    if time_field(ui, &mut v, self.trim_start + 0.05, dur, fps) {
                         self.trim_end = v;
                         self.player.seek(v);
                         self.sync_loop();
@@ -104,7 +112,11 @@ impl App {
                     ui.end_row();
                 });
                 ui.horizontal(|ui| {
-                    ui.weak(format!("Length {}", fmt_time(self.trim_end - self.trim_start)));
+                    let len = self.trim_end - self.trim_start;
+                    ui.weak(match fps {
+                        Some(f) => format!("Length {} frames", (len * f).round() as i64),
+                        None => format!("Length {}", fmt_time(len)),
+                    });
                     if ui.small_button("Reset  (R)").clicked() {
                         self.trim_start = 0.0;
                         self.trim_end = dur;
@@ -193,7 +205,7 @@ impl App {
                     }
                 }
             });
-            if self.s.rotation != Rotation::None || self.s.flip_h || self.s.flip_v || self.crop_on || self.s.scale != Scale::default() {
+            if self.s.vfx.is_active() || self.s.rotation != Rotation::None || self.s.flip_h || self.s.flip_v || self.crop_on || self.s.scale != Scale::default() {
                 ui.add_space(2.0);
                 ui.colored_label(theme::WARN, "Filters force re-encoding (stream copy is not possible).");
             }

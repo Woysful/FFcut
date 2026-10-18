@@ -17,9 +17,12 @@ impl App {
             }
             let avail = ui.available_rect_before_wrap().shrink(if self.fs == FsMode::Video { 0.0 } else { 10.0 });
             let (fw, fh) = self.frame_dims();
-            let scale = (avail.width() / fw as f32).min(avail.height() / fh as f32).max(0.01);
-            let rect = Rect::from_center_size(avail.center(), vec2(fw as f32 * scale, fh as f32 * scale));
+            // caption bars make the picture taller than the frame the crop and the markers work in
+            let (vw, vh) = self.view_dims();
+            let scale = (avail.width() / vw as f32).min(avail.height() / vh as f32).max(0.01);
+            let rect = Rect::from_center_size(avail.center(), vec2(vw as f32 * scale, vh as f32 * scale));
             let rect = Rect::from_min_size(rect.min.round(), rect.size().floor());
+            let inner = Rect::from_min_size(pos2(rect.left(), rect.top() + self.vfx.bars.0 as f32 * scale), vec2(rect.width(), fh as f32 * scale));
 
             self.player.paint(ui, rect);
 
@@ -32,7 +35,9 @@ impl App {
                 self.set_fs(&ctx, if self.fs == FsMode::Video { FsMode::Off } else { FsMode::Video });
             }
             if self.crop_on && self.fs != FsMode::Video {
-                self.crop_overlay(ui, rect, fw as f32, fh as f32);
+                self.crop_overlay(ui, inner, fw as f32, fh as f32);
+            } else if self.fs != FsMode::Video {
+                self.vfx_overlay(ui, inner);
             }
         });
     }

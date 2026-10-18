@@ -8,6 +8,7 @@ mod settings;
 mod theme;
 mod ui;
 mod update;
+mod vfx;
 
 use eframe::egui;
 

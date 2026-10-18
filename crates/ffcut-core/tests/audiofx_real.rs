@@ -137,3 +137,15 @@ fn normalization_reaches_the_target() {
     let after = measure(ff, &o, 0, &plain, 0).unwrap();
     assert!((after.i + 16.0).abs() < 1.0, "loudness after: {}", after.i);
 }
+
+#[test]
+fn waveform_of_the_rendered_track_shows_the_effects() {
+    // the level meter reads the peaks of the rendered preview: a compressor with make-up gain must show
+    let i = tone();
+    let peak = |f: &Path| ffcut_core::waveform::peaks(Path::new("ffmpeg"), f, 0).unwrap().into_iter().fold(0.0f32, f32::max);
+    let plain = peak(&render(&track(), &i, "m_plain.flac"));
+    let mut t = track();
+    t.effects = vec![Effect::new(EffectKind::Comp(Compressor { threshold_db: -20.0, ratio: 2.0, attack_ms: 5.0, release_ms: 100.0, makeup_db: 12.0 }))];
+    let loud = peak(&render(&t, &i, "m_comp.flac"));
+    assert!(loud > plain * 1.5, "plain {plain}, with make-up {loud}");
+}

@@ -320,6 +320,9 @@ pub struct ExportSettings {
     /// Empty = "use every audio stream of the file untouched".
     #[serde(default)]
     pub tracks: Vec<TrackEdit>,
+    /// Video effects, covered areas, text and caption bars (see `videofx`).
+    #[serde(default)]
+    pub vfx: crate::videofx::VideoFx,
 }
 
 impl Default for ExportSettings {
@@ -340,6 +343,7 @@ impl Default for ExportSettings {
             audio_bitrate_kbps: 192,
             audio_mode: AudioMode::Separate,
             tracks: Vec::new(),
+            vfx: Default::default(),
         }
     }
 }

@@ -1,0 +1,738 @@
+//! The video effects window (colour, curves, style, restoration, covered areas, text, captions) and the
+//! markers it draws on the video.
+
+use crate::app::App;
+use crate::theme;
+use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, StrokeKind};
+use ffcut_core::fonts::Font;
+use ffcut_core::videofx::*;
+
+const GREY: Color32 = Color32::from_gray(130);
+
+/// A titled box inside the sidebar.
+fn group(ui: &mut egui::Ui, title: &str, hint_text: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(Color32::from_rgb(40, 42, 48))
+        .stroke(Stroke::new(1.0, Color32::from_gray(54)))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(title).size(13.0).strong().color(Color32::from_gray(235)));
+            if let Some(h) = hint_text {
+                hint(ui, h);
+            }
+            ui.add_space(4.0);
+            add(ui);
+        });
+    ui.add_space(6.0);
+}
+
+enum StackAct {
+    Remove(usize),
+    Up(usize),
+    Down(usize),
+}
+
+fn hint(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(RichText::new(text).size(11.5).color(Color32::from_gray(140))).wrap());
+}
+
+fn pct_slider(ui: &mut egui::Ui, v: &mut f32, label: &str) {
+    ui.label(label);
+    ui.add(egui::Slider::new(v, 0.0..=1.0).custom_formatter(|n, _| format!("{:.0} %", n * 100.0)).custom_parser(|s| s.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|n| n / 100.0)));
+    ui.end_row();
+}
+
+// ------------------------------------------------------------------ fonts
+
+fn font_label(fonts: &[Font], path: &str) -> String {
+    if path.is_empty() {
+        return "System default".into();
+    }
+    fonts.iter().find(|f| f.path.to_string_lossy() == path).map(|f| f.name.clone()).unwrap_or_else(|| std::path::Path::new(path).file_stem().map_or(path.to_string(), |s| s.to_string_lossy().into_owned()))
+}
+
+fn font_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, path: &mut String, fonts: Option<&[Font]>) {
+    let Some(fonts) = fonts else {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(RichText::new("Looking for fonts…").color(GREY));
+        });
+        return;
+    };
+    egui::ComboBox::from_id_salt(id).selected_text(font_label(fonts, path)).width(220.0).height(360.0).show_ui(ui, |ui| {
+        for f in fonts {
+            let p = f.path.to_string_lossy();
+            if ui.selectable_label(*path == p, &f.name).clicked() {
+                *path = p.into_owned();
+            }
+        }
+    });
+}
+
+fn align_row(ui: &mut egui::Ui, h: &mut HAlign) {
+    for (a, label, tip) in [(HAlign::Left, "⬅", "Left"), (HAlign::Center, "⬌", "Centre"), (HAlign::Right, "➡", "Right")] {
+        if ui.selectable_label(*h == a, label).on_hover_text(tip).clicked() {
+            *h = a;
+        }
+    }
+}
+
+// ------------------------------------------------------------------ curves
+
+/// Natural cubic spline through the points, sampled at `n` places: ffmpeg's `curves` draws a smooth curve, so
+/// the plot does too.
+fn spline(pts: &[(f32, f32)], n: usize) -> Vec<(f32, f32)> {
+    let k = pts.len();
+    if k < 2 {
+        return pts.to_vec();
+    }
+    if k == 2 {
+        return (0..=n).map(|i| {
+            let x = i as f32 / n as f32;
+            (x, pts[0].1 + (pts[1].1 - pts[0].1) * (x - pts[0].0) / (pts[1].0 - pts[0].0).max(1e-6))
+        }).collect();
+    }
+    // second derivatives (natural boundary), tridiagonal solve
+    let h: Vec<f32> = (0..k - 1).map(|i| (pts[i + 1].0 - pts[i].0).max(1e-6)).collect();
+    let mut m = vec![0.0f32; k];
+    let mut c = vec![0.0f32; k];
+    let mut d = vec![0.0f32; k];
+    for i in 1..k - 1 {
+        let (a, b, cc) = (h[i - 1], 2.0 * (h[i - 1] + h[i]), h[i]);
+        let r = 6.0 * ((pts[i + 1].1 - pts[i].1) / h[i] - (pts[i].1 - pts[i - 1].1) / h[i - 1]);
+        let w = b - a * c[i - 1];
+        c[i] = cc / w;
+        d[i] = (r - a * d[i - 1]) / w;
+    }
+    for i in (1..k - 1).rev() {
+        m[i] = d[i] - c[i] * m[i + 1];
+    }
+    (0..=n)
+        .map(|j| {
+            let x = j as f32 / n as f32;
+            let i = (0..k - 1).find(|&i| x <= pts[i + 1].0).unwrap_or(k - 2);
+            let (x0, x1) = (pts[i].0, pts[i + 1].0);
+            let (a, b) = ((x1 - x) / h[i], (x - x0) / h[i]);
+            let y = a * pts[i].1 + b * pts[i + 1].1 + ((a * a * a - a) * m[i] + (b * b * b - b) * m[i + 1]) * h[i] * h[i] / 6.0;
+            (x, y.clamp(0.0, 1.0))
+        })
+        .collect()
+}
+
+fn curve_plot(ui: &mut egui::Ui, pts: &mut Vec<(f32, f32)>, sel: &mut Option<usize>, color: Color32) {
+    let side = ui.available_width().min(260.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(side, side), Sense::click_and_drag());
+    let r = rect.shrink(6.0);
+    let to = |p: (f32, f32)| pos2(r.left() + p.0 * r.width(), r.bottom() - p.1 * r.height());
+    let from = |p: Pos2| (((p.x - r.left()) / r.width()).clamp(0.0, 1.0), ((r.bottom() - p.y) / r.height()).clamp(0.0, 1.0));
+    let hit = |pts: &[(f32, f32)], p: Pos2| pts.iter().position(|q| to(*q).distance(p) <= 11.0);
+    let last = |pts: &[(f32, f32)]| pts.len().saturating_sub(1);
+
+    if resp.drag_started() {
+        if let Some(p) = ui.input(|i| i.pointer.press_origin()) {
+            *sel = hit(pts, p).or(*sel);
+        }
+    }
+    if resp.dragged() {
+        if let (Some(k), Some(p)) = (*sel, resp.interact_pointer_pos()) {
+            let (x, y) = from(p);
+            let n = pts.len();
+            if k < n {
+                let (lo, hi) = (if k == 0 { 0.0 } else { pts[k - 1].0 + 0.01 }, if k + 1 == n { 1.0 } else { pts[k + 1].0 - 0.01 });
+                // the end points keep their place on the left / right edge and only move up and down
+                let x = if k == 0 { 0.0 } else if k == last(pts) { 1.0 } else { x.clamp(lo, hi.max(lo)) };
+                pts[k] = (x, y);
+            }
+        }
+    }
+    if resp.clicked() {
+        if let Some(p) = resp.interact_pointer_pos() {
+            *sel = hit(pts, p);
+        }
+    }
+    if resp.double_clicked() {
+        if let Some(p) = resp.interact_pointer_pos() {
+            if hit(pts, p).is_none() && pts.len() < 10 {
+                let (x, y) = from(p);
+                let at = pts.iter().position(|q| q.0 > x).unwrap_or(pts.len());
+                if at > 0 && at < pts.len() {
+                    pts.insert(at, (x, y));
+                    *sel = Some(at);
+                }
+            }
+        }
+    }
+    if resp.secondary_clicked() {
+        if let Some(k) = resp.interact_pointer_pos().and_then(|p| hit(pts, p)) {
+            if k > 0 && k < last(pts) {
+                pts.remove(k);
+                *sel = None;
+            }
+        }
+    }
+    if resp.hover_pos().map_or(false, |p| hit(pts, p).is_some()) {
+        ui.ctx().set_cursor_icon(CursorIcon::Grab);
+    }
+    if sel.map_or(false, |k| k >= pts.len()) {
+        *sel = None;
+    }
+
+    let p = ui.painter_at(rect);
+    p.rect_filled(rect, 6.0, Color32::from_gray(24));
+    for i in 0..=4 {
+        let f = i as f32 / 4.0;
+        let c = Color32::from_gray(if i == 2 { 52 } else { 38 });
+        p.line_segment([to((f, 0.0)), to((f, 1.0))], Stroke::new(1.0, c));
+        p.line_segment([to((0.0, f)), to((1.0, f))], Stroke::new(1.0, c));
+    }
+    p.line_segment([to((0.0, 0.0)), to((1.0, 1.0))], Stroke::new(1.0, Color32::from_gray(70)));
+    let line: Vec<Pos2> = spline(pts, 64).into_iter().map(to).collect();
+    p.add(egui::Shape::line(line, Stroke::new(2.0, color)));
+    for (k, q) in pts.iter().enumerate() {
+        let c = to(*q);
+        let on = *sel == Some(k);
+        p.circle_filled(c, if on { 6.0 } else { 4.5 }, if on { Color32::WHITE } else { color });
+        p.circle_stroke(c, if on { 6.0 } else { 4.5 }, Stroke::new(1.0, Color32::BLACK));
+    }
+}
+
+// ------------------------------------------------------------------ time range
+
+fn range_ui(ui: &mut egui::Ui, range: &mut Option<(f64, f64)>, now: f64, dur: f64) {
+    ui.horizontal_wrapped(|ui| {
+        let mut on = range.is_some();
+        if ui.checkbox(&mut on, "Only between").on_hover_text("Show it only during part of the video (seconds in the source)").changed() {
+            *range = if on { Some((now, (now + 3.0).min(dur).max(now + 0.1))) } else { None };
+        }
+        if let Some((a, b)) = range {
+            ui.add(egui::DragValue::new(a).range(0.0..=dur).speed(0.05).suffix(" s").fixed_decimals(2));
+            if ui.small_button("◂ playhead").on_hover_text("Start at the playhead").clicked() {
+                *a = now.min(*b);
+            }
+            ui.label("to");
+            ui.add(egui::DragValue::new(b).range(0.0..=dur).speed(0.05).suffix(" s").fixed_decimals(2));
+            if ui.small_button("playhead ▸").on_hover_text("End at the playhead").clicked() {
+                *b = now.max(*a);
+            }
+            if *b < *a {
+                *b = *a;
+            }
+        }
+    });
+}
+
+// ------------------------------------------------------------------ one effect
+
+struct Ctx<'a> {
+    fonts: Option<&'a [Font]>,
+    now: f64,
+    dur: f64,
+    curve_ch: &'a mut usize,
+    curve_sel: &'a mut Option<(usize, usize)>,
+}
+
+fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
+    match &mut e.kind {
+        VKind::Color(c) => {
+            egui::Grid::new(("color", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                ui.label("Brightness");
+                ui.add(egui::Slider::new(&mut c.brightness, -1.0..=1.0).fixed_decimals(2));
+                ui.end_row();
+                ui.label("Contrast");
+                ui.add(egui::Slider::new(&mut c.contrast, 0.0..=2.0).fixed_decimals(2));
+                ui.end_row();
+                ui.label("Saturation");
+                ui.add(egui::Slider::new(&mut c.saturation, 0.0..=3.0).fixed_decimals(2));
+                ui.end_row();
+                ui.label("Gamma");
+                ui.add(egui::Slider::new(&mut c.gamma, 0.1..=4.0).logarithmic(true).fixed_decimals(2)).on_hover_text("Above 1 lightens the mid-tones, below 1 darkens them");
+                ui.end_row();
+            });
+            if *c != ColorAdj::default() && ui.small_button("Reset").clicked() {
+                *c = ColorAdj::default();
+            }
+        }
+        VKind::Curves(c) => {
+            ui.horizontal(|ui| {
+                for (i, (name, col)) in [("Master", Color32::from_gray(225)), ("Red", Color32::from_rgb(235, 90, 90)), ("Green", Color32::from_rgb(100, 210, 110)), ("Blue", Color32::from_rgb(100, 150, 245))].into_iter().enumerate() {
+                    if ui.selectable_label(*cx.curve_ch == i, RichText::new(name).color(col)).clicked() {
+                        *cx.curve_ch = i;
+                        *cx.curve_sel = None;
+                    }
+                }
+            });
+            let ch = (*cx.curve_ch).min(3);
+            let color = [Color32::from_gray(225), Color32::from_rgb(235, 90, 90), Color32::from_rgb(100, 210, 110), Color32::from_rgb(100, 150, 245)][ch];
+            let pts = match ch {
+                0 => &mut c.master,
+                1 => &mut c.r,
+                2 => &mut c.g,
+                _ => &mut c.b,
+            };
+            let mut sel = cx.curve_sel.filter(|s| s.0 == k).map(|s| s.1);
+            curve_plot(ui, pts, &mut sel, color);
+            *cx.curve_sel = sel.map(|s| (k, s));
+            hint(ui, "Drag the points. Double-click to add one, right-click to remove it.");
+            if !is_identity_pts(pts) && ui.small_button("Reset this curve").clicked() {
+                *pts = identity_curve();
+                *cx.curve_sel = None;
+            }
+        }
+        VKind::Vignette(s) => {
+            egui::Grid::new(("vig", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| pct_slider(ui, s, "Strength"));
+        }
+        VKind::Sharpen(a) => {
+            egui::Grid::new(("sharp", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                ui.label("Amount");
+                ui.add(egui::Slider::new(a, 0.0..=3.0).fixed_decimals(2));
+                ui.end_row();
+            });
+        }
+        VKind::Denoise(s) => {
+            hint(ui, "Smooths grain and noise (hqdn3d). Strong values make skin look waxy.");
+            egui::Grid::new(("dn", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| pct_slider(ui, s, "Strength"));
+        }
+        VKind::Deblock(s) => {
+            hint(ui, "Softens the square blocks of heavily compressed video.");
+            egui::Grid::new(("db", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| pct_slider(ui, s, "Strength"));
+        }
+        VKind::Deband(s) => {
+            hint(ui, "Hides the visible steps in skies and gradients.");
+            egui::Grid::new(("dband", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| pct_slider(ui, s, "Strength"));
+        }
+        VKind::Deflicker(n) => {
+            hint(ui, "Evens out brightness that pulses from frame to frame. A longer window is smoother.");
+            ui.horizontal(|ui| {
+                ui.label("Window");
+                ui.add(egui::DragValue::new(n).range(2..=30).speed(0.2).suffix(" frames"));
+            });
+        }
+        VKind::Area(a) => {
+            ui.horizontal(|ui| {
+                for (s, label) in [(AreaShape::Blur, "Blur"), (AreaShape::Pixelate, "Pixelate"), (AreaShape::Fill, "Cover")] {
+                    if ui.selectable_label(a.shape == s, label).clicked() {
+                        a.shape = s;
+                    }
+                }
+            });
+            hint(ui, "Hides a part of the picture. Drag the frame on the video to place it.");
+            if a.shape == AreaShape::Fill {
+                ui.horizontal(|ui| {
+                    ui.label("Colour");
+                    ui.color_edit_button_srgb(&mut a.color);
+                });
+            } else {
+                egui::Grid::new(("area", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| pct_slider(ui, &mut a.amount, if a.shape == AreaShape::Blur { "Blur" } else { "Block size" }));
+            }
+            egui::Grid::new(("areapos", k)).num_columns(4).spacing([10.0, 6.0]).show(ui, |ui| {
+                for (label, v, max) in [("X", &mut a.x, 1.0f32), ("Y", &mut a.y, 1.0), ("Width", &mut a.w, 1.0), ("Height", &mut a.h, 1.0)] {
+                    ui.label(label);
+                    let mut p = *v * 100.0;
+                    if ui.add(egui::DragValue::new(&mut p).range(0.0..=max * 100.0).speed(0.3).suffix(" %").fixed_decimals(1)).changed() {
+                        *v = p / 100.0;
+                    }
+                    if label == "Y" || label == "Height" {
+                        ui.end_row();
+                    }
+                }
+            });
+            a.w = a.w.clamp(0.02, 1.0);
+            a.h = a.h.clamp(0.02, 1.0);
+            a.x = a.x.clamp(0.0, 1.0 - a.w);
+            a.y = a.y.clamp(0.0, 1.0 - a.h);
+            range_ui(ui, &mut a.range, cx.now, cx.dur);
+        }
+        VKind::Text(t) => {
+            ui.add(egui::TextEdit::multiline(&mut t.text).desired_rows(2).desired_width(f32::INFINITY).hint_text("Text"));
+            egui::Grid::new(("text", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                ui.label("Font");
+                font_combo(ui, ("font", k), &mut t.font, cx.fonts);
+                ui.end_row();
+                ui.label("Size");
+                ui.add(egui::Slider::new(&mut t.size, 1.0..=30.0).suffix(" %").fixed_decimals(1)).on_hover_text("Percent of the picture height");
+                ui.end_row();
+                ui.label("Colour");
+                ui.horizontal(|ui| {
+                    ui.color_edit_button_srgb(&mut t.color);
+                    ui.add_space(10.0);
+                    ui.label("Outline");
+                    ui.color_edit_button_srgb(&mut t.outline_color);
+                    ui.add(egui::DragValue::new(&mut t.outline).range(0.0..=30.0).speed(0.2).suffix(" %").fixed_decimals(0)).on_hover_text("Thickness, percent of the font size (0 = none)");
+                });
+                ui.end_row();
+                ui.label("Background");
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut t.boxed, "");
+                    ui.add_enabled_ui(t.boxed, |ui| ui.color_edit_button_srgb(&mut t.box_color));
+                });
+                ui.end_row();
+                ui.label("Place");
+                ui.horizontal(|ui| {
+                    for (label, x, h) in [("⬅", 0.05, HAlign::Left), ("⬌", 0.5, HAlign::Center), ("➡", 0.95, HAlign::Right)] {
+                        if ui.selectable_label(t.h == h, label).on_hover_text("Align to the side").clicked() {
+                            t.x = x;
+                            t.h = h;
+                        }
+                    }
+                    ui.add_space(8.0);
+                    for (label, y, v) in [("⬆", 0.06, VAlign::Top), ("⬍", 0.5, VAlign::Middle), ("⬇", 0.94, VAlign::Bottom)] {
+                        if ui.selectable_label(t.v == v, label).on_hover_text("Align to the edge").clicked() {
+                            t.y = y;
+                            t.v = v;
+                        }
+                    }
+                });
+                ui.end_row();
+            });
+            ui.horizontal(|ui| {
+                for (label, v) in [("X", &mut t.x), ("Y", &mut t.y)] {
+                    ui.label(label);
+                    let mut p = *v * 100.0;
+                    if ui.add(egui::DragValue::new(&mut p).range(0.0..=100.0).speed(0.3).suffix(" %").fixed_decimals(1)).changed() {
+                        *v = p / 100.0;
+                    }
+                }
+            });
+            hint(ui, "Or drag the marker on the video.");
+            range_ui(ui, &mut t.range, cx.now, cx.dur);
+        }
+    }
+}
+
+fn is_identity_pts(p: &[(f32, f32)]) -> bool {
+    p.len() == 2 && p[0] == (0.0, 0.0) && p[1] == (1.0, 1.0)
+}
+
+fn caption_ui(ui: &mut egui::Ui, id: &str, c: &mut Caption, fonts: Option<&[Font]>) {
+    ui.checkbox(&mut c.on, RichText::new(id).strong());
+    if !c.on {
+        return;
+    }
+    ui.add(egui::TextEdit::multiline(&mut c.text).id_salt((id, "text")).desired_rows(2).desired_width(f32::INFINITY).hint_text("Caption text"));
+    egui::Grid::new(("cap", id)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+        ui.label("Font");
+        font_combo(ui, ("capfont", id), &mut c.font, fonts);
+        ui.end_row();
+        ui.label("Size");
+        ui.add(egui::Slider::new(&mut c.size, 1.0..=20.0).suffix(" %").fixed_decimals(1)).on_hover_text("Percent of the picture width");
+        ui.end_row();
+        ui.label("Colours");
+        ui.horizontal(|ui| {
+            ui.color_edit_button_srgb(&mut c.color);
+            ui.label("on");
+            ui.color_edit_button_srgb(&mut c.bg);
+            ui.add_space(10.0);
+            align_row(ui, &mut c.align);
+        });
+        ui.end_row();
+    });
+    ui.add_space(4.0);
+}
+
+// ------------------------------------------------------------------ window
+
+fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
+    let mut added = false;
+    let mut push = |ui: &mut egui::Ui, kind: VKind| {
+        fx.effects.push(VEffect::new(kind));
+        ui.close();
+        added = true;
+    };
+    ui.label(RichText::new("COLOUR").size(10.5).color(GREY));
+    if ui.button("Brightness / contrast / saturation / gamma").clicked() {
+        push(ui, VKind::Color(ColorAdj::default()));
+    }
+    if ui.button("Curves").clicked() {
+        push(ui, VKind::Curves(Curves::default()));
+    }
+    ui.separator();
+    ui.label(RichText::new("STYLE").size(10.5).color(GREY));
+    if ui.button("Vignette").clicked() {
+        push(ui, VKind::Vignette(0.5));
+    }
+    if ui.button("Sharpen").clicked() {
+        push(ui, VKind::Sharpen(1.0));
+    }
+    ui.separator();
+    ui.label(RichText::new("RESTORATION").size(10.5).color(GREY));
+    if ui.button("Denoise").clicked() {
+        push(ui, VKind::Denoise(0.5));
+    }
+    if ui.button("Deblock").clicked() {
+        push(ui, VKind::Deblock(0.5));
+    }
+    if ui.button("Deband").clicked() {
+        push(ui, VKind::Deband(0.5));
+    }
+    if ui.button("Deflicker").clicked() {
+        push(ui, VKind::Deflicker(5));
+    }
+    ui.separator();
+    ui.label(RichText::new("HIDE A PART OF THE PICTURE").size(10.5).color(GREY));
+    if ui.button("Blur area").clicked() {
+        push(ui, VKind::Area(Area::new(AreaShape::Blur)));
+    }
+    if ui.button("Pixelate area").clicked() {
+        push(ui, VKind::Area(Area::new(AreaShape::Pixelate)));
+    }
+    if ui.button("Cover area with a colour").clicked() {
+        push(ui, VKind::Area(Area::new(AreaShape::Fill)));
+    }
+    ui.separator();
+    if ui.button("Text").clicked() {
+        push(ui, VKind::Text(TextBlock { font: default_font.to_string(), ..Default::default() }));
+    }
+    added
+}
+
+impl App {
+    /// The "Effects & text" group of the sidebar. `vfx.window` tells whether it is open (the video shows the markers then).
+    pub fn vfx_section(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        if self.vfx.window {
+            self.load_fonts(&ctx);
+        }
+        let fonts_guard = self.vfx.fonts.lock().unwrap().clone();
+        let default_font = fonts_guard.as_deref().and_then(ffcut_core::fonts::pick_default).map(|f| f.path.to_string_lossy().into_owned()).unwrap_or_default();
+
+        let fx0 = self.s.vfx.clone();
+        let mut fx = fx0.clone();
+        // texts made before the fonts were known get the default font
+        if fonts_guard.is_some() {
+            for c in [&mut fx.top, &mut fx.bottom] {
+                if c.font.is_empty() {
+                    c.font = default_font.clone();
+                }
+            }
+            for e in &mut fx.effects {
+                if let VKind::Text(t) = &mut e.kind {
+                    if t.font.is_empty() {
+                        t.font = default_font.clone();
+                    }
+                }
+            }
+        }
+        let (now, dur) = (self.player.time(), self.dur());
+        let mut sel = self.vfx.sel;
+        let mut curve_ch = self.vfx.curve_ch;
+        let mut curve_sel = self.vfx.curve_sel;
+        let err = self.vfx.error.clone();
+        let applied_ok = self.vfx.error.is_none();
+
+        let n_on = self.s.vfx.count_on();
+        let title = if n_on > 0 { format!("Effects & text ({n_on})") } else { "Effects & text".to_string() };
+        let shown = egui::CollapsingHeader::new(RichText::new(title).strong().size(13.5)).id_salt("vfx-section").default_open(false).show(ui, |ui| {
+            ui.add_space(2.0);
+
+            group(ui, "Captions", Some("A bar of solid colour above or below the video with text on it, like in video memes."), |ui| {
+                caption_ui(ui, "Top", &mut fx.top, fonts_guard.as_deref());
+                ui.add_space(6.0);
+                caption_ui(ui, "Bottom", &mut fx.bottom, fonts_guard.as_deref());
+            });
+
+            ui.label(RichText::new("EFFECTS").size(11.0).strong().color(Color32::from_gray(150)));
+            hint(ui, "Colour and restoration are applied to the picture first, then areas and text are drawn on top, each group top to bottom. Click an area or text to show its frame on the video.");
+            let mut act: Option<StackAct> = None;
+            let count = fx.effects.len();
+            for (k, e) in fx.effects.iter_mut().enumerate() {
+                let selected = sel == Some(k);
+                let resp = egui::Frame::NONE
+                    .fill(Color32::from_rgb(40, 42, 48))
+                    .stroke(Stroke::new(if selected && e.is_overlay() { 1.5 } else { 1.0 }, if selected && e.is_overlay() { theme::ACCENT } else { Color32::from_gray(54) }))
+                    .corner_radius(8)
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut e.on, "").on_hover_text("Bypass: keep it in the list but do not apply it");
+                            ui.label(RichText::new(e.name()).size(14.0).strong().color(if e.on { Color32::from_gray(235) } else { Color32::from_gray(120) }));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                                    act = Some(StackAct::Remove(k));
+                                }
+                                if ui.add_enabled(k + 1 < count, egui::Button::new("▼").small()).on_hover_text("Apply later").clicked() {
+                                    act = Some(StackAct::Down(k));
+                                }
+                                if ui.add_enabled(k > 0, egui::Button::new("▲").small()).on_hover_text("Apply earlier").clicked() {
+                                    act = Some(StackAct::Up(k));
+                                }
+                            });
+                        });
+                        ui.add_space(4.0);
+                        let mut cx = Ctx { fonts: fonts_guard.as_deref(), now, dur, curve_ch: &mut curve_ch, curve_sel: &mut curve_sel };
+                        ui.add_enabled_ui(e.on, |ui| effect_body(ui, k, e, &mut cx));
+                    });
+                ui.add_space(8.0);
+                // pressing anywhere on a card selects it (its frame shows on the video)
+                if ui.input(|i| i.pointer.any_pressed()) && ui.input(|i| i.pointer.interact_pos()).map_or(false, |p| resp.response.rect.contains(p)) {
+                    sel = Some(k);
+                }
+            }
+            match act {
+                Some(StackAct::Remove(k)) => {
+                    fx.effects.remove(k);
+                    sel = None;
+                    curve_sel = None;
+                }
+                Some(StackAct::Up(k)) => {
+                    fx.effects.swap(k, k - 1);
+                    sel = None;
+                    curve_sel = None;
+                }
+                Some(StackAct::Down(k)) => {
+                    fx.effects.swap(k, k + 1);
+                    sel = None;
+                    curve_sel = None;
+                }
+                None => {}
+            }
+            if fx.effects.is_empty() {
+                ui.label(RichText::new("No effects yet.").color(Color32::from_gray(130)));
+            }
+            ui.horizontal(|ui| {
+                ui.menu_button("+ Add effect", |ui| {
+                    if add_menu(ui, &mut fx, &default_font) {
+                        sel = Some(fx.effects.len() - 1);
+                    }
+                });
+                if ui.add_enabled(!fx.effects.is_empty() || fx.top.on || fx.bottom.on, egui::Button::new("Reset all")).on_hover_text("Remove every effect and both captions").clicked() {
+                    fx = VideoFx::default();
+                    sel = None;
+                    curve_sel = None;
+                }
+            });
+            if let Some(e) = &err {
+                ui.colored_label(theme::ERR, format!("The preview could not apply this: {e}"));
+            } else if applied_ok {
+                ui.add_space(4.0);
+                hint(ui, "The preview runs the same ffmpeg filters as the export. It refreshes a moment after you stop editing.");
+            }
+        });
+
+        if fx != fx0 {
+            self.s.vfx = fx;
+        }
+        self.vfx.sel = sel.filter(|k| *k < self.s.vfx.effects.len());
+        self.vfx.curve_ch = curve_ch;
+        self.vfx.curve_sel = curve_sel;
+        self.vfx.window = shown.body_returned.is_some();
+        ui.add_space(6.0);
+    }
+
+    /// Frame of the selected area / marker of the selected text on the video. `rect` = the picture (without bars).
+    pub fn vfx_overlay(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        if !self.vfx.window {
+            return;
+        }
+        let Some(k) = self.vfx.sel else { return };
+        let Some(e) = self.s.vfx.effects.get_mut(k) else { return };
+        if !e.on {
+            return;
+        }
+        let id = ui.id().with(("vfx-overlay", k));
+        match &mut e.kind {
+            VKind::Area(a) => {
+                let mut r = [a.x, a.y, a.w, a.h];
+                if rect_handles(ui, id, rect, &mut r) {
+                    a.x = r[0];
+                    a.y = r[1];
+                    a.w = r[2];
+                    a.h = r[3];
+                }
+            }
+            VKind::Text(t) => {
+                let c = pos2(rect.left() + t.x * rect.width(), rect.top() + t.y * rect.height());
+                let resp = ui.interact(Rect::from_center_size(c, vec2(26.0, 26.0)), id, Sense::drag());
+                if resp.hovered() || resp.dragged() {
+                    ui.ctx().set_cursor_icon(CursorIcon::Grab);
+                }
+                if resp.dragged() {
+                    let d = resp.drag_delta();
+                    t.x = (t.x + d.x / rect.width()).clamp(0.0, 1.0);
+                    t.y = (t.y + d.y / rect.height()).clamp(0.0, 1.0);
+                }
+                let p = ui.painter();
+                let s = Stroke::new(1.5, theme::ACCENT);
+                p.circle_stroke(c, 9.0, s);
+                p.line_segment([c - vec2(14.0, 0.0), c + vec2(14.0, 0.0)], s);
+                p.line_segment([c - vec2(0.0, 14.0), c + vec2(0.0, 14.0)], s);
+            }
+            _ => {}
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Grip {
+    Body,
+    Edge { l: bool, t: bool, r: bool, b: bool },
+}
+
+/// A draggable, resizable frame over `rect`; `r` = (x, y, w, h) as fractions of it. True when it changed.
+fn rect_handles(ui: &mut egui::Ui, id: egui::Id, rect: Rect, r: &mut [f32; 4]) -> bool {
+    let to = |x: f32, y: f32| pos2(rect.left() + x * rect.width(), rect.top() + y * rect.height());
+    let (mut x0, mut y0, mut x1, mut y1) = (r[0], r[1], r[0] + r[2], r[1] + r[3]);
+    let cr = Rect::from_min_max(to(x0, y0), to(x1, y1));
+    let p = ui.painter();
+    p.rect_filled(cr, 0.0, theme::ACCENT.gamma_multiply(0.18));
+    p.rect_stroke(cr, 0.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
+
+    let m = 12.0_f32;
+    let (l, rr, t, b, c) = (cr.left(), cr.right(), cr.top(), cr.bottom(), cr.center());
+    let h = |p: Pos2| Rect::from_center_size(p, vec2(m * 1.4, m * 1.4));
+    let e = |l, t, r, b| Grip::Edge { l, t, r, b };
+    let grips = [
+        (cr.shrink(m * 0.5), Grip::Body, CursorIcon::Grab),
+        (h(pos2(c.x, t)), e(false, true, false, false), CursorIcon::ResizeVertical),
+        (h(pos2(c.x, b)), e(false, false, false, true), CursorIcon::ResizeVertical),
+        (h(pos2(l, c.y)), e(true, false, false, false), CursorIcon::ResizeHorizontal),
+        (h(pos2(rr, c.y)), e(false, false, true, false), CursorIcon::ResizeHorizontal),
+        (h(pos2(l, t)), e(true, true, false, false), CursorIcon::ResizeNwSe),
+        (h(pos2(rr, t)), e(false, true, true, false), CursorIcon::ResizeNeSw),
+        (h(pos2(l, b)), e(true, false, false, true), CursorIcon::ResizeNeSw),
+        (h(pos2(rr, b)), e(false, false, true, true), CursorIcon::ResizeNwSe),
+    ];
+    let mut active: Option<(Grip, egui::Vec2)> = None;
+    for (i, (gr, grip, cursor)) in grips.iter().enumerate().rev() {
+        let resp = ui.interact(*gr, id.with(i), Sense::click_and_drag());
+        if resp.hovered() || resp.dragged() {
+            ui.ctx().set_cursor_icon(*cursor);
+        }
+        if resp.dragged() && active.is_none() {
+            active = Some((*grip, resp.drag_delta()));
+        }
+    }
+    let mut changed = false;
+    if let Some((g, d)) = active {
+        let (dx, dy) = (d.x / rect.width(), d.y / rect.height());
+        let min = 0.02;
+        match g {
+            Grip::Body => {
+                let (w, hh) = (x1 - x0, y1 - y0);
+                x0 = (x0 + dx).clamp(0.0, 1.0 - w);
+                y0 = (y0 + dy).clamp(0.0, 1.0 - hh);
+                x1 = x0 + w;
+                y1 = y0 + hh;
+            }
+            Grip::Edge { l, t, r: rt, b } => {
+                if l { x0 = (x0 + dx).clamp(0.0, x1 - min); }
+                if rt { x1 = (x1 + dx).clamp(x0 + min, 1.0); }
+                if t { y0 = (y0 + dy).clamp(0.0, y1 - min); }
+                if b { y1 = (y1 + dy).clamp(y0 + min, 1.0); }
+            }
+        }
+        *r = [x0, y0, x1 - x0, y1 - y0];
+        changed = true;
+    }
+    let p = ui.painter();
+    for (gr, grip, _) in &grips {
+        if matches!(grip, Grip::Edge { .. }) {
+            let hr = Rect::from_center_size(gr.center(), vec2(8.0, 8.0));
+            p.rect_filled(hr, 2.0, theme::ACCENT);
+            p.rect_stroke(hr, 2.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Outside);
+        }
+    }
+    changed
+}

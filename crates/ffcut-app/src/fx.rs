@@ -155,6 +155,18 @@ impl App {
         t.source.clone()
     }
 
+    /// The rendered preview file of a track (trim, shift, effects and fades already in it), once it exists.
+    pub fn baked_path(&self, t: &TrackEdit) -> Option<PathBuf> {
+        let dur = self.dur();
+        if !t.needs_bake(dur) {
+            return None;
+        }
+        match self.fx.renders.lock().unwrap().get(&audiofx::render_key(t, dur)) {
+            Some(Render::Ready(p)) => Some(p.clone()),
+            _ => None,
+        }
+    }
+
     /// Is a rendered preview of this track being made right now?
     pub fn preview_rendering(&self, t: &TrackEdit) -> bool {
         let dur = self.dur();
