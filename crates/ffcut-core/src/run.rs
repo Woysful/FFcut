@@ -24,22 +24,30 @@ pub struct Job {
     pub events: Receiver<Event>,
 }
 
+/// `Command::new` that never flashes a console window on Windows (GUI app spawning ffmpeg/ffprobe).
+/// Every external tool must be started through this.
+pub fn command<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 impl Job {
     /// `argv[0]` is replaced by `program` (so a bundled ffmpeg can be used).
     /// `total` = expected output duration in seconds, for the percentage.
     pub fn spawn(program: &Path, argv: &[String], total: Option<f64>) -> std::io::Result<Job> {
         let output = argv.last().map(PathBuf::from);
 
-        let mut cmd = Command::new(program);
+        let mut cmd = command(program);
         // "-nostdin": ffmpeg must never wait for keyboard input; "-progress": machine-readable stats.
         cmd.args(["-nostdin", "-progress", "pipe:1", "-nostats"]);
         cmd.args(argv.iter().skip(1));
         cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-        }
 
         let mut child = cmd.spawn()?;
         let stdout = child.stdout.take().unwrap();

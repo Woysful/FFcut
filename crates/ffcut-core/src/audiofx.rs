@@ -8,7 +8,7 @@
 
 use crate::model::*;
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Loudness normalization uses these fixed companions of the target loudness.
 const TRUE_PEAK: f64 = -1.5;
@@ -129,7 +129,7 @@ pub fn measure(ffmpeg: &Path, file: &Path, ordinal: usize, t: &TrackEdit, idx: u
     let mut chain = vec![format!("atrim=start={}:end={}", num(t.trim_start), num(t.trim_end)), "asetpts=PTS-STARTPTS".into()];
     chain.extend(chain_effects(t, idx));
     chain.push(format!("loudnorm=I=-16:TP={}:LRA={}:print_format=json", num(TRUE_PEAK), num(LRA)));
-    let out = Command::new(ffmpeg)
+    let out = crate::run::command(ffmpeg)
         .args(["-hide_banner", "-nostdin", "-nostats", "-i"])
         .arg(file)
         .args(["-map", &format!("0:a:{ordinal}"), "-vn", "-af", &chain.join(","), "-f", "null", "-"])

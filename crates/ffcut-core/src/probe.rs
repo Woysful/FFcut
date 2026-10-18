@@ -3,7 +3,7 @@
 use crate::model::{AudioStream, SourceInfo};
 use serde_json::Value;
 use std::path::Path;
-use std::process::Command;
+
 
 #[derive(Debug)]
 pub enum ProbeError {
@@ -25,7 +25,7 @@ impl std::fmt::Display for ProbeError {
 }
 
 pub fn probe(ffprobe: &Path, file: &Path) -> Result<SourceInfo, ProbeError> {
-    let out = Command::new(ffprobe)
+    let out = crate::run::command(ffprobe)
         .args(["-v", "error", "-show_format", "-show_streams", "-of", "json"])
         .arg(file)
         .output()
@@ -148,7 +148,7 @@ pub struct AudioFileInfo {
 }
 
 pub fn probe_audio(ffprobe: &Path, file: &Path) -> Result<AudioFileInfo, ProbeError> {
-    let out = Command::new(ffprobe)
+    let out = crate::run::command(ffprobe)
         .args(["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,channels,duration:format=duration", "-of", "json"])
         .arg(file)
         .output()
@@ -175,7 +175,7 @@ pub struct Encoders {
 }
 
 pub fn list_encoders(ffmpeg: &Path) -> Option<Encoders> {
-    let out = Command::new(ffmpeg).args(["-hide_banner", "-encoders"]).output().ok()?;
+    let out = crate::run::command(ffmpeg).args(["-hide_banner", "-encoders"]).output().ok()?;
     if !out.status.success() {
         return None;
     }

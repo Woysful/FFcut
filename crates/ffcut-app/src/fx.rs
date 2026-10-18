@@ -7,7 +7,7 @@ use ffcut_core::audiofx;
 use ffcut_core::{EffectKind, Measured, TrackEdit, TrackSource};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 
 pub enum Render {
@@ -143,7 +143,7 @@ impl App {
         let args = audiofx::preview_render_args(&file, ordinal, t, &out);
         let (renders, ctx) = (self.fx.renders.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let r = Command::new(&ffmpeg).args(&args).stdin(Stdio::null()).output();
+            let r = ffcut_core::run::command(&ffmpeg).args(&args).stdin(Stdio::null()).output();
             let state = match r {
                 Ok(o) if o.status.success() => Render::Ready(out),
                 Ok(o) => Render::Failed(String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("ffmpeg failed").to_string()),

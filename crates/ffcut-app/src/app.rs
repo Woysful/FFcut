@@ -280,7 +280,7 @@ impl App {
         self.ffmpeg_version = self
             .ffmpeg
             .as_ref()
-            .and_then(|p| std::process::Command::new(p).arg("-version").output().ok())
+            .and_then(|p| ffcut_core::run::command(p).arg("-version").output().ok())
             .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())
             .unwrap_or_default();
 

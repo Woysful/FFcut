@@ -1,7 +1,7 @@
 //! Audio waveform peaks, computed by ffmpeg (decode -> mono 4 kHz s16 on a pipe).
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 /// Peaks per second of audio. 50 = one value per 20 ms: plenty for a timeline, tiny in memory.
 pub const PEAKS_PER_SEC: usize = 50;
@@ -9,7 +9,7 @@ const RATE: usize = 4000;
 
 /// `audio_ordinal` = position among audio streams. Returns peaks in 0.0..=1.0.
 pub fn peaks(ffmpeg: &Path, file: &Path, audio_ordinal: usize) -> Result<Vec<f32>, String> {
-    let out = Command::new(ffmpeg)
+    let out = crate::run::command(ffmpeg)
         .args(["-v", "error", "-nostdin", "-i"])
         .arg(file)
         .args(["-map", &format!("0:a:{audio_ordinal}"), "-ac", "1", "-ar", &RATE.to_string(), "-f", "s16le", "-"])
