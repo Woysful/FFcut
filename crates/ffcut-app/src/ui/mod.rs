@@ -16,6 +16,7 @@ mod vfx_ui;
 mod video;
 
 use crate::app::{open_in_file_manager, App, Status};
+use crate::hotkeys::{chords, Action};
 use crate::theme;
 use eframe::egui::{self, vec2, Align, Layout, Rect, RichText};
 use ffcut_core::presets::Preset;
@@ -40,12 +41,12 @@ impl App {
             let bar = ui.max_rect();
             egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
-                    if ui.button("Open…   Ctrl+O").clicked() {
+                    if ui.button(format!("Open…   {}", self.keys(Action::Open))).clicked() {
                         ui.close();
                         self.open_dialog();
                     }
                     let can_export = self.clip.is_some() && self.job.is_none();
-                    if ui.add_enabled(can_export, egui::Button::new("Export…   Ctrl+E")).clicked() {
+                    if ui.add_enabled(can_export, egui::Button::new(format!("Export…   {}", self.keys(Action::Export)))).clicked() {
                         ui.close();
                         self.export_clicked();
                     }
@@ -60,17 +61,28 @@ impl App {
                     }
                 });
 
+                ui.menu_button("Edit", |ui| {
+                    let ctx = ui.ctx().clone();
+                    if ui.add_enabled(self.clip.is_some() && self.hist.can_undo(), egui::Button::new(format!("Undo   {}", self.keys(Action::Undo)))).clicked() {
+                        ui.close();
+                        self.undo(&ctx);
+                    }
+                    if ui.add_enabled(self.clip.is_some() && self.hist.can_redo(), egui::Button::new(format!("Redo   {}", self.keys(Action::Redo)))).clicked() {
+                        ui.close();
+                        self.redo(&ctx);
+                    }
+                });
+
                 ui.menu_button("Help", |ui| {
-                    ui.label("Space  play/pause");
-                    ui.label("← →  or  , .   step one frame");
-                    ui.label("Shift+← →   seek 5 s");
-                    ui.label("Q / E   set trim start / end");
-                    ui.label("R   reset trim");
-                    ui.label("C   toggle crop");
-                    ui.label("A   loop selection,  Shift+A  lock trim");
-                    ui.label("F11   interface fullscreen");
-                    ui.label("Ctrl+F   video fullscreen  (Esc to leave)");
-                    ui.label("Ctrl+O   open,   Ctrl+E   export");
+                    ui.label(RichText::new("Keyboard shortcuts (change them in Settings → Hotkeys)").weak());
+                    egui::Grid::new("help-keys").num_columns(2).spacing([14.0, 2.0]).show(ui, |ui| {
+                        for a in Action::ALL {
+                            let keys: Vec<String> = chords(&self.settings.hotkeys, a).iter().map(|c| c.display()).collect();
+                            ui.label(RichText::new(if keys.is_empty() { "—".to_string() } else { keys.join("  /  ") }).monospace().size(12.0));
+                            ui.label(a.label());
+                            ui.end_row();
+                        }
+                    });
                     ui.separator();
                     if ui.button("Check for updates").clicked() {
                         ui.close();

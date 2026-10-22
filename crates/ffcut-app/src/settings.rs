@@ -23,6 +23,8 @@ pub struct Settings {
     pub show_frames: bool,
     /// Shown instead of `/` and `\\` in paths (title, info line). Empty = the path as it is.
     pub path_sep: String,
+    /// Changed keyboard shortcuts (see `hotkeys`); anything missing keeps its default.
+    pub hotkeys: crate::hotkeys::Overrides,
     pub volume: Option<f32>,
     pub muted: bool,
 }

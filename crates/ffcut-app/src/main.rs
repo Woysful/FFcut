@@ -2,11 +2,13 @@
 mod app;
 mod display;
 mod fx;
+mod hotkeys;
 mod layout;
 mod player;
 mod settings;
 mod theme;
 mod ui;
+mod undo;
 mod update;
 mod vfx;
 

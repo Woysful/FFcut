@@ -5,7 +5,7 @@ use crate::app::App;
 use crate::theme;
 use eframe::egui::{self, vec2, Align, Color32, Layout, RichText};
 
-const PAGES: [&str; 4] = ["General", "Interface", "Updates", "About"];
+const PAGES: [&str; 5] = ["General", "Interface", "Hotkeys", "Updates", "About"];
 
 fn dim(t: impl Into<String>) -> RichText {
     RichText::new(t.into()).size(11.5).color(Color32::from_gray(140))
@@ -40,13 +40,15 @@ impl App {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.settings_tab {
                     0 => self.page_general(ui),
                     1 => self.page_interface(ui),
-                    2 => self.page_updates(ui),
+                    2 => self.page_hotkeys(ui),
+                    3 => self.page_updates(ui),
                     _ => self.page_about(ui),
                 });
             });
         });
         if !open {
             self.show_settings = false;
+            self.hk_capture = None;
         }
     }
 
@@ -193,6 +195,74 @@ impl App {
                 self.settings.show_frames = frames;
                 self.settings.save();
             }
+        });
+    }
+
+    fn page_hotkeys(&mut self, ui: &mut egui::Ui) {
+        use crate::hotkeys::{assign, chords, Action, Chord};
+        // recording: the next key (with its modifiers) goes to the slot
+        if let Some((action, slot)) = self.hk_capture {
+            let events = ui.ctx().input(|i| i.events.clone());
+            for e in events {
+                if let egui::Event::Key { key, pressed: true, modifiers, repeat: false, .. } = e {
+                    if crate::hotkeys::is_modifier(key) {
+                        continue; // wait for the key that goes with it
+                    }
+                    match key {
+                        egui::Key::Escape => self.hk_capture = None,
+                        egui::Key::Backspace | egui::Key::Delete => {
+                            assign(&mut self.settings.hotkeys, action, slot, None);
+                            self.hk_note.clear();
+                            self.hk_capture = None;
+                            self.settings.save();
+                        }
+                        _ => {
+                            let taken = assign(&mut self.settings.hotkeys, action, slot, Some(Chord::new(key, modifiers)));
+                            self.hk_note = taken.map(|t| format!("That key was used for “{}”: it no longer has one.", t.label())).unwrap_or_default();
+                            self.hk_capture = None;
+                            self.settings.save();
+                        }
+                    }
+                    break;
+                }
+            }
+            ui.ctx().request_repaint();
+        }
+        card(ui, "Keyboard shortcuts", Some("Click a field, then press the new keys. Backspace clears it, Esc cancels. Each action can have two keys."), |ui| {
+            egui::Grid::new("hotkeys").num_columns(4).spacing([10.0, 8.0]).show(ui, |ui| {
+                for a in Action::ALL {
+                    ui.label(a.label());
+                    let list = chords(&self.settings.hotkeys, a);
+                    for slot in 0..2 {
+                        let recording = self.hk_capture == Some((a, slot));
+                        let text = if recording { "Press keys…".to_string() } else { list.get(slot).map(|c| c.display()).unwrap_or_else(|| "—".into()) };
+                        let b = egui::Button::new(RichText::new(text).monospace().size(12.5).color(if recording { theme::ACCENT } else { Color32::from_gray(220) })).min_size(vec2(104.0, 24.0)).selected(recording);
+                        if ui.add(b).clicked() {
+                            self.hk_capture = if recording { None } else { Some((a, slot)) };
+                            self.hk_note.clear();
+                        }
+                    }
+                    let changed = self.settings.hotkeys.contains_key(a.id());
+                    if ui.add_enabled(changed, egui::Button::new("Reset").small()).on_hover_text("Back to the default keys").clicked() {
+                        self.settings.hotkeys.remove(a.id());
+                        self.hk_note.clear();
+                        self.settings.save();
+                    }
+                    ui.end_row();
+                }
+            });
+            if !self.hk_note.is_empty() {
+                ui.add_space(6.0);
+                ui.colored_label(theme::WARN, &self.hk_note);
+            }
+            ui.add_space(8.0);
+            if ui.add_enabled(!self.settings.hotkeys.is_empty(), egui::Button::new("Reset all to defaults")).clicked() {
+                self.settings.hotkeys.clear();
+                self.hk_note.clear();
+                self.settings.save();
+            }
+            ui.add_space(4.0);
+            ui.label(dim("Esc always leaves the video fullscreen. Letters and arrows are ignored while a text field is being edited; Open, Export and the fullscreen keys always work."));
         });
     }
 

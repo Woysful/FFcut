@@ -269,12 +269,20 @@ pub struct Measured {
     pub offset: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Normalize {
     pub mode: NormMode,
     pub target: f32,
     #[serde(default)]
     pub measured: Option<Measured>,
+}
+
+/// The analysis result is a cache the app fills in by itself, not something the user set: two settings
+/// that differ only in it are the same edit (this is what keeps a finished measurement out of the undo history).
+impl PartialEq for Normalize {
+    fn eq(&self, other: &Self) -> bool {
+        self.mode == other.mode && self.target == other.target
+    }
 }
 
 impl Normalize {

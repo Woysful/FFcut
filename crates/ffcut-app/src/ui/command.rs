@@ -105,7 +105,7 @@ impl App {
             let can = self.clip.is_some() && self.tools_ok() && command_ok;
             // add_sized centres the label (a plain min_size button keeps it left-aligned in a left-to-right layout)
             let b = egui::Button::new(RichText::new("Export…").size(15.0).strong().color(Color32::BLACK)).fill(theme::ACCENT);
-            if ui.add_enabled_ui(can, |ui| ui.add_sized(vec2(w, 34.0), b)).inner.on_hover_text("Choose where to save, then run the command above exactly as written  (Ctrl+E)").clicked() {
+            if ui.add_enabled_ui(can, |ui| ui.add_sized(vec2(w, 34.0), b)).inner.on_hover_text(self.tip("Choose where to save, then run the command above exactly as written", crate::hotkeys::Action::Export)).clicked() {
                 self.export_clicked();
             }
         }

@@ -1,5 +1,6 @@
 use super::{audio_label, codecs};
 use crate::app::{fmt_time, parse_time, App, CONTAINERS};
+use crate::hotkeys::Action;
 use crate::theme;
 use eframe::egui::{self, Color32, DragValue, RichText};
 use ffcut_core::*;
@@ -92,7 +93,7 @@ impl App {
         section(ui, "Trim", true, |ui| {
             let dur = self.dur();
             let fps = self.frame_fps();
-            ui.checkbox(&mut self.lock_trim, "Lock trim handles").on_hover_text("Shift+A");
+            ui.checkbox(&mut self.lock_trim, "Lock trim handles").on_hover_text(self.keys(Action::LockTrim));
             ui.add_enabled_ui(!self.lock_trim, |ui| {
                 egui::Grid::new("trim").num_columns(3).show(ui, |ui| {
                     ui.label("Start");
@@ -102,7 +103,7 @@ impl App {
                         self.player.seek(v);
                         self.sync_loop();
                     }
-                    if ui.small_button("Set").on_hover_text("Set to playhead  (Q)").clicked() {
+                    if ui.small_button("Set").on_hover_text(self.tip("Set to playhead", Action::TrimStart)).clicked() {
                         self.trim_start = self.player.time().min(self.trim_end - 0.05).max(0.0);
                         self.sync_loop();
                     }
@@ -114,7 +115,7 @@ impl App {
                         self.player.seek(v);
                         self.sync_loop();
                     }
-                    if ui.small_button("Set").on_hover_text("Set to playhead  (E)").clicked() {
+                    if ui.small_button("Set").on_hover_text(self.tip("Set to playhead", Action::TrimEnd)).clicked() {
                         self.trim_end = self.player.time().max(self.trim_start + 0.05).min(dur);
                         self.sync_loop();
                     }
@@ -126,7 +127,7 @@ impl App {
                         Some(f) => format!("Length {} frames", (len * f).round() as i64),
                         None => format!("Length {}", fmt_time(len)),
                     });
-                    if ui.small_button("Reset  (R)").clicked() {
+                    if ui.small_button(self.tip("Reset", Action::ResetTrim)).clicked() {
                         self.trim_start = 0.0;
                         self.trim_end = dur;
                         self.sync_loop();
@@ -156,7 +157,7 @@ impl App {
 
             // ---- crop
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut self.crop_on, "Crop").on_hover_text("Toggle  (C)").changed() && self.crop_on {
+                if ui.checkbox(&mut self.crop_on, "Crop").on_hover_text(self.tip("Toggle", Action::Crop)).changed() && self.crop_on {
                     let c = self.crop_rect();
                     if c.w < 4 || c.h < 4 {
                         self.reset_crop();

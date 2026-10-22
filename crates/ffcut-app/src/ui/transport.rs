@@ -1,4 +1,5 @@
 use crate::app::{fmt_time, App, TlDrag};
+use crate::hotkeys::Action;
 use super::icons::{icon_button, Icon};
 use super::meter::METER_W;
 use crate::theme;
@@ -68,7 +69,7 @@ impl App {
         // ---- left: loop + time (click the time to switch to frame numbers)
         ui.scope_builder(lay(Layout::left_to_right(Align::Center), left), |ui| {
             ui.set_clip_rect(left);
-            if icon_button(ui, vec2(34.0, 28.0), Icon::Loop, self.loop_on, None).on_hover_text("Loop the selection  (A)").clicked() {
+            if icon_button(ui, vec2(34.0, 28.0), Icon::Loop, self.loop_on, None).on_hover_text(self.tip("Loop the selection", Action::Loop)).clicked() {
                 self.loop_on = !self.loop_on;
                 self.sync_loop();
             }
@@ -90,7 +91,7 @@ impl App {
         ui.scope_builder(lay(Layout::left_to_right(Align::Center), centre), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if !audio {
-                if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop_on, None).on_hover_text("Crop  (C)").clicked() {
+                if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop_on, None).on_hover_text(self.tip("Crop", Action::Crop)).clicked() {
                     self.crop_on = !self.crop_on;
                     if self.crop_on {
                         let c = self.crop_rect();
@@ -105,7 +106,7 @@ impl App {
             if icon_button(ui, sz, Icon::ToStart, false, None).on_hover_text("Go to trim start").clicked() {
                 self.player.seek(self.trim_start);
             }
-            if icon_button(ui, sz, Icon::StepBack, false, None).on_hover_text(if audio { "Back 1 s  (←)" } else { "Previous frame  (←)" }).clicked() {
+            if icon_button(ui, sz, Icon::StepBack, false, None).on_hover_text(self.tip(if audio { "Back 1 s" } else { "Previous frame" }, Action::StepBack)).clicked() {
                 if audio {
                     self.player.seek((self.player.time() - 1.0).max(0.0));
                 } else {
@@ -113,10 +114,10 @@ impl App {
                 }
             }
             let icon = if self.player.paused() { Icon::Play } else { Icon::Pause };
-            if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(theme::ACCENT.gamma_multiply(0.75))).on_hover_text("Play / pause  (Space)").clicked() {
+            if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(theme::ACCENT.gamma_multiply(0.75))).on_hover_text(self.tip("Play / pause", Action::PlayPause)).clicked() {
                 self.play_pause();
             }
-            if icon_button(ui, sz, Icon::StepForward, false, None).on_hover_text(if audio { "Forward 1 s  (→)" } else { "Next frame  (→)" }).clicked() {
+            if icon_button(ui, sz, Icon::StepForward, false, None).on_hover_text(self.tip(if audio { "Forward 1 s" } else { "Next frame" }, Action::StepForward)).clicked() {
                 if audio {
                     self.player.seek(self.player.time() + 1.0);
                 } else {

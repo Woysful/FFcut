@@ -65,10 +65,10 @@ impl App {
                     ui.add_space(6.0);
                     if self.backend == crate::display::Backend::Wayland {
                         // winit cannot receive dropped files on Wayland: say so instead of showing a dead cursor
-                        ui.weak("Ctrl+O to open a file");
+                        ui.weak(format!("{} to open a file", self.keys(crate::hotkeys::Action::Open)));
                         ui.add(egui::Label::new(RichText::new("Drag & drop does not work on Wayland. Switch to X11 in File → Settings.").size(12.0).color(theme::WARN)).wrap());
                     } else {
-                        ui.weak("or drop a file here  ·  Ctrl+O");
+                        ui.weak(format!("or drop a file here  ·  {}", self.keys(crate::hotkeys::Action::Open)));
                     }
                 }
             });

@@ -143,6 +143,10 @@ pub struct App {
     pub meter: crate::ui::MeterState,
     pub fx: crate::fx::FxState,
     pub vfx: crate::vfx::VfxState,
+    pub hist: crate::undo::History,
+    /// Settings → Hotkeys: the slot being recorded.
+    pub hk_capture: Option<(crate::hotkeys::Action, usize)>,
+    pub hk_note: String,
     /// After an audio change: (position to hold, when, seek counter). See `watch_audio_jump`.
     pub audio_hold: Option<(f64, Instant, u64)>,
     pub settings_tab: usize,
@@ -226,6 +230,9 @@ impl App {
             update_manual: false,
             fs: FsMode::Off,
             multitrack: false,
+            hist: Default::default(),
+            hk_capture: None,
+            hk_note: String::new(),
             aview: AudioView::default(),
             waves: Arc::new(Mutex::new(HashMap::new())),
             trk_drag: None,
@@ -360,6 +367,7 @@ impl App {
         self.loop_on = false;
         self.cmd_edited = false;
         self.cmd_stale = false;
+        self.hist.clear();
         self.status = None;
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -404,6 +412,16 @@ impl App {
     }
 
     /// An audio file is open: the waveform replaces the picture and the sidebar keeps only audio settings.
+    /// `label  (keys)` for a tooltip, with the user's keys.
+    pub fn tip(&self, label: &str, a: crate::hotkeys::Action) -> String {
+        crate::hotkeys::with_hint(&self.settings.hotkeys, label, a)
+    }
+
+    /// The keys of an action as text, for a hint.
+    pub fn keys(&self, a: crate::hotkeys::Action) -> String {
+        crate::hotkeys::hint(&self.settings.hotkeys, a)
+    }
+
     pub fn audio_mode(&self) -> bool {
         self.clip.as_ref().map_or(false, |c| c.info.audio_only)
     }
@@ -864,74 +882,81 @@ impl App {
         }
     }
 
+    /// Keys pressed this frame that belong to an action. Keys of text fields are left alone while one has the focus.
+    fn pressed_actions(&self, ctx: &egui::Context) -> Vec<crate::hotkeys::Action> {
+        use crate::hotkeys::{chords, Action};
+        let typing = ctx.egui_wants_keyboard_input();
+        let mut all: Vec<(crate::hotkeys::Chord, Action)> = Vec::new();
+        for a in Action::ALL {
+            if typing && !a.global() {
+                continue;
+            }
+            all.extend(chords(&self.settings.hotkeys, a).into_iter().map(|c| (c, a)));
+        }
+        // the most specific first: Ctrl+Shift+Z before Ctrl+Z (egui ignores extra Shift)
+        all.sort_by_key(|(c, _)| std::cmp::Reverse(c.weight()));
+        let mut out = Vec::new();
+        for (c, a) in all {
+            if ctx.input_mut(|i| i.consume_key(c.modifiers(), c.key)) {
+                out.push(a);
+            }
+        }
+        out
+    }
+
     fn handle_hotkeys(&mut self, ctx: &egui::Context) {
-        let k = |ctx: &egui::Context, m: Modifiers, key: Key| ctx.input_mut(|i| i.consume_key(m, key));
-        // global shortcuts work even while typing
-        if k(ctx, Modifiers::COMMAND, Key::O) || k(ctx, Modifiers::COMMAND, Key::N) {
-            self.open_dialog();
+        use crate::hotkeys::Action;
+        if self.hk_capture.is_some() {
+            return; // Settings → Hotkeys is recording a key
         }
-        if (k(ctx, Modifiers::COMMAND, Key::E) || k(ctx, Modifiers::COMMAND, Key::S)) && self.job.is_none() {
-            self.export_clicked();
-        }
-        if k(ctx, Modifiers::NONE, Key::F11) {
-            self.set_fs(ctx, if self.fs == FsMode::App { FsMode::Off } else { FsMode::App });
-        }
-        if k(ctx, Modifiers::COMMAND, Key::F) && self.clip.is_some() {
-            self.set_fs(ctx, if self.fs == FsMode::Video { FsMode::Off } else { FsMode::Video });
-        }
-        if self.fs == FsMode::Video && k(ctx, Modifiers::NONE, Key::Escape) {
+        let esc = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
+        if esc && self.fs == FsMode::Video {
             self.set_fs(ctx, FsMode::Off);
         }
-        if ctx.egui_wants_keyboard_input() || self.clip.is_none() {
-            return;
-        }
-        if k(ctx, Modifiers::NONE, Key::Space) {
-            self.play_pause();
-        }
-        let fast = Modifiers::SHIFT;
-        if k(ctx, fast, Key::ArrowLeft) {
-            self.player.seek((self.player.time() - 5.0).max(0.0));
-        } else if k(ctx, fast, Key::ArrowRight) {
-            self.player.seek(self.player.time() + 5.0);
-        }
         let audio = self.audio_mode();
-        if k(ctx, Modifiers::NONE, Key::ArrowLeft) || k(ctx, Modifiers::NONE, Key::Comma) {
-            if audio {
-                self.player.seek((self.player.time() - 1.0).max(0.0));
-            } else {
-                self.player.step_frame(false);
+        for a in self.pressed_actions(ctx) {
+            if self.clip.is_none() && !matches!(a, Action::Open | Action::Fullscreen) {
+                continue;
             }
-        }
-        if k(ctx, Modifiers::NONE, Key::ArrowRight) || k(ctx, Modifiers::NONE, Key::Period) {
-            if audio {
-                self.player.seek(self.player.time() + 1.0);
-            } else {
-                self.player.step_frame(true);
+            match a {
+                Action::Open => self.open_dialog(),
+                Action::Export => {
+                    if self.job.is_none() {
+                        self.export_clicked();
+                    }
+                }
+                Action::Fullscreen => self.set_fs(ctx, if self.fs == FsMode::App { FsMode::Off } else { FsMode::App }),
+                Action::VideoFullscreen => self.set_fs(ctx, if self.fs == FsMode::Video { FsMode::Off } else { FsMode::Video }),
+                Action::PlayPause => self.play_pause(),
+                Action::SeekBack => self.player.seek((self.player.time() - 5.0).max(0.0)),
+                Action::SeekForward => self.player.seek(self.player.time() + 5.0),
+                Action::StepBack if audio => self.player.seek((self.player.time() - 1.0).max(0.0)),
+                Action::StepBack => self.player.step_frame(false),
+                Action::StepForward if audio => self.player.seek(self.player.time() + 1.0),
+                Action::StepForward => self.player.step_frame(true),
+                Action::TrimStart if !self.lock_trim => {
+                    self.trim_start = self.player.time().min(self.trim_end - 0.05).max(0.0);
+                    self.sync_loop();
+                }
+                Action::TrimEnd if !self.lock_trim => {
+                    self.trim_end = self.player.time().max(self.trim_start + 0.05).min(self.dur());
+                    self.sync_loop();
+                }
+                Action::ResetTrim if !self.lock_trim => {
+                    self.trim_start = 0.0;
+                    self.trim_end = self.dur();
+                    self.sync_loop();
+                }
+                Action::Crop if !audio => self.crop_on = !self.crop_on,
+                Action::LockTrim => self.lock_trim = !self.lock_trim,
+                Action::Loop => {
+                    self.loop_on = !self.loop_on;
+                    self.sync_loop();
+                }
+                Action::Undo => self.undo(ctx),
+                Action::Redo => self.redo(ctx),
+                _ => {}
             }
-        }
-        if !self.lock_trim {
-            if k(ctx, Modifiers::NONE, Key::Q) {
-                self.trim_start = self.player.time().min(self.trim_end - 0.05).max(0.0);
-                self.sync_loop();
-            }
-            if k(ctx, Modifiers::NONE, Key::E) {
-                self.trim_end = self.player.time().max(self.trim_start + 0.05).min(self.dur());
-                self.sync_loop();
-            }
-            if k(ctx, Modifiers::NONE, Key::R) {
-                self.trim_start = 0.0;
-                self.trim_end = self.dur();
-                self.sync_loop();
-            }
-        }
-        if !audio && k(ctx, Modifiers::NONE, Key::C) {
-            self.crop_on = !self.crop_on;
-        }
-        if k(ctx, Modifiers::SHIFT, Key::A) {
-            self.lock_trim = !self.lock_trim;
-        } else if k(ctx, Modifiers::NONE, Key::A) {
-            self.loop_on = !self.loop_on;
-            self.sync_loop();
         }
     }
 }
@@ -947,6 +972,7 @@ impl eframe::App for App {
         self.poll_job();
         self.poll_update();
         self.sync_audio_track();
+        self.track_history(&ctx);
         self.track_changes(&ctx);
         self.drive_measures(&ctx);
         self.sync_video_preview(&ctx);
