@@ -73,10 +73,14 @@ fn parse_ext(json: &[u8], ext: &str) -> Result<SourceInfo, ProbeError> {
     let streams = v["streams"].as_array().cloned().unwrap_or_default();
 
     // Cover art in mp3/mkv shows up as a "video" stream: skip attached pictures.
-    let video = streams
-        .iter()
-        .find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1)
-        .ok_or(ProbeError::NoVideo)?;
+    let video = streams.iter().find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1);
+    let has_audio = streams.iter().any(|s| s["codec_type"] == "audio");
+    if video.is_none() && !has_audio {
+        return Err(ProbeError::NoVideo);
+    }
+    let audio_only = video.is_none();
+    let null = Value::Null;
+    let video = video.unwrap_or(&null);
 
     let num = |x: &Value| -> Option<f64> { x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok())) };
 
@@ -130,6 +134,7 @@ fn parse_ext(json: &[u8], ext: &str) -> Result<SourceInfo, ProbeError> {
         ),
         brand: v["format"]["tags"]["major_brand"].as_str().unwrap_or("").trim().into(),
         bit_rate: num(&v["format"]["bit_rate"]).unwrap_or(0.0) as u64,
+        audio_only,
         audio,
     })
 }
@@ -255,8 +260,22 @@ mod tests {
     }
 
     #[test]
-    fn audio_only_file_is_an_error() {
-        let j = br#"{"streams":[{"codec_type":"audio","codec_name":"mp3"}],"format":{}}"#;
-        assert!(matches!(parse(j), Err(ProbeError::NoVideo)));
+    fn audio_only_file_is_audio_mode() {
+        let j = br#"{"streams":[{"codec_type":"audio","codec_name":"mp3","channels":2}],"format":{"duration":"12.5"}}"#;
+        let s = parse(j).unwrap();
+        assert!(s.audio_only);
+        assert_eq!(s.audio.len(), 1);
+        assert!((s.duration - 12.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn cover_art_does_not_make_it_video() {
+        let j = br#"{"streams":[{"codec_type":"audio","codec_name":"mp3"},{"codec_type":"video","codec_name":"mjpeg","disposition":{"attached_pic":1}}],"format":{}}"#;
+        assert!(parse(j).unwrap().audio_only);
+    }
+
+    #[test]
+    fn file_without_streams_is_an_error() {
+        assert!(matches!(parse(br#"{"streams":[],"format":{}}"#), Err(ProbeError::NoVideo)));
     }
 }

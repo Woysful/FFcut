@@ -25,6 +25,9 @@ pub struct SourceInfo {
     /// Overall bitrate, bit/s.
     #[serde(default)]
     pub bit_rate: u64,
+    /// The file has no (real) video stream: the app works in audio-file mode.
+    #[serde(default)]
+    pub audio_only: bool,
     pub audio: Vec<AudioStream>,
 }
 
@@ -156,6 +159,8 @@ pub enum EffectKind {
     Eq(Vec<EqBand>),
     Comp(Compressor),
     Norm(Normalize),
+    DeEss(DeEsser),
+    Denoise(Denoise),
 }
 
 impl Effect {
@@ -167,6 +172,8 @@ impl Effect {
             EffectKind::Eq(_) => "Equalizer",
             EffectKind::Comp(_) => "Compressor",
             EffectKind::Norm(_) => "Normalize",
+            EffectKind::DeEss(_) => "De-esser",
+            EffectKind::Denoise(_) => "Noise reduction",
         }
     }
 }
@@ -209,6 +216,37 @@ pub struct Compressor {
 impl Default for Compressor {
     fn default() -> Self {
         Compressor { threshold_db: -18.0, ratio: 3.0, attack_ms: 20.0, release_ms: 250.0, makeup_db: 3.0 }
+    }
+}
+
+/// Sibilance reducer (ffmpeg `deesser`); all values 0..1.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct DeEsser {
+    pub intensity: f32,
+    /// Largest reduction allowed.
+    pub max: f32,
+    /// Centre of the "s" band (ffmpeg's relative scale).
+    pub freq: f32,
+}
+
+impl Default for DeEsser {
+    fn default() -> Self {
+        DeEsser { intensity: 0.5, max: 0.5, freq: 0.5 }
+    }
+}
+
+/// Broadband noise reduction (ffmpeg `afftdn`).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Denoise {
+    /// How much to take away, dB (1..40).
+    pub reduction_db: f32,
+    /// Noise floor, dB (-80..-20).
+    pub floor_db: f32,
+}
+
+impl Default for Denoise {
+    fn default() -> Self {
+        Denoise { reduction_db: 12.0, floor_db: -50.0 }
     }
 }
 
@@ -323,6 +361,9 @@ pub struct ExportSettings {
     /// Video effects, covered areas, text and caption bars (see `videofx`).
     #[serde(default)]
     pub vfx: crate::videofx::VideoFx,
+    /// Export only the sound of a video file (no picture in the output).
+    #[serde(default)]
+    pub audio_only: bool,
 }
 
 impl Default for ExportSettings {
@@ -344,6 +385,7 @@ impl Default for ExportSettings {
             audio_mode: AudioMode::Separate,
             tracks: Vec::new(),
             vfx: Default::default(),
+            audio_only: false,
         }
     }
 }

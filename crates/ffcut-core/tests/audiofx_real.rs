@@ -149,3 +149,60 @@ fn waveform_of_the_rendered_track_shows_the_effects() {
     let loud = peak(&render(&t, &i, "m_comp.flac"));
     assert!(loud > plain * 1.5, "plain {plain}, with make-up {loud}");
 }
+
+#[test]
+fn audio_file_is_probed_and_exported_without_video() {
+    let src_path = tmp("only.mp3");
+    assert!(Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-c:a", "libmp3lame"]).arg(&src_path).status().unwrap().success());
+    let info = probe::probe(Path::new("ffprobe"), &src_path).unwrap();
+    assert!(info.audio_only);
+    assert_eq!(info.audio.len(), 1);
+    assert!((info.duration - 6.0).abs() < 0.2);
+
+    let mut s = ExportSettings { trim_start: 1.0, trim_end: Some(4.0), ..Default::default() };
+    s.tracks = vec![TrackEdit::original(0, "a".into(), info.duration)];
+    s.tracks[0].effects = vec![Effect::new(EffectKind::DeEss(DeEsser::default())), Effect::new(EffectKind::Denoise(Denoise::default()))];
+    for ext in ["mp3", "flac", "m4a", "wav", "ogg"] {
+        let out = tmp(&format!("out.{ext}"));
+        let args = build_args(&info, &s, &src_path, &out);
+        let r = Command::new("ffmpeg").args(&args[1..]).output().unwrap();
+        assert!(r.status.success(), "{ext}: {}\n{}", args.join(" "), String::from_utf8_lossy(&r.stderr));
+        let o = probe::probe(Path::new("ffprobe"), &out).unwrap();
+        assert!(o.audio_only, "{ext}");
+        assert!((o.duration - 3.0).abs() < 0.3, "{ext}: {}", o.duration);
+    }
+}
+
+#[test]
+fn audio_only_export_of_a_video_with_two_tracks() {
+    let video = tmp("two.mkv");
+    assert!(Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=5:duration=4", "-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-f", "lavfi", "-i", "sine=frequency=880:duration=4", "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"])
+        .arg(&video)
+        .status()
+        .unwrap()
+        .success());
+    let ff = Path::new("ffprobe");
+    let info = probe::probe(ff, &video).unwrap();
+    assert!(!info.audio_only);
+    let mut s = ExportSettings { audio_only: true, trim_start: 1.0, trim_end: Some(3.0), ..Default::default() };
+    s.tracks = info.audio.iter().map(|a| TrackEdit::original(a.index, "t".into(), info.duration)).collect();
+    let run = |out: &Path| {
+        let args = build_args(&info, &s, &video, out);
+        let r = Command::new("ffmpeg").args(&args[1..]).output().unwrap();
+        assert!(r.status.success(), "{}\n{}", args.join(" "), String::from_utf8_lossy(&r.stderr));
+    };
+    // one stream per file
+    let mp3 = tmp("sep.mp3");
+    run(&mp3);
+    for n in 1..=2 {
+        let o = probe::probe(ff, &builder::numbered(&mp3, n)).unwrap();
+        assert!(o.audio_only && o.audio.len() == 1, "file {n}");
+        assert!((o.duration - 2.0).abs() < 0.3, "file {n} is {} s", o.duration);
+    }
+    // one container, two streams, no picture
+    let mkv = tmp("one.mkv");
+    run(&mkv);
+    let o = probe::probe(ff, &mkv).unwrap();
+    assert!(o.audio_only && o.audio.len() == 2);
+}

@@ -30,61 +30,38 @@ pub fn build_args(src: &SourceInfo, s: &ExportSettings, input: &Path, output: &P
         a.push("-i".into());
         a.push(path.clone());
     }
-    if let Some(end) = s.trim_end {
-        let dur = end - s.trim_start;
-        if dur > 0.0 && (src.duration <= 0.0 || end < src.duration - 0.001) {
-            a.push("-t".into());
-            a.push(secs(dur));
-        }
-    }
-
-    // ---- video ----
-    let filters = video_filters(src, s);
-    a.push("-map".into());
-    a.push("0:v:0".into());
-
     let out_ext = output
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-
-    // Stream copy cannot apply filters: fall back to a same-family re-encode.
-    let vcodec = match &s.video_codec {
-        VideoCodec::Copy if filters.is_empty() => None,
-        VideoCodec::Copy | VideoCodec::Auto => Some(auto_encoder(&src.video_codec).to_string()),
-        VideoCodec::Encoder(e) => Some(e.clone()),
-    };
-
-    match vcodec {
-        None => {
-            a.push("-c:v".into());
-            a.push("copy".into());
+    // Several audible tracks into a container that holds one stream: one file per track (name_1.ext, name_2.ext…)
+    let separate = (src.audio_only || s.audio_only) && s.audio_mode == AudioMode::Separate && heard.len() > 1 && !multi_stream_container(&out_ext);
+    // `-t` belongs to the output that follows it, so with several outputs every one needs its own
+    let mut length: Vec<String> = Vec::new();
+    if let Some(end) = s.trim_end {
+        let dur = end - s.trim_start;
+        if dur > 0.0 && (src.duration <= 0.0 || end < src.duration - 0.001) {
+            length = vec!["-t".into(), secs(dur)];
         }
-        Some(enc) => {
-            if !filters.is_empty() {
-                a.push("-vf".into());
-                a.push(filters.join(","));
-            }
-            a.push("-c:v".into());
-            a.push(enc.clone());
-            push_quality(&mut a, &enc, s.quality);
-            if matches!(enc.as_str(), "libx264" | "libx265") && !s.preset.is_empty() {
-                a.push("-preset".into());
-                a.push(s.preset.clone());
-            }
-            if let Some(pf) = pick_pix_fmt(&enc, s.pix_fmt.as_deref(), &src.pix_fmt) {
-                a.push("-pix_fmt".into());
-                a.push(pf);
-            }
-        }
+    }
+    if !separate {
+        a.extend(length.iter().cloned());
+    }
+
+    // ---- video ----
+    let no_video = src.audio_only || s.audio_only;
+    if no_video {
+        a.push("-vn".into());
+    } else {
+        push_video(&mut a, src, s);
     }
 
     // ---- audio ----
     let aenc = |a: &mut Vec<String>, force_encode: bool| {
         let codec = match (&s.audio_codec, force_encode) {
-            (AudioCodec::Copy, false) => None,
-            (AudioCodec::Copy, true) => Some(default_audio_encoder(&out_ext).to_string()),
+            (AudioCodec::Copy, false) if !no_video || copy_fits(src, &out_ext) => None,
+            (AudioCodec::Copy, _) => Some(default_audio_encoder(&out_ext).to_string()),
             (AudioCodec::Encoder(e), _) => Some(e.clone()),
         };
         match codec {
@@ -115,6 +92,15 @@ pub fn build_args(src: &SourceInfo, s: &ExportSettings, input: &Path, output: &P
                 let ins: String = labels.iter().map(|l| format!("[{l}]")).collect();
                 graph.push(format!("{ins}amix=inputs={}:duration=longest:normalize=0[aout]", labels.len()));
                 a.extend(["-filter_complex".into(), graph.join(";"), "-map".into(), "[aout]".into()]);
+            } else if separate {
+                a.extend(["-filter_complex".into(), graph.join(";")]);
+                for (n, l) in labels.iter().enumerate() {
+                    a.extend(["-map".into(), format!("[{l}]")]);
+                    aenc(&mut a, true);
+                    a.extend(length.iter().cloned());
+                    a.push(numbered(output, n + 1).to_string_lossy().into_owned());
+                }
+                return a;
             } else {
                 a.extend(["-filter_complex".into(), graph.join(";")]);
                 for l in &labels {
@@ -146,6 +132,15 @@ pub fn build_args(src: &SourceInfo, s: &ExportSettings, input: &Path, output: &P
                     "[aout]".into(),
                 ]);
                 aenc(&mut a, true); // mixing always needs an encoder
+            }
+            _ if separate => {
+                for (n, i) in idx.iter().enumerate() {
+                    a.extend(["-map".into(), format!("0:a:{i}")]);
+                    aenc(&mut a, false);
+                    a.extend(length.iter().cloned());
+                    a.push(numbered(output, n + 1).to_string_lossy().into_owned());
+                }
+                return a;
             }
             _ => {
                 if idx.len() == src.audio.len() && idx.iter().enumerate().all(|(n, i)| n == *i) {
@@ -311,10 +306,86 @@ pub fn auto_encoder(source_codec: &str) -> &'static str {
     }
 }
 
-fn default_audio_encoder(out_ext: &str) -> &'static str {
+fn push_video(a: &mut Vec<String>, src: &SourceInfo, s: &ExportSettings) {
+    let filters = video_filters(src, s);
+    a.push("-map".into());
+    a.push("0:v:0".into());
+    // Stream copy cannot apply filters: fall back to a same-family re-encode.
+    let vcodec = match &s.video_codec {
+        VideoCodec::Copy if filters.is_empty() => None,
+        VideoCodec::Copy | VideoCodec::Auto => Some(auto_encoder(&src.video_codec).to_string()),
+        VideoCodec::Encoder(e) => Some(e.clone()),
+    };
+
+    match vcodec {
+        None => {
+            a.push("-c:v".into());
+            a.push("copy".into());
+        }
+        Some(enc) => {
+            if !filters.is_empty() {
+                a.push("-vf".into());
+                a.push(filters.join(","));
+            }
+            a.push("-c:v".into());
+            a.push(enc.clone());
+            push_quality(a, &enc, s.quality);
+            if matches!(enc.as_str(), "libx264" | "libx265") && !s.preset.is_empty() {
+                a.push("-preset".into());
+                a.push(s.preset.clone());
+            }
+            if let Some(pf) = pick_pix_fmt(&enc, s.pix_fmt.as_deref(), &src.pix_fmt) {
+                a.push("-pix_fmt".into());
+                a.push(pf);
+            }
+        }
+    }
+}
+
+/// Containers that carry several audio streams (the rest get one file per track).
+pub fn multi_stream_container(ext: &str) -> bool {
+    matches!(ext, "mp4" | "mkv" | "mka" | "mov" | "webm")
+}
+
+/// `dir/name.ext` → `dir/name_N.ext`: the files of a per-track audio export.
+pub fn numbered(output: &Path, n: usize) -> std::path::PathBuf {
+    let stem = output.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = match output.extension() {
+        Some(e) => format!("{stem}_{n}.{}", e.to_string_lossy()),
+        None => format!("{stem}_{n}"),
+    };
+    output.with_file_name(name)
+}
+
+/// The encoder an audio container normally carries (used when the stream cannot just be copied).
+pub fn audio_encoder_for(out_ext: &str) -> &'static str {
     match out_ext {
-        "webm" => "libopus",
+        "webm" | "opus" => "libopus",
+        "ogg" | "oga" => "libvorbis",
+        "mp3" => "libmp3lame",
+        "flac" => "flac",
+        "wav" => "pcm_s16le",
         _ => "aac",
+    }
+}
+
+fn default_audio_encoder(out_ext: &str) -> &'static str {
+    audio_encoder_for(out_ext)
+}
+
+/// Can the first audio stream of an audio file be copied into this container as it is?
+fn copy_fits(src: &SourceInfo, out_ext: &str) -> bool {
+    let Some(c) = src.audio.first().map(|a| a.codec.as_str()) else { return true };
+    match out_ext {
+        "mp3" => c == "mp3",
+        "flac" => c == "flac",
+        "m4a" | "aac" => matches!(c, "aac" | "alac"),
+        "ogg" | "oga" => matches!(c, "vorbis" | "opus" | "flac"),
+        "opus" => c == "opus",
+        "wav" => c.starts_with("pcm"),
+        "mka" | "mkv" | "mp4" | "mov" => true,
+        "webm" => matches!(c, "opus" | "vorbis"),
+        _ => false,
     }
 }
 
@@ -396,6 +467,37 @@ mod tests {
     }
     fn build(s: &ExportSettings) -> String {
         crate::cmdline::to_text(&build_args(&src(), s, &PathBuf::from("in.mkv"), &PathBuf::from("out.mp4")))
+    }
+
+    #[test]
+    fn audio_only_export_of_a_video() {
+        let mut src = src();
+        src.audio = (0..2).map(|i| AudioStream { index: i, codec: "aac".into(), channels: 2, language: None, title: None }).collect();
+        let s = ExportSettings { audio_only: true, ..Default::default() };
+        let go = |out: &str| crate::cmdline::to_text(&build_args(&src, &s, &PathBuf::from("in.mkv"), &PathBuf::from(out)));
+        let mkv = go("o.mkv");
+        assert!(mkv.contains("-vn") && !mkv.contains("0:v") && mkv.ends_with("o.mkv"), "{mkv}");
+        assert_eq!(mkv.matches("o.").count(), 1);
+        let mp3 = go("dir/o.mp3");
+        assert!(mp3.contains("dir/o_1.mp3") && mp3.contains("dir/o_2.mp3"), "{mp3}");
+        assert_eq!(mp3.matches("-map 0:a:").count(), 2);
+        // a trim length must reach every output, not just the first
+        let s2 = ExportSettings { audio_only: true, trim_start: 5.0, trim_end: Some(15.0), ..Default::default() };
+        let c = crate::cmdline::to_text(&build_args(&src, &s2, &PathBuf::from("in.mkv"), &PathBuf::from("o.mp3")));
+        assert_eq!(c.matches("-t 10").count(), 2, "{c}");
+    }
+
+    #[test]
+    fn audio_file_export_has_no_video() {
+        let src = SourceInfo { duration: 30.0, audio_only: true, audio: vec![AudioStream { index: 0, codec: "mp3".into(), channels: 2, language: None, title: None }], ..Default::default() };
+        let s = ExportSettings { trim_start: 2.0, trim_end: Some(10.0), ..Default::default() };
+        let go = |out: &str| crate::cmdline::to_text(&build_args(&src, &s, &PathBuf::from("in.mp3"), &PathBuf::from(out)));
+        let c = go("out.mp3");
+        assert!(c.contains("-vn") && !c.contains("0:v") && !c.contains("-c:v"), "{c}");
+        assert!(c.contains("-c:a copy"), "{c}");
+        // a codec the container cannot carry is re-encoded instead of failing
+        assert!(go("out.flac").contains("-c:a flac"));
+        assert!(go("out.ogg").contains("-c:a libvorbis"));
     }
 
     #[test]

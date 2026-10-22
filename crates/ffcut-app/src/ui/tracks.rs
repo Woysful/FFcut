@@ -183,7 +183,7 @@ impl App {
         let deleted = self.s.tracks[i].deleted;
         let h = if deleted { DEL_H } else { LANE_H };
         let (rect, head) = ui.allocate_exact_size(vec2(HEADER_W, h), Sense::click());
-        head.context_menu(|ui| self.lane_menu(ui, i, None, act));
+        super::ctx_menu(&head, |ui| self.lane_menu(ui, i, None, act));
         let mut ui = ui.new_child(UiBuilder::new().max_rect(rect).layout(Layout::top_down(Align::Min)));
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
@@ -264,7 +264,7 @@ impl App {
 
         if t.deleted {
             let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), DEL_H), Sense::click());
-            resp.context_menu(|ui| self.lane_menu(ui, i, None, act));
+            super::ctx_menu(&resp, |ui| self.lane_menu(ui, i, None, act));
             let strip = Rect::from_min_max(pos2(rect.left() + 10.0, rect.top() + 2.0), pos2(rect.right() - 10.0, rect.bottom() - 2.0));
             let p = ui.painter_at(rect);
             p.rect_filled(strip, 5.0, Color32::from_rgb(34, 35, 40));
@@ -279,7 +279,7 @@ impl App {
         let (pa, pb) = t.placed();
         let (xs, xe) = (t2x(pa), t2x(pb));
         let px_per_s = track.width() / dur as f32;
-        let env_mode = self.fx.env_edit == Some(i) && !t.deleted;
+        let env_mode = (self.fx.env_edit == Some(i) || ui.input(|i| i.modifiers.alt)) && !t.deleted; // Alt held = keyframe mode
         // keyframe height: +12 dB at the top, -48 dB at the bottom
         let y_of_db = |db: f32| track.top() + (ENV_MAX - db.clamp(ENV_MIN, ENV_MAX)) / (ENV_MAX - ENV_MIN) * track.height();
         let db_of_y = |y: f32| {
@@ -389,9 +389,9 @@ impl App {
             }
         }
         if resp.secondary_clicked() {
-            self.fx.ctx_point = if env_mode { resp.interact_pointer_pos().and_then(|p| near_env(p, 10.0)) } else { None };
+            self.fx.ctx_point = resp.interact_pointer_pos().and_then(|p| near_env(p, 10.0));
         }
-        resp.context_menu(|ui| {
+        super::ctx_menu(&resp, |ui| {
             let pt = self.fx.ctx_point;
             self.lane_menu(ui, i, pt, act);
         });
@@ -486,8 +486,13 @@ impl App {
                 }
                 if !t.envelope.is_empty() {
                     let mut pts: Vec<egui::Pos2> = t.envelope.iter().map(env_xy).collect();
-                    pts.insert(0, pos2(xs, pts[0].y));
-                    pts.push(pos2(xe, pts[pts.len() - 1].y));
+                    if pts[0].x > xs {
+                        pts.insert(0, pos2(xs, pts[0].y));
+                    }
+                    let last = pts[pts.len() - 1];
+                    if last.x < xe {
+                        pts.push(pos2(xe, last.y));
+                    }
                     p.add(egui::Shape::line(pts, Stroke::new(1.8, theme::WARN)));
                     for pt in &t.envelope {
                         p.circle(env_xy(pt), 4.0, theme::WARN, Stroke::new(1.0, Color32::BLACK));

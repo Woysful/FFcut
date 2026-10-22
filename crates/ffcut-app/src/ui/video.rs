@@ -15,6 +15,10 @@ impl App {
                 self.empty_state(ui);
                 return;
             }
+            if self.audio_mode() {
+                self.audio_panel(ui);
+                return;
+            }
             let avail = ui.available_rect_before_wrap().shrink(if self.fs == FsMode::Video { 0.0 } else { 10.0 });
             let (fw, fh) = self.frame_dims();
             // caption bars make the picture taller than the frame the crop and the markers work in

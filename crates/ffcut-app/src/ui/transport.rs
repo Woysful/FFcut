@@ -59,7 +59,8 @@ impl App {
         let t = self.player.time();
         let h = 30.0;
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
-        let centre = Rect::from_center_size(rect.center(), vec2(320.0, h));
+        let audio = self.audio_mode();
+        let centre = Rect::from_center_size(rect.center(), vec2(if audio { 210.0 } else { 320.0 }, h));
         let left = Rect::from_min_max(rect.min, pos2((centre.left() - 10.0).max(rect.left()), rect.max.y));
         let right = Rect::from_min_max(pos2((centre.right() + 10.0).min(rect.right()), rect.min.y), rect.max);
         let lay = |l: Layout, r: Rect| UiBuilder::new().max_rect(r).layout(l);
@@ -88,36 +89,48 @@ impl App {
         // ---- centre: crop | media buttons | tracks
         ui.scope_builder(lay(Layout::left_to_right(Align::Center), centre), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop_on, None).on_hover_text("Crop  (C)").clicked() {
-                self.crop_on = !self.crop_on;
-                if self.crop_on {
-                    let c = self.crop_rect();
-                    if c.w < 4 || c.h < 4 {
-                        self.reset_crop();
+            if !audio {
+                if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop_on, None).on_hover_text("Crop  (C)").clicked() {
+                    self.crop_on = !self.crop_on;
+                    if self.crop_on {
+                        let c = self.crop_rect();
+                        if c.w < 4 || c.h < 4 {
+                            self.reset_crop();
+                        }
                     }
                 }
+                ui.add_space(8.0);
             }
-            ui.add_space(8.0);
             let sz = vec2(34.0, 28.0);
             if icon_button(ui, sz, Icon::ToStart, false, None).on_hover_text("Go to trim start").clicked() {
                 self.player.seek(self.trim_start);
             }
-            if icon_button(ui, sz, Icon::StepBack, false, None).on_hover_text("Previous frame  (←)").clicked() {
-                self.player.step_frame(false);
+            if icon_button(ui, sz, Icon::StepBack, false, None).on_hover_text(if audio { "Back 1 s  (←)" } else { "Previous frame  (←)" }).clicked() {
+                if audio {
+                    self.player.seek((self.player.time() - 1.0).max(0.0));
+                } else {
+                    self.player.step_frame(false);
+                }
             }
             let icon = if self.player.paused() { Icon::Play } else { Icon::Pause };
             if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(theme::ACCENT.gamma_multiply(0.75))).on_hover_text("Play / pause  (Space)").clicked() {
                 self.play_pause();
             }
-            if icon_button(ui, sz, Icon::StepForward, false, None).on_hover_text("Next frame  (→)").clicked() {
-                self.player.step_frame(true);
+            if icon_button(ui, sz, Icon::StepForward, false, None).on_hover_text(if audio { "Forward 1 s  (→)" } else { "Next frame  (→)" }).clicked() {
+                if audio {
+                    self.player.seek(self.player.time() + 1.0);
+                } else {
+                    self.player.step_frame(true);
+                }
             }
             if icon_button(ui, sz, Icon::ToEnd, false, None).on_hover_text("Go to trim end").clicked() {
                 self.player.seek(self.trim_end);
             }
-            ui.add_space(8.0);
-            if icon_button(ui, vec2(34.0, 28.0), Icon::Tracks, self.multitrack, None).on_hover_text("Switch the timeline: one bar / one lane per audio track").clicked() {
-                self.multitrack = !self.multitrack;
+            if !audio {
+                ui.add_space(8.0);
+                if icon_button(ui, vec2(34.0, 28.0), Icon::Tracks, self.multitrack, None).on_hover_text("Switch the timeline: one bar / one lane per audio track").clicked() {
+                    self.multitrack = !self.multitrack;
+                }
             }
         });
 
@@ -136,7 +149,7 @@ impl App {
                 self.player.set_mute(self.muted);
             }
             let tracks = self.clip.as_ref().map(|c| c.info.audio.clone()).unwrap_or_default();
-            if !self.multitrack && tracks.len() > 1 {
+            if !self.multitrack && !audio && tracks.len() > 1 {
                 ui.add_space(12.0);
                 let cur = format!("Audio #{}", self.preview_audio + 1);
                 egui::ComboBox::from_id_salt("preview_audio").selected_text(cur).width(96.0).show_ui(ui, |ui| {
@@ -217,7 +230,7 @@ impl App {
                 (!self.lock_trim && ds.min(de) <= 12.0).then_some(ds <= de)
             });
         }
-        resp.context_menu(|ui| {
+        super::ctx_menu(&resp, |ui| {
             let Some(is_start) = self.trim_menu else {
                 ui.close();
                 return;

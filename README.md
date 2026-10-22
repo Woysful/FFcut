@@ -10,13 +10,12 @@ Small and fast wrapper for FFmpeg.
 - Rotate
 - Flip
 - Resize
-- Video/Audio codecs (CPU, NVENC, AMF, QSV, VAAPI)
+- Presets
 - Video effects: colour, vignette, sharpen, denoise, deblock, deband, deflicker, blur, pixelate or cover an area, text blocks, top / bottom caption
 - Multi-track audio timeline
-- Audio effects per track: fade in / out, volume keyframes, parametric equalizer, compressor, normalization.
+- Audio effects: fade in / out, volume keyframes, parametric equalizer, compressor, normalization, de-esser, de-noiser.
 - Specific audio track export, or mix all tracks into one
 - **Custom FFmpeg command** — the final command is shown and fully editable, and exactly that text is what runs
-- Export Presets (edit, import, export)
 
 ## Supported Formats
 

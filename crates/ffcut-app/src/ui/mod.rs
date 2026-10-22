@@ -1,5 +1,6 @@
 //! All widgets. Each file adds an `impl App` block for one area of the window.
 
+mod audio_view;
 mod codecs;
 mod fx_ui;
 mod icons;
@@ -294,4 +295,9 @@ pub fn card(ui: &mut egui::Ui, title: &str, hint: Option<&str>, add: impl FnOnce
             add(ui);
         });
     ui.add_space(12.0);
+}
+
+/// A context menu that stays open when its fields are clicked (so values can be typed); buttons close it with `ui.close()`.
+pub(super) fn ctx_menu(resp: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Popup::context_menu(resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(add);
 }

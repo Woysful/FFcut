@@ -40,29 +40,38 @@ impl App {
         egui::Panel::right("settings").default_size(340.0).size_range(300.0..=560.0).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(4.0);
+                if self.audio_mode() {
+                    self.audio_file_sidebar(ui);
+                    return;
+                }
                 self.info_section(ui);
                 self.trim_section(ui);
                 self.transform_section(ui);
                 self.vfx_section(ui);
-                self.video_section(ui);
+                if !self.s.audio_only {
+                    self.video_section(ui);
+                }
                 self.audio_section(ui);
                 self.export_section(ui);
             });
         });
     }
 
-    fn info_section(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn info_section(&mut self, ui: &mut egui::Ui) {
         let Some(c) = &self.clip else { return };
         let i = &c.info;
         section(ui, "File", false, |ui| {
             ui.label(RichText::new(c.path.file_name().unwrap_or_default().to_string_lossy()).strong());
-            let mut rows = vec![
-                ("Video", format!("{} · {}×{} · {:.2} fps", i.video_codec, i.width, i.height, i.fps)),
-                ("Pixel format", i.pix_fmt.clone()),
+            let mut rows = if i.audio_only {
+                vec![]
+            } else {
+                vec![("Video", format!("{} · {}×{} · {:.2} fps", i.video_codec, i.width, i.height, i.fps)), ("Pixel format", i.pix_fmt.clone())]
+            };
+            rows.extend([
                 ("Duration", fmt_time(i.duration)),
                 ("Size", format!("{:.1} MB", i.file_size as f64 / 1_048_576.0)),
                 ("Container", i.format.clone()),
-            ];
+            ]);
             if i.rotation != 0 {
                 rows.push(("Rotation tag", format!("{}°", i.rotation)));
             }
@@ -79,7 +88,7 @@ impl App {
         });
     }
 
-    fn trim_section(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn trim_section(&mut self, ui: &mut egui::Ui) {
         section(ui, "Trim", true, |ui| {
             let dur = self.dur();
             let fps = self.frame_fps();
@@ -363,22 +372,89 @@ impl App {
     }
 
     /// Last block of the sidebar: container, the final command and the Export button.
-    fn export_section(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn export_section(&mut self, ui: &mut egui::Ui) {
         section(ui, "Export", true, |ui| {
+            if !self.audio_mode() {
+                let before = self.s.audio_only;
+                ui.checkbox(&mut self.s.audio_only, "Audio only (no video)").on_hover_text("Export just the sound of this video");
+                if before && !self.s.audio_only && !CONTAINERS.contains(&self.container.as_str()) {
+                    self.set_container("mp4");
+                }
+                if !before && self.s.audio_only && !self.cmd_edited {
+                    // a plain video container is rarely what one wants for sound only
+                    let c = if self.s.tracks.iter().filter(|t| !t.deleted).count() > 1 { "mka" } else { "m4a" };
+                    self.set_container(c);
+                }
+                if self.s.audio_only {
+                    let n = audible(&self.s.tracks).len();
+                    let ext = self.container.clone();
+                    let note = if n > 1 && self.s.audio_mode == AudioMode::Separate && !builder::multi_stream_container(&ext) {
+                        format!("{n} tracks → {n} files (name_1.{ext}, name_2.{ext}…). Pick .mka / .mkv / .mp4 to keep them in one file.")
+                    } else if n > 1 && self.s.audio_mode == AudioMode::Separate {
+                        format!("{n} tracks stay separate streams of one .{ext} file, without video.")
+                    } else {
+                        String::new()
+                    };
+                    if !note.is_empty() {
+                        ui.add(egui::Label::new(RichText::new(note).size(11.5).color(Color32::from_gray(150))).wrap());
+                    }
+                }
+                ui.add_space(4.0);
+            }
             ui.horizontal(|ui| {
                 ui.label("Container");
                 let cur = self.container.clone();
                 egui::ComboBox::from_id_salt("container").selected_text(format!(".{cur}")).show_ui(ui, |ui| {
-                    for c in CONTAINERS {
+                    for c in self.containers().iter().copied() {
                         if ui.selectable_label(cur == c, format!(".{c}")).clicked() {
                             self.set_container(c);
                         }
                     }
                 });
             });
-            ui.add(egui::Label::new(RichText::new("Not every codec fits every container (e.g. HEVC in .webm). ffmpeg will tell you if it does not.").size(11.5).color(Color32::from_gray(130))).wrap());
+            let hint = if self.audio_mode() { "Copy keeps the original codec when the container can hold it; otherwise the audio is re-encoded." } else { "Not every codec fits every container (e.g. HEVC in .webm). ffmpeg will tell you if it does not." };
+            ui.add(egui::Label::new(RichText::new(hint).size(11.5).color(Color32::from_gray(130))).wrap());
             ui.add_space(6.0);
             self.command_block(ui);
         });
+    }
+}
+
+impl App {
+    /// Audio-file mode: only what concerns sound. One track, so its effects live here instead of a window.
+    fn audio_file_sidebar(&mut self, ui: &mut egui::Ui) {
+        self.info_section(ui);
+        self.trim_section(ui);
+        section(ui, "Volume", true, |ui| {
+            let Some(t) = self.s.tracks.first_mut() else { return };
+            ui.horizontal(|ui| {
+                ui.label("Level");
+                let mut pct = t.volume * 100.0;
+                if ui.add(DragValue::new(&mut pct).range(0.0..=300.0).speed(1.0).suffix("%").fixed_decimals(0)).changed() {
+                    t.volume = pct / 100.0;
+                }
+                if !t.envelope.is_empty() && ui.small_button("Clear keyframes").clicked() {
+                    t.envelope.clear();
+                }
+            });
+            ui.add(egui::Label::new(RichText::new("Double-click the waveform to add a volume keyframe; drag it to change the level over time.").size(11.5).color(Color32::from_gray(130))).wrap());
+        });
+        section(ui, "Audio effects", true, |ui| self.fx_sidebar(ui));
+        let enc = self.encoders.lock().unwrap().clone();
+        section(ui, "Audio", true, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Codec");
+                codecs::audio_codec_combo(ui, "acodec", &mut self.s.audio_codec, &enc, 210.0);
+            });
+            if let AudioCodec::Encoder(c) = &self.s.audio_codec {
+                if !codecs::is_lossless_audio(c) {
+                    ui.horizontal(|ui| {
+                        ui.label("Bitrate");
+                        ui.add(DragValue::new(&mut self.s.audio_bitrate_kbps).range(32..=1536).speed(2.0).suffix(" kbps"));
+                    });
+                }
+            }
+        });
+        self.export_section(ui);
     }
 }

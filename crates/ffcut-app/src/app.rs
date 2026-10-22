@@ -18,6 +18,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub const CONTAINERS: [&str; 4] = ["mp4", "mkv", "mov", "webm"];
+/// Output containers in audio-file mode.
+pub const AUDIO_CONTAINERS: [&str; 7] = ["mp3", "m4a", "flac", "wav", "ogg", "opus", "mka"];
+/// Output containers when only the sound of a video is exported.
+pub const AUDIO_EXPORT: [&str; 11] = ["mp3", "m4a", "flac", "wav", "ogg", "opus", "mka", "mp4", "mkv", "mov", "webm"];
+/// The audio-file view: the visible part of the file, in seconds (`span` 0 = the whole file).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AudioView {
+    pub t0: f64,
+    pub span: f64,
+    /// Where the context menu was opened (seconds), for "add keyframe here".
+    pub menu_t: f64,
+    pub menu_db: f32,
+}
 
 /// Two kinds of fullscreen that replace each other (never stack):
 /// `App` = the whole interface fills the screen (F11), `Video` = only the picture does (Ctrl+F).
@@ -144,6 +157,7 @@ pub struct App {
     pub fs: FsMode,
     /// Timeline shows one lane per audio track (waveforms, per-track edits).
     pub multitrack: bool,
+    pub aview: AudioView,
     pub waves: Arc<Mutex<HashMap<String, Wave>>>,
     pub trk_drag: Option<(usize, TrkDrag)>,
     /// What mpv was last told to play (see `sync_preview_audio`).
@@ -212,6 +226,7 @@ impl App {
             update_manual: false,
             fs: FsMode::Off,
             multitrack: false,
+            aview: AudioView::default(),
             waves: Arc::new(Mutex::new(HashMap::new())),
             trk_drag: None,
             applied_audio: None,
@@ -329,6 +344,7 @@ impl App {
         self.s.flip_v = false;
         self.s.crop = None;
         self.s.audio_mode = AudioMode::Separate;
+        self.s.audio_only = false;
         self.s.tracks = info.audio.iter().map(|a| TrackEdit::original(a.index, crate::ui::audio_label(a), info.duration)).collect();
         self.waves.lock().unwrap().clear();
         self.fx.clear();
@@ -347,7 +363,16 @@ impl App {
         self.status = None;
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-        self.container = if CONTAINERS.contains(&ext.as_str()) { ext } else { "mp4".into() };
+        self.multitrack = false;
+        self.aview = AudioView::default();
+        self.container = if info.audio_only {
+            let lossless = info.audio.first().map_or(false, |a| a.codec == "flac" || a.codec.starts_with("pcm"));
+            if AUDIO_CONTAINERS.contains(&ext.as_str()) { ext } else if lossless { "flac".into() } else { "mp3".into() }
+        } else if CONTAINERS.contains(&ext.as_str()) {
+            ext
+        } else {
+            "mp4".into()
+        };
         self.out_str = default_output(path, &self.container).to_string_lossy().into_owned();
 
         self.player.open(path, info.duration);
@@ -357,9 +382,15 @@ impl App {
     }
 
     pub fn open_dialog(&mut self) {
+        const AUDIO: [&str; 13] = ["mp3", "m4a", "aac", "flac", "wav", "ogg", "oga", "opus", "wma", "aiff", "aif", "mka", "ac3"];
+        const VIDEO: [&str; 15] = ["mp4", "mkv", "mov", "webm", "avi", "m4v", "flv", "wmv", "ts", "mts", "m2ts", "mpg", "mpeg", "3gp", "ogv"];
+        // the first filter is the default: video and audio together
+        let both: Vec<&str> = VIDEO.iter().chain(AUDIO.iter()).copied().collect();
         let dlg = rfd::FileDialog::new()
-            .set_title("Open video")
-            .add_filter("Video", &["mp4", "mkv", "mov", "webm", "avi", "m4v", "flv", "wmv", "ts", "mts", "m2ts", "mpg", "mpeg", "3gp", "ogv"])
+            .set_title("Open video or audio")
+            .add_filter("Video and audio", &both)
+            .add_filter("Video", &VIDEO)
+            .add_filter("Audio", &AUDIO)
             .add_filter("All files", &["*"]);
         if let Some(p) = dlg.pick_file() {
             self.open_file(&p);
@@ -370,6 +401,39 @@ impl App {
     pub fn frame_fps(&self) -> Option<f64> {
         let fps = self.clip.as_ref().map_or(0.0, |c| c.info.fps);
         (self.settings.show_frames && fps > 0.0).then_some(fps)
+    }
+
+    /// An audio file is open: the waveform replaces the picture and the sidebar keeps only audio settings.
+    pub fn audio_mode(&self) -> bool {
+        self.clip.as_ref().map_or(false, |c| c.info.audio_only)
+    }
+
+    pub fn containers(&self) -> &'static [&'static str] {
+        if self.audio_mode() {
+            &AUDIO_CONTAINERS
+        } else if self.s.audio_only {
+            &AUDIO_EXPORT
+        } else {
+            &CONTAINERS
+        }
+    }
+
+    /// One track in audio-file mode: it is trimmed exactly like the file, so fades and keyframes line up with the export.
+    pub fn sync_audio_track(&mut self) {
+        if !self.audio_mode() {
+            return;
+        }
+        self.multitrack = false;
+        self.crop_on = false;
+        let (a, b) = (self.trim_start, self.trim_end);
+        if let Some(t) = self.s.tracks.first_mut() {
+            if (t.trim_start - a).abs() > 1e-6 {
+                t.trim_start = a;
+            }
+            if (t.trim_end - b).abs() > 1e-6 {
+                t.trim_end = b;
+            }
+        }
     }
 
     pub fn dur(&self) -> f64 {
@@ -530,8 +594,12 @@ impl App {
             return;
         };
 
-        let cur = PathBuf::from(&current);
-        let mut dlg = rfd::FileDialog::new().set_title("Export video").add_filter("Video", &CONTAINERS);
+        // per-track audio export: the command has several outputs, name_1.ext, name_2.ext…
+        let old_out = PathBuf::from(&self.out_str);
+        let numbered_old = |k: usize| builder::numbered(&old_out, k).to_string_lossy().into_owned();
+        let multi: Vec<usize> = (1..=64).filter(|k| argv.iter().any(|a| *a == numbered_old(*k))).collect();
+        let cur = if multi.is_empty() { PathBuf::from(&current) } else { old_out.clone() };
+        let mut dlg = rfd::FileDialog::new().set_title(if self.audio_mode() { "Export audio" } else { "Export video" }).add_filter(if self.audio_mode() { "Audio" } else { "Video" }, self.containers());
         if let Some(d) = cur.parent().filter(|d| d.is_dir()).or_else(|| clip.path.parent()) {
             dlg = dlg.set_directory(d);
         }
@@ -551,12 +619,20 @@ impl App {
 
         // the chosen path goes into the command; a hand-edited command keeps all its other changes
         if let Some(ext) = out.extension().and_then(|e| e.to_str()) {
-            if CONTAINERS.contains(&ext.to_ascii_lowercase().as_str()) {
+            if self.containers().contains(&ext.to_ascii_lowercase().as_str()) {
                 self.container = ext.to_ascii_lowercase();
             }
         }
         self.out_str = out.to_string_lossy().into_owned();
-        *argv.last_mut().unwrap() = self.out_str.clone();
+        if multi.is_empty() {
+            *argv.last_mut().unwrap() = self.out_str.clone();
+        } else {
+            for a in argv.iter_mut() {
+                if let Some(k) = multi.iter().copied().find(|k| *a == numbered_old(*k)) {
+                    *a = builder::numbered(&out, k).to_string_lossy().into_owned();
+                }
+            }
+        }
         if self.cmd_edited {
             self.cmd_text = cmdline::to_text(&argv);
         }
@@ -818,11 +894,20 @@ impl App {
         } else if k(ctx, fast, Key::ArrowRight) {
             self.player.seek(self.player.time() + 5.0);
         }
+        let audio = self.audio_mode();
         if k(ctx, Modifiers::NONE, Key::ArrowLeft) || k(ctx, Modifiers::NONE, Key::Comma) {
-            self.player.step_frame(false);
+            if audio {
+                self.player.seek((self.player.time() - 1.0).max(0.0));
+            } else {
+                self.player.step_frame(false);
+            }
         }
         if k(ctx, Modifiers::NONE, Key::ArrowRight) || k(ctx, Modifiers::NONE, Key::Period) {
-            self.player.step_frame(true);
+            if audio {
+                self.player.seek(self.player.time() + 1.0);
+            } else {
+                self.player.step_frame(true);
+            }
         }
         if !self.lock_trim {
             if k(ctx, Modifiers::NONE, Key::Q) {
@@ -839,7 +924,7 @@ impl App {
                 self.sync_loop();
             }
         }
-        if k(ctx, Modifiers::NONE, Key::C) {
+        if !audio && k(ctx, Modifiers::NONE, Key::C) {
             self.crop_on = !self.crop_on;
         }
         if k(ctx, Modifiers::SHIFT, Key::A) {
@@ -861,6 +946,7 @@ impl eframe::App for App {
         self.handle_hotkeys(&ctx);
         self.poll_job();
         self.poll_update();
+        self.sync_audio_track();
         self.track_changes(&ctx);
         self.drive_measures(&ctx);
         self.sync_video_preview(&ctx);

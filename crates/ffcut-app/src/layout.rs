@@ -126,7 +126,10 @@ pub fn normalize_info_items(items: &mut Vec<InfoItem>) {
 
 pub fn info_line(path: &Path, i: &SourceInfo, items: &[InfoItem], sep: &str) -> String {
     let mut parts: Vec<String> = Vec::new();
-    for it in items.iter().filter(|i| i.on) {
+    for it in items.iter().filter(|it| it.on) {
+        if i.audio_only && matches!(it.key.as_str(), "codec" | "resolution" | "fps" | "pix_fmt") {
+            continue;
+        }
         let v = match it.key.as_str() {
             "codec" => i.video_codec.to_uppercase(),
             "resolution" => format!("{}×{}", i.width, i.height),
