@@ -3,6 +3,39 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// A modifier key that goes with the mouse wheel (zoom / scroll of the waveform).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ModKey {
+    None,
+    Ctrl,
+    Alt,
+    Shift,
+}
+
+impl ModKey {
+    pub const ALL: [ModKey; 4] = [ModKey::None, ModKey::Ctrl, ModKey::Alt, ModKey::Shift];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ModKey::None => "Wheel alone",
+            ModKey::Ctrl => "Ctrl + wheel",
+            ModKey::Alt => "Alt + wheel",
+            ModKey::Shift => "Shift + wheel",
+        }
+    }
+
+    /// Exactly this modifier is held (and no other one).
+    pub fn matches(self, m: &eframe::egui::Modifiers) -> bool {
+        let ctrl = m.ctrl || m.command;
+        match self {
+            ModKey::None => !ctrl && !m.alt && !m.shift,
+            ModKey::Ctrl => ctrl && !m.alt && !m.shift,
+            ModKey::Alt => m.alt && !ctrl && !m.shift,
+            ModKey::Shift => m.shift && !ctrl && !m.alt,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -25,6 +58,14 @@ pub struct Settings {
     pub path_sep: String,
     /// Changed keyboard shortcuts (see `hotkeys`); anything missing keeps its default.
     pub hotkeys: crate::hotkeys::Overrides,
+    /// Sidebar sections: key → open. What the user left open stays open at the next start.
+    pub sections: std::collections::BTreeMap<String, bool>,
+    /// Waveform: what zooms and what scrolls (defaults: the wheel zooms, Shift + wheel scrolls).
+    pub zoom_mod: Option<ModKey>,
+    pub scroll_mod: Option<ModKey>,
+    /// The crop loupe: side of its window (points) and magnification.
+    pub loupe_size: Option<f32>,
+    pub loupe_zoom: Option<f32>,
     pub volume: Option<f32>,
     pub muted: bool,
 }
@@ -34,6 +75,13 @@ pub fn config_dir() -> PathBuf {
 }
 
 impl Settings {
+    pub fn zoom_key(&self) -> ModKey {
+        self.zoom_mod.unwrap_or(ModKey::None)
+    }
+    pub fn scroll_key(&self) -> ModKey {
+        self.scroll_mod.unwrap_or(ModKey::Shift)
+    }
+
     fn file() -> PathBuf {
         config_dir().join("settings.json")
     }

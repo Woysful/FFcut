@@ -1,6 +1,6 @@
 //! The audio effects window of one track: fades and volume keyframes, equalizer, compressor, normalization.
 
-use super::{card, os_window};
+use super::{field, grid};
 use crate::app::App;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, Pos2, RichText, Sense, Stroke};
@@ -149,6 +149,16 @@ fn eq_plot(ui: &mut egui::Ui, bands: &mut Vec<EqBand>, sel: &mut Option<usize>) 
     }
 }
 
+fn fx_tip(k: &EffectKind) -> &'static str {
+    match k {
+        EffectKind::Eq(_) => "Drag a point: frequency and gain. Wheel: width. Double-click: new band. Right-click a point: remove.",
+        EffectKind::Comp(_) => "Evens out loud and quiet parts. Raise the make-up gain to bring the level back.",
+        EffectKind::DeEss(_) => "Softens harsh “s” and “sh” sounds in voice recordings. Raise Intensity until they stop stinging.",
+        EffectKind::Denoise(_) => "Takes steady background noise (hiss, fan, hum) out of the sound. It follows the noise while you play.",
+        EffectKind::Norm(_) => "Measures the clip as it reaches this point of the stack and sets the level for you. The track volume stays on top.",
+    }
+}
+
 fn db_fmt(v: f64) -> String {
     format!("{v:.1}")
 }
@@ -167,40 +177,42 @@ struct FxCtx {
     /// per effect: (measurement error, still measuring)
     meas: Vec<(Option<String>, bool)>,
     sel: Option<(usize, usize)>,
+    /// show the fades card (not for a preset, which has no clip)
+    fades: bool,
 }
 
 /// The effects stack of one track (fades, effects, add menu): shared by the window and the audio-file sidebar.
 fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
-    let FxCtx { rendering, render_err, meas, sel } = c;
+    let FxCtx { rendering, render_err, meas, sel, fades } = c;
     let (rendering, render_err) = (*rendering, render_err.clone());
     let len = (t.trim_end - t.trim_start).max(0.1);
         ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
 
-        card(ui, "Fades", Some("Also adjustable on the waveform / track: drag the white dots at the top corners. Volume keyframes: right-click."), |ui| {
-            egui::Grid::new("fades").num_columns(4).spacing([12.0, 6.0]).show(ui, |ui| {
-                ui.label("Fade in");
-                ui.add(egui::DragValue::new(&mut t.fade_in).range(0.0..=(len - t.fade_out).max(0.0)).speed(0.05).suffix(" s").fixed_decimals(2));
-                ui.label("Fade out");
-                ui.add(egui::DragValue::new(&mut t.fade_out).range(0.0..=(len - t.fade_in).max(0.0)).speed(0.05).suffix(" s").fixed_decimals(2));
-                ui.end_row();
+        if *fades {
+            field(ui, "Fade in", |ui| {
+                super::num(ui, egui::DragValue::new(&mut t.fade_in).range(0.0..=(len - t.fade_out).max(0.0)).speed(0.05).suffix(" s").fixed_decimals(2)).on_hover_text("Also adjustable on the waveform / track: drag the white dots at the top corners. Volume keyframes: right-click.");
             });
-        });
+            field(ui, "Fade out", |ui| {
+                super::num(ui, egui::DragValue::new(&mut t.fade_out).range(0.0..=(len - t.fade_in).max(0.0)).speed(0.05).suffix(" s").fixed_decimals(2));
+            });
+            ui.add_space(4.0);
+        }
 
-        ui.label(RichText::new("EFFECTS").size(11.0).strong().color(Color32::from_gray(150)));
-        ui.add(egui::Label::new(RichText::new("Applied from top to bottom. Change the order with the arrows, bypass with the checkbox.").size(11.5).color(Color32::from_gray(120))).wrap());
+        ui.label(RichText::new("EFFECTS").size(11.0).strong().color(Color32::from_gray(150))).on_hover_text("Applied from top to bottom. Change the order with the arrows, bypass with the checkbox.\nWhat you hear is the track rendered with these effects by ffmpeg, the same filters the export uses; the preview refreshes a moment after you stop editing.");
         let mut act: Option<StackAct> = None;
         let count = t.effects.len();
         for (k, e) in t.effects.iter_mut().enumerate() {
             egui::Frame::NONE
                 .fill(Color32::from_rgb(40, 42, 48))
                 .stroke(Stroke::new(1.0, Color32::from_gray(54)))
-                .corner_radius(10)
-                .inner_margin(egui::Margin::same(12))
+                .corner_radius(8)
+                .inner_margin(egui::Margin::same(10))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    super::fit_sliders(ui);
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut e.on, "").on_hover_text("Bypass: keep the effect in the list but do not apply it");
-                        ui.label(RichText::new(e.name()).size(14.0).strong().color(if e.on { Color32::from_gray(235) } else { Color32::from_gray(120) }));
+                        ui.label(RichText::new(e.name()).size(13.0).strong().color(if e.on { Color32::from_gray(235) } else { Color32::from_gray(120) })).on_hover_text(fx_tip(&e.kind));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.small_button("✕").on_hover_text("Remove this effect").clicked() {
                                 act = Some(StackAct::Remove(k));
@@ -223,25 +235,30 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                             } else if (*sel).map_or(false, |s| s.0 == k) {
                                 *sel = None;
                             }
-                            ui.add(egui::Label::new(RichText::new("Drag a point: frequency and gain. Wheel: width. Double-click: new band. Right-click a point: remove.").size(11.0).color(Color32::from_gray(120))).wrap());
                             ui.add_space(4.0);
                             let mut remove = None;
                             for (b_i, b) in bands.iter_mut().enumerate() {
-                                ui.horizontal_wrapped(|ui| {
+                                ui.horizontal(|ui| {
                                     ui.checkbox(&mut b.on, "");
-                                    egui::ComboBox::from_id_salt(("eqkind", k, b_i)).selected_text(kind_name(b.kind)).width(86.0).show_ui(ui, |ui| {
+                                    let w = ui.available_width() - 72.0;
+                                    egui::ComboBox::from_id_salt(("eqkind", k, b_i)).selected_text(kind_name(b.kind)).width(w).show_ui(ui, |ui| {
                                         for kd in [EqKind::Peak, EqKind::LowShelf, EqKind::HighShelf, EqKind::HighPass, EqKind::LowPass] {
                                             ui.selectable_value(&mut b.kind, kd, kind_name(kd));
                                         }
                                     });
-                                    ui.add(egui::DragValue::new(&mut b.freq).range(20.0..=20000.0).speed(5.0).suffix(" Hz").fixed_decimals(0)).on_hover_text("Frequency");
-                                    let gains = matches!(b.kind, EqKind::Peak | EqKind::LowShelf | EqKind::HighShelf);
-                                    ui.add_enabled(gains, egui::DragValue::new(&mut b.gain).range(-18.0..=18.0).speed(0.1).suffix(" dB").fixed_decimals(1)).on_hover_text("Gain");
-                                    ui.add(egui::DragValue::new(&mut b.q).range(0.1..=10.0).speed(0.02).prefix("Q ").fixed_decimals(2)).on_hover_text("Width (higher = narrower)");
                                     if ui.small_button("✕").on_hover_text("Remove this band").clicked() {
                                         remove = Some(b_i);
                                     }
                                 });
+                                ui.horizontal(|ui| {
+                                    let w = super::NUM_W - 6.0;
+                                    let h = ui.spacing().interact_size.y;
+                                    ui.add_sized([w, h], egui::DragValue::new(&mut b.freq).range(20.0..=20000.0).speed(5.0).suffix(" Hz").fixed_decimals(0)).on_hover_text("Frequency");
+                                    let gains = matches!(b.kind, EqKind::Peak | EqKind::LowShelf | EqKind::HighShelf);
+                                    ui.add_enabled_ui(gains, |ui| ui.add_sized([w, h], egui::DragValue::new(&mut b.gain).range(-18.0..=18.0).speed(0.1).suffix(" dB").fixed_decimals(1))).response.on_hover_text("Gain");
+                                    ui.add_sized([w, h], egui::DragValue::new(&mut b.q).range(0.1..=10.0).speed(0.02).prefix("Q ").fixed_decimals(2)).on_hover_text("Width (higher = narrower)");
+                                });
+                                ui.add_space(2.0);
                             }
                             if let Some(b_i) = remove {
                                 bands.remove(b_i);
@@ -257,8 +274,7 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                             });
                         }
                         EffectKind::Comp(c) => {
-                            ui.add(egui::Label::new(RichText::new("Evens out loud and quiet parts. Raise the make-up gain to bring the level back.").size(11.5).color(Color32::from_gray(140))).wrap());
-                            egui::Grid::new(("comp", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                            grid(("comp", k)).show(ui, |ui| {
                                 ui.label("Threshold");
                                 ui.add(egui::Slider::new(&mut c.threshold_db, -60.0..=0.0).suffix(" dB"));
                                 ui.end_row();
@@ -277,8 +293,7 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                             });
                         }
                         EffectKind::DeEss(d) => {
-                        ui.add(egui::Label::new(RichText::new("Softens harsh “s” and “sh” sounds in voice recordings. Raise Intensity until they stop stinging.").size(11.5).color(Color32::from_gray(140))).wrap());
-                        egui::Grid::new(("deess", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        grid(("deess", k)).show(ui, |ui| {
                             ui.label("Intensity");
                             ui.add(egui::Slider::new(&mut d.intensity, 0.0..=1.0).fixed_decimals(2)).on_hover_text("How strongly sibilance is reduced");
                             ui.end_row();
@@ -291,8 +306,7 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                         });
                     }
                     EffectKind::Denoise(d) => {
-                        ui.add(egui::Label::new(RichText::new("Takes steady background noise (hiss, fan, hum) out of the sound. It follows the noise while you play.").size(11.5).color(Color32::from_gray(140))).wrap());
-                        egui::Grid::new(("denoise", k)).num_columns(2).spacing([12.0, 6.0]).show(ui, |ui| {
+                        grid(("denoise", k)).show(ui, |ui| {
                             ui.label("Reduction");
                             ui.add(egui::Slider::new(&mut d.reduction_db, 1.0..=40.0).suffix(" dB")).on_hover_text("How much noise is removed. Too much makes the voice “watery”");
                             ui.end_row();
@@ -302,10 +316,9 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                         });
                     }
                         EffectKind::Norm(n) => {
-                            ui.add(egui::Label::new(RichText::new("Measures the clip as it reaches this point of the stack and sets the level for you. The track volume stays on top.").size(11.5).color(Color32::from_gray(140))).wrap());
-                            ui.horizontal(|ui| {
+                            field(ui, "Mode", |ui| {
                                 let cur = if n.mode == NormMode::Peak { "Peak level" } else { "Loudness (LUFS)" };
-                                egui::ComboBox::from_id_salt(("normmode", k)).selected_text(cur).width(150.0).show_ui(ui, |ui| {
+                                egui::ComboBox::from_id_salt(("normmode", k)).selected_text(cur).width(ui.available_width()).show_ui(ui, |ui| {
                                     if ui.selectable_label(n.mode == NormMode::Peak, "Peak level").clicked() && n.mode != NormMode::Peak {
                                         *n = Normalize::new(NormMode::Peak);
                                     }
@@ -313,6 +326,8 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                                         *n = Normalize::new(NormMode::Loudness);
                                     }
                                 });
+                            });
+                            field(ui, "Target", |ui| {
                                 let (range, unit) = if n.mode == NormMode::Peak { (-24.0..=0.0, " dB") } else { (-40.0..=-5.0, " LUFS") };
                                 ui.add(egui::DragValue::new(&mut n.target).range(range).speed(0.1).suffix(unit).fixed_decimals(1)).on_hover_text(if n.mode == NormMode::Peak { "The loudest peak of the clip will reach this level" } else { "Target integrated loudness: -16 for the web / YouTube, -23 for broadcast" });
                             });
@@ -384,15 +399,15 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                 t.effects.clear();
                 *sel = None;
             }
-            if rendering {
+        });
+        if rendering {
+            ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label(RichText::new("Preparing the preview…").size(12.0).color(Color32::from_gray(150)));
-            } else if let Some(e) = &render_err {
-                ui.colored_label(theme::ERR, format!("Preview failed: {e}"));
-            }
-        });
-        ui.add_space(6.0);
-        ui.add(egui::Label::new(RichText::new("What you hear is the track rendered with these effects by ffmpeg, the same filters the export uses. The preview refreshes a moment after you stop editing.").size(11.5).color(Color32::from_gray(120))).wrap());
+            });
+        } else if let Some(e) = &render_err {
+            ui.add(egui::Label::new(egui::RichText::new(format!("Preview failed: {e}")).color(theme::ERR)).wrap());
+        }
 }
 
 impl App {
@@ -405,37 +420,32 @@ impl App {
             })
             .collect();
         let sel = self.fx.eq_sel.filter(|s| matches!(t0.effects.get(s.0).map(|e| &e.kind), Some(EffectKind::Eq(_))));
-        FxCtx { rendering: self.preview_rendering(t0), render_err: self.preview_error(t0), meas, sel }
-    }
-
-    pub fn fx_window(&mut self, ctx: &egui::Context) {
-        let Some(i) = self.fx.window else { return };
-        let Some(t0) = self.s.tracks.get(i).cloned() else {
-            self.fx.window = None;
-            return;
-        };
-        let mut c = self.fx_ctx(&t0);
-        let mut t = t0.clone();
-        let open = os_window(ctx, "fx", &format!("Audio effects — {}", t.label), [540.0, 760.0], |ui| fx_body(ui, &mut t, &mut c));
-        if t != t0 {
-            self.s.tracks[i] = t;
-        }
-        self.fx.eq_sel = c.sel;
-        if !open {
-            self.fx.window = None;
-        }
+        FxCtx { rendering: self.preview_rendering(t0), render_err: self.preview_error(t0), meas, sel, fades: true }
     }
 
     /// The same stack inside the sidebar (audio-file mode: one track, so no window is needed).
-    pub fn fx_sidebar(&mut self, ui: &mut egui::Ui) {
-        let Some(t0) = self.s.tracks.first().cloned() else { return };
+    pub fn fx_sidebar(&mut self, ui: &mut egui::Ui, i: usize) {
+        let Some(t0) = self.s.tracks.get(i).cloned() else { return };
         let mut c = self.fx_ctx(&t0);
         let mut t = t0.clone();
         ui.spacing_mut().slider_width = 110.0;
         fx_body(ui, &mut t, &mut c);
         if t != t0 {
-            self.s.tracks[0] = t;
+            self.s.tracks[i] = t;
         }
         self.fx.eq_sel = c.sel;
     }
+}
+
+/// The effect stack of an audio preset, edited with the same cards as a track (no clip, so no measuring or fades).
+pub fn preset_effects(ui: &mut egui::Ui, fx: &mut Vec<ffcut_core::Effect>) -> bool {
+    let mut t = TrackEdit::original(0, "preset".into(), 3600.0);
+    t.effects = fx.clone();
+    let mut c = FxCtx { rendering: false, render_err: None, meas: vec![(None, false); t.effects.len()], sel: None, fades: false };
+    fx_body(ui, &mut t, &mut c);
+    let changed = t.effects != *fx;
+    if changed {
+        *fx = t.effects;
+    }
+    changed
 }

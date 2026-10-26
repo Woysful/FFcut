@@ -50,6 +50,30 @@ pub enum PreviewAudio {
 }
 
 /// Waveform of one audio track, computed in the background.
+/// A finer waveform of the part of a file that is on screen (made while zoomed in; `peaks` start at `t0`).
+#[derive(Clone)]
+pub struct HiRes {
+    pub key: String,
+    pub t0: f64,
+    pub per_sec: f64,
+    pub peaks: Vec<f32>,
+}
+
+impl HiRes {
+    fn covers(&self, a: f64, b: f64, per_sec: f64) -> bool {
+        self.t0 <= a + 1e-6 && self.t0 + self.peaks.len() as f64 / self.per_sec >= b - 1e-6 && self.per_sec >= per_sec * 0.9
+    }
+    /// Loudest value between `a` and `b` seconds.
+    pub fn peak(&self, a: f64, b: f64) -> f32 {
+        let i0 = (((a - self.t0) * self.per_sec).floor().max(0.0)) as usize;
+        if i0 >= self.peaks.len() {
+            return 0.0;
+        }
+        let i1 = ((((b - self.t0) * self.per_sec).ceil()) as usize).max(i0 + 1).min(self.peaks.len());
+        self.peaks[i0..i1].iter().cloned().fold(0.0, f32::max)
+    }
+}
+
 pub enum Wave {
     Loading,
     Ready(Vec<f32>),
@@ -136,8 +160,18 @@ pub struct App {
 
     pub presets: Presets,
     pub presets_path: PathBuf,
+    pub fx_presets: ffcut_core::presets::FxPresets,
+    pub fx_presets_path: PathBuf,
+    pub fx_preset_name: String,
+    /// track the "Save audio preset" dialog takes its effects from
+    pub fx_save_track: Option<usize>,
+    pub fx_rename: Option<(String, String)>,
+    /// 0 = export presets, 1 = audio presets
+    pub presets_tab: u8,
     pub preset_name: String,
     pub show_save_preset: bool,
+    /// parts ticked in the save-preset dialog
+    pub save_parts: Vec<ffcut_core::presets::Part>,
     pub show_settings: bool,
     pub show_about: bool,
     pub meter: crate::ui::MeterState,
@@ -163,6 +197,13 @@ pub struct App {
     pub multitrack: bool,
     pub aview: AudioView,
     pub waves: Arc<Mutex<HashMap<String, Wave>>>,
+    pub hires: Arc<Mutex<Option<HiRes>>>,
+    /// The crop loupe: the last piece of the picture it was given, and what part of the picture that is.
+    pub loupe_tex: Option<egui::TextureHandle>,
+    pub loupe_region: [f32; 4],
+    pub loupe_dirty: bool,
+    /// (key, from, to, per second) of the finer waveform that is being made or was made last.
+    pub hires_req: Arc<Mutex<Option<(String, f64, f64, f64)>>>,
     pub trk_drag: Option<(usize, TrkDrag)>,
     /// What mpv was last told to play (see `sync_preview_audio`).
     pub applied_audio: Option<PreviewAudio>,
@@ -182,6 +223,7 @@ impl App {
         let player = Player::new(cc)?;
         let settings = Settings::load();
         let presets_path = settings::config_dir().join("presets.json");
+        let fx_presets_path = settings::config_dir().join("audio-presets.json");
 
         let mut app = App {
             player,
@@ -212,9 +254,16 @@ impl App {
             status: None,
             error_window: None,
             presets: presets::load(&presets_path),
+            fx_presets: presets::load_fx(&fx_presets_path),
+            fx_presets_path,
+            fx_preset_name: String::new(),
+            fx_save_track: None,
+            fx_rename: None,
+            presets_tab: 0,
             presets_path,
             preset_name: String::new(),
             show_save_preset: false,
+            save_parts: Vec::new(),
             show_settings: false,
             show_about: false,
             meter: Default::default(),
@@ -230,6 +279,11 @@ impl App {
             update_manual: false,
             fs: FsMode::Off,
             multitrack: false,
+            hires: Default::default(),
+            loupe_tex: None,
+            loupe_region: [0.0; 4],
+            loupe_dirty: false,
+            hires_req: Default::default(),
             hist: Default::default(),
             hk_capture: None,
             hk_note: String::new(),
@@ -422,6 +476,27 @@ impl App {
         crate::hotkeys::hint(&self.settings.hotkeys, a)
     }
 
+    /// The mouse-wheel events of this frame: movement in points and the modifiers held at that moment.
+    /// (egui itself turns Ctrl + wheel into a zoom gesture, so the raw events are read here.)
+    pub fn wheel_events(ctx: &egui::Context) -> Vec<(egui::Vec2, Modifiers)> {
+        ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::MouseWheel { unit, delta, modifiers, .. } => {
+                        let k = match unit {
+                            egui::MouseWheelUnit::Point => 1.0,
+                            egui::MouseWheelUnit::Line => 40.0,
+                            egui::MouseWheelUnit::Page => 400.0,
+                        };
+                        Some((*delta * k, *modifiers))
+                    }
+                    _ => None,
+                })
+                .collect()
+        })
+    }
+
     pub fn audio_mode(&self) -> bool {
         self.clip.as_ref().map_or(false, |c| c.info.audio_only)
     }
@@ -586,6 +661,14 @@ impl App {
         self.cmd_text = self.last_auto.clone();
         self.cmd_edited = false;
         self.cmd_stale = false;
+    }
+
+    /// Applies a preset to the open clip; its container only if this kind of file can use it.
+    pub fn apply_preset(&mut self, p: &ffcut_core::presets::Preset) {
+        let container = p.apply(&mut self.s);
+        if let Some(c) = container.filter(|c| self.containers().contains(&c.as_str())) {
+            self.set_container(&c);
+        }
     }
 
     pub fn set_container(&mut self, ext: &str) {
@@ -820,6 +903,43 @@ impl App {
         });
     }
 
+    /// While zoomed in far enough that the normal waveform is blocky, makes a finer one of the visible part
+    /// (and a margin) in the background. `view` = (start, span) in seconds.
+    pub fn want_hires(&self, ctx: &egui::Context, key: &str, file: &Path, ordinal: usize, view: (f64, f64), px_per_s: f64) {
+        let Some(ffmpeg) = self.ffmpeg.clone() else { return };
+        if px_per_s <= ffcut_core::waveform::PEAKS_PER_SEC as f64 * 0.7 {
+            return;
+        }
+        let (a, b) = (view.0, view.0 + view.1);
+        let usable = |k: &str, f: f64, t: f64, ps: f64| k == key && f <= a + 1e-6 && t >= b - 1e-6 && ps >= px_per_s * 0.9;
+        if self.hires.lock().unwrap().as_ref().map_or(false, |h| h.key == key && h.covers(a, b, px_per_s)) {
+            return;
+        }
+        if self.hires_req.lock().unwrap().as_ref().map_or(false, |(k, f, t, ps)| usable(k, *f, *t, *ps)) {
+            return; // already on its way
+        }
+        let dur = self.dur();
+        let (from, to) = ((a - view.1).max(0.0), (b + view.1).min(dur));
+        let per_sec = (px_per_s * 1.5).min(24000.0).ceil();
+        let req = (key.to_string(), from, to, per_sec);
+        *self.hires_req.lock().unwrap() = Some(req.clone());
+        let (hires, reqs, file, ctx) = (self.hires.clone(), self.hires_req.clone(), file.to_path_buf(), ctx.clone());
+        std::thread::spawn(move || {
+            if let Ok(peaks) = ffcut_core::waveform::peaks_window(&ffmpeg, &file, ordinal, from, to - from, per_sec) {
+                // only the newest request may land
+                if reqs.lock().unwrap().as_ref() == Some(&req) {
+                    *hires.lock().unwrap() = Some(HiRes { key: req.0, t0: from, per_sec, peaks });
+                    ctx.request_repaint();
+                }
+            }
+        });
+    }
+
+    /// The finer waveform for `key` if it covers the view.
+    pub fn hires_for(&self, key: &str, view: (f64, f64), px_per_s: f64) -> Option<HiRes> {
+        self.hires.lock().unwrap().as_ref().filter(|h| h.key == key && h.covers(view.0, view.0 + view.1, px_per_s)).cloned()
+    }
+
     fn pick_audio_file(&mut self, title: &str) -> Option<(PathBuf, probe::AudioFileInfo)> {
         let ffprobe = self.ffprobe.clone()?;
         // FFCUT_PICK_AUDIO: debug/automation only, skips the dialog
@@ -897,7 +1017,15 @@ impl App {
         all.sort_by_key(|(c, _)| std::cmp::Reverse(c.weight()));
         let mut out = Vec::new();
         for (c, a) in all {
-            if ctx.input_mut(|i| i.consume_key(c.modifiers(), c.key)) {
+            // exactly these modifiers: Ctrl+Alt+F is not Ctrl+F (egui's own matching ignores extra Shift / Alt)
+            let hit = ctx.input_mut(|i| {
+                let at = i.events.iter().position(|e| {
+                    matches!(e, egui::Event::Key { key, pressed: true, modifiers, .. }
+                        if *key == c.key && modifiers.alt == c.alt && modifiers.shift == c.shift && (modifiers.command || modifiers.ctrl) == c.ctrl)
+                });
+                at.map(|p| i.events.remove(p)).is_some()
+            });
+            if hit {
                 out.push(a);
             }
         }

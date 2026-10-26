@@ -185,6 +185,33 @@ impl App {
             }
         });
 
+        card(ui, "Waveform: zoom and scroll", Some("Which key goes with the mouse wheel in the audio-file waveform. A key can do only one of the two."), |ui| {
+            use crate::settings::ModKey;
+            let (mut zoom, mut scroll) = (self.settings.zoom_key(), self.settings.scroll_key());
+            let (z0, s0) = (zoom, scroll);
+            ui.horizontal(|ui| {
+                ui.label("Zoom");
+                for k in ModKey::ALL {
+                    ui.selectable_value(&mut zoom, k, k.label());
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Scroll");
+                for k in ModKey::ALL {
+                    ui.selectable_value(&mut scroll, k, k.label());
+                }
+            });
+            // both on one key is not possible: the one that was not just touched gives way
+            if zoom == scroll {
+                if zoom != z0 { scroll = z0 } else { zoom = s0 }
+            }
+            if (zoom, scroll) != (z0, s0) {
+                self.settings.zoom_mod = Some(zoom);
+                self.settings.scroll_mod = Some(scroll);
+                self.settings.save();
+            }
+        });
+
         card(ui, "Timer", Some("The timer above the timeline can show time or frame numbers. You can also click it to switch."), |ui| {
             let mut frames = self.settings.show_frames;
             ui.horizontal(|ui| {

@@ -94,7 +94,10 @@ impl App {
                     self.s.tracks[i].deleted = true;
                 }
             }
-            Some(Act::Fx(i)) => self.fx.window = if self.fx.window == Some(i) { None } else { Some(i) },
+            Some(Act::Fx(i)) => {
+                self.fx.window = Some(i);
+                super::side::open_section(ui.ctx(), "Audio effects");
+            }
             Some(Act::Restore(i)) => self.s.tracks[i].deleted = false,
             Some(Act::Replace(i)) => self.replace_track(i),
             Some(Act::Reset(i)) => {
@@ -142,6 +145,7 @@ impl App {
         }
         if ui.button("Audio effects…").clicked() {
             self.fx.window = Some(i);
+            super::side::open_section(ui.ctx(), "Audio effects");
             ui.close();
             return;
         }
@@ -418,20 +422,39 @@ impl App {
         let (on, off) = (accent, Color32::from_gray(85));
         let (on, off) = if t.deleted { (Color32::from_gray(70), Color32::from_gray(55)) } else if !heard { (Color32::from_gray(105), Color32::from_gray(70)) } else { (on, off) };
 
+        // With effects the lane shows the rendered preview of the track (so the picture follows the effects);
+        // until it is ready, and outside the kept part, the file itself.
+        let baked = if t.has_fx() { self.baked_path(&t) } else { None };
+        let baked_src = baked.as_ref().map(|p| TrackSource::External { path: p.to_string_lossy().into_owned(), duration: dur });
+        if let Some(b) = &baked_src {
+            self.want_wave(ctx, b);
+        }
+        let baked_key = baked_src.as_ref().map(|b| self.wave_key(b));
         let wave = self.waves.lock().unwrap();
         match wave.get(&self.wave_key(&t.source)) {
             Some(Wave::Ready(peaks)) => {
+                let baked_peaks = match baked_key.as_ref().and_then(|k| wave.get(k)) {
+                    Some(Wave::Ready(b)) => Some(b),
+                    _ => None,
+                };
                 // one column per pixel, over the part of the source that is on screen
                 let x0 = t2x(t.shift).max(track.left()).floor();
                 let x1 = t2x(t.shift + src_dur).min(track.right()).ceil();
                 let mut x = x0;
                 while x < x1 {
-                    let (s0, s1) = (x2t(x) - t.shift, x2t(x + 1.0) - t.shift);
+                    let (tl0, tl1) = (x2t(x), x2t(x + 1.0));
+                    let (s0, s1) = (tl0 - t.shift, tl1 - t.shift);
                     if s1 >= 0.0 && s0 <= src_dur {
-                        let g = if t.has_fx() { ffcut_core::audiofx::gain_at(&t, (s0 + s1) * 0.5) } else { 1.0 };
-                        let a = peak_in(peaks, s0.max(0.0), s1.max(0.0)) * (t.volume * g).clamp(0.02, 3.0).sqrt();
-                        let h = (a * half).clamp(0.5, half);
                         let inside = s0 >= t.trim_start - 1e-6 && s1 <= t.trim_end + 1e-6;
+                        let a = match baked_peaks {
+                            // the rendered file lives on the timeline: effects, fades and keyframes are in it
+                            Some(b) if inside => peak_in(b, tl0, tl1) * t.volume.clamp(0.02, 3.0).sqrt(),
+                            _ => {
+                                let g = if t.has_fx() { ffcut_core::audiofx::gain_at(&t, (s0 + s1) * 0.5) } else { 1.0 };
+                                peak_in(peaks, s0.max(0.0), s1.max(0.0)) * (t.volume * g).clamp(0.02, 3.0).sqrt()
+                            }
+                        };
+                        let h = (a * half).clamp(0.5, half);
                         p.line_segment([pos2(x + 0.5, mid - h), pos2(x + 0.5, mid + h)], Stroke::new(1.0, if inside { on } else { off }));
                     }
                     x += 1.0;

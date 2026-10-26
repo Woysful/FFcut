@@ -4,31 +4,62 @@ use super::codecs;
 use crate::app::{App, CONTAINERS};
 use crate::theme;
 use eframe::egui::{self, Color32, DragValue, RichText};
-use ffcut_core::presets::{self, Preset};
-use ffcut_core::{AudioCodec, Quality, Scale, VideoCodec};
+use ffcut_core::presets::{self, Part, Preset};
+use ffcut_core::{AudioCodec, AudioMode, Quality, Scale, VideoCodec};
+
+fn audio_mode_label(m: AudioMode) -> &'static str {
+    match m {
+        AudioMode::None => "No audio",
+        AudioMode::Merge => "Merge into one track",
+        AudioMode::Separate => "Keep tracks separate",
+    }
+}
 
 const SPEEDS: [&str; 9] = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
 const PIX_FMTS: [&str; 7] = ["yuv420p", "yuv422p", "yuv444p", "yuv420p10le", "yuv422p10le", "nv12", "p010le"];
 
 fn summary(p: &Preset) -> String {
-    let v = match &p.video_codec {
-        VideoCodec::Copy => "copy".to_string(),
-        VideoCodec::Auto => "auto".to_string(),
-        VideoCodec::Encoder(e) => e.clone(),
-    };
-    let q = match p.quality {
-        Quality::Crf(c) => format!("CRF {c}"),
-        Quality::Bitrate(k) => format!("{k} kbps"),
-    };
-    let a = match &p.audio_codec {
-        AudioCodec::Copy => "copy".to_string(),
-        AudioCodec::Encoder(e) => e.clone(),
-    };
-    let scale = match (p.scale.w, p.scale.h) {
-        (None, None) => String::new(),
-        (w, h) => format!(" · {}×{}", w.map_or("auto".into(), |v| v.to_string()), h.map_or("auto".into(), |v| v.to_string())),
-    };
-    format!(".{} · {v}{} · audio {a}{scale}", p.container, if v == "copy" { String::new() } else { format!(" ({q})") })
+    let mut v: Vec<String> = Vec::new();
+    if let Some(c) = &p.container {
+        v.push(format!(".{c}"));
+    }
+    match (&p.video_codec, p.quality) {
+        (Some(VideoCodec::Copy), _) => v.push("video copy".into()),
+        (vc, q) => {
+            let name = match vc {
+                Some(VideoCodec::Auto) => Some("auto".to_string()),
+                Some(VideoCodec::Encoder(e)) => Some(e.clone()),
+                _ => None,
+            };
+            let q = q.map(|q| match q {
+                Quality::Crf(c) => format!("CRF {c}"),
+                Quality::Bitrate(k) => format!("{k} kbps"),
+            });
+            match (name, q) {
+                (Some(n), Some(q)) => v.push(format!("{n} ({q})")),
+                (Some(n), None) => v.push(n),
+                (None, Some(q)) => v.push(q),
+                _ => {}
+            }
+        }
+    }
+    match &p.audio_codec {
+        Some(AudioCodec::Copy) => v.push("audio copy".into()),
+        Some(AudioCodec::Encoder(e)) => v.push(format!("audio {e}")),
+        None => {}
+    }
+    if let Some(sc) = p.scale {
+        if sc.w.is_some() || sc.h.is_some() {
+            v.push(format!("{}×{}", sc.w.map_or("auto".into(), |x| x.to_string()), sc.h.map_or("auto".into(), |x| x.to_string())));
+        }
+    }
+    if let Some(fx) = &p.video_effects {
+        v.push(format!("{} video effect(s)", fx.len()));
+    }
+    if let Some((t, b)) = &p.captions {
+        v.push(format!("captions{}", if t.on || b.on { "" } else { " (off)" }));
+    }
+    if v.is_empty() { "empty: applying changes nothing".into() } else { v.join(" · ") }
 }
 
 impl App {
@@ -43,6 +74,7 @@ impl App {
             return;
         }
         let enc = self.encoders.lock().unwrap().clone();
+        let (cur_container, cur) = (self.container.clone(), self.s.clone());
         let open;
         let mut apply: Option<String> = None;
         let mut delete: Option<String> = None;
@@ -55,15 +87,25 @@ impl App {
             egui::Panel::top("presets_head").frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(18, 12))).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Presets").size(18.0).strong());
-                    ui.label(RichText::new(format!("{}", self.presets.len())).size(12.0).color(Color32::from_gray(140)));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.add_enabled(!self.presets.is_empty(), egui::Button::new("Export all…")).clicked() {
-                            export_all = true;
+                    ui.add_space(8.0);
+                    for (tab, label, n) in [(0u8, "Export", self.presets.len()), (1, "Audio effects", self.fx_presets.len())] {
+                        if ui.selectable_label(self.presets_tab == tab, format!("{label}  {n}")).clicked() {
+                            self.presets_tab = tab;
+                            self.preset_rename = None;
+                            self.fx_rename = None;
+                            self.preset_msg = None;
                         }
-                        if ui.button("Import…").on_hover_text("Add presets from a .json file (also reads presets exported from the old FFcut)").clicked() {
-                            import = true;
-                        }
-                    });
+                    }
+                    if self.presets_tab == 0 {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add_enabled(!self.presets.is_empty(), egui::Button::new("Export all…")).clicked() {
+                                export_all = true;
+                            }
+                            if ui.button("Import…").on_hover_text("Add presets from a .json file (also reads presets exported from the old FFcut)").clicked() {
+                                import = true;
+                            }
+                        });
+                    }
                 });
             });
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin::symmetric(18, 14))).show(ui, |ui| {
@@ -72,6 +114,10 @@ impl App {
                 ui.add_space(6.0);
             }
 
+            if self.presets_tab == 1 {
+                self.fx_presets_tab(ui);
+                return;
+            }
             if self.presets.is_empty() {
                 ui.add_space(30.0);
                 ui.vertical_centered(|ui| {
@@ -122,86 +168,130 @@ impl App {
 
                         egui::CollapsingHeader::new(RichText::new("Edit").size(12.5)).id_salt(("edit", &name)).show(ui, |ui| {
                             let p = self.presets.get_mut(&name).unwrap();
-                            egui::Grid::new(("grid", &name)).num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
-                                ui.label("Container");
-                                egui::ComboBox::from_id_salt(("pc", &name)).selected_text(format!(".{}", p.container)).show_ui(ui, |ui| {
-                                    for c in CONTAINERS {
-                                        changed |= ui.selectable_value(&mut p.container, c.to_string(), format!(".{c}")).changed();
-                                    }
-                                });
-                                ui.end_row();
-
-                                ui.label("Video codec");
-                                let before = p.video_codec.clone();
-                                codecs::video_codec_combo(ui, ("pv", &name), &mut p.video_codec, &enc, 230.0);
-                                changed |= before != p.video_codec;
-                                ui.end_row();
-
-                                if !matches!(p.video_codec, VideoCodec::Copy) {
-                                    ui.label("Quality");
-                                    ui.horizontal(|ui| {
-                                        let mut crf = matches!(p.quality, Quality::Crf(_));
-                                        if ui.radio_value(&mut crf, true, "CRF").clicked() && !matches!(p.quality, Quality::Crf(_)) {
-                                            p.quality = Quality::Crf(23);
-                                            changed = true;
+                            ui.add(egui::Label::new(RichText::new("Tick what the preset should set (audio effects have their own presets in the sidebar). Anything unticked is left as it is when the preset is applied.").size(11.5).color(Color32::from_gray(130))).wrap());
+                            ui.add_space(4.0);
+                            egui::Grid::new(("grid", &name)).num_columns(3).spacing([10.0, 6.0]).show(ui, |ui| {
+                                for part in Part::ALL {
+                                    let mut on = p.has(part);
+                                    if ui.checkbox(&mut on, "").changed() {
+                                        if on {
+                                            p.fill(part, &cur_container, &cur);
+                                        } else {
+                                            p.remove(part);
                                         }
-                                        if ui.radio_value(&mut crf, false, "Bitrate").clicked() && !matches!(p.quality, Quality::Bitrate(_)) {
-                                            p.quality = Quality::Bitrate(8000);
-                                            changed = true;
-                                        }
-                                        match &mut p.quality {
-                                            Quality::Crf(v) => changed |= ui.add(DragValue::new(v).range(0..=51)).changed(),
-                                            Quality::Bitrate(k) => changed |= ui.add(DragValue::new(k).range(100..=400_000).speed(50.0).suffix(" kbps")).changed(),
-                                        }
-                                    });
-                                    ui.end_row();
-
-                                    ui.label("Speed preset");
-                                    egui::ComboBox::from_id_salt(("ps", &name)).selected_text(&p.preset).show_ui(ui, |ui| {
-                                        for s in SPEEDS {
-                                            changed |= ui.selectable_value(&mut p.preset, s.to_string(), s).changed();
-                                        }
-                                    });
-                                    ui.end_row();
-
-                                    ui.label("Pixel format");
-                                    egui::ComboBox::from_id_salt(("pp", &name)).selected_text(p.pix_fmt.clone().unwrap_or_else(|| "auto".into())).show_ui(ui, |ui| {
-                                        changed |= ui.selectable_value(&mut p.pix_fmt, None, "auto").changed();
-                                        for f in PIX_FMTS {
-                                            changed |= ui.selectable_value(&mut p.pix_fmt, Some(f.to_string()), f).changed();
-                                        }
-                                    });
-                                    ui.end_row();
-                                }
-
-                                ui.label("Audio codec");
-                                let before = p.audio_codec.clone();
-                                codecs::audio_codec_combo(ui, ("pa", &name), &mut p.audio_codec, &enc, 230.0);
-                                changed |= before != p.audio_codec;
-                                ui.end_row();
-
-                                if let AudioCodec::Encoder(c) = &p.audio_codec {
-                                    if !codecs::is_lossless_audio(c) {
-                                        ui.label("Audio bitrate");
-                                        changed |= ui.add(DragValue::new(&mut p.audio_bitrate_kbps).range(32..=1536).speed(2.0).suffix(" kbps")).changed();
-                                        ui.end_row();
-                                    }
-                                }
-
-                                ui.label("Resize");
-                                ui.horizontal(|ui| {
-                                    let (mut w, mut h) = (p.scale.w.unwrap_or(0), p.scale.h.unwrap_or(0));
-                                    let fmt = |n: f64, _: std::ops::RangeInclusive<usize>| if n == 0.0 { "auto".to_string() } else { format!("{n:.0}") };
-                                    let a = ui.add(DragValue::new(&mut w).range(0..=16384).speed(2.0).custom_formatter(fmt));
-                                    ui.label("×");
-                                    let b = ui.add(DragValue::new(&mut h).range(0..=16384).speed(2.0).custom_formatter(fmt));
-                                    if a.changed() || b.changed() {
-                                        p.scale = Scale { w: (w > 0).then_some(w), h: (h > 0).then_some(h) };
                                         changed = true;
                                     }
-                                });
-                                ui.end_row();
+                                    ui.label(part.label());
+                                    if !on {
+                                        ui.weak("not included");
+                                        ui.end_row();
+                                        continue;
+                                    }
+                                    match part {
+                                        Part::Container => {
+                                            let c = p.container.as_mut().unwrap();
+                                            egui::ComboBox::from_id_salt(("pc", &name)).selected_text(format!(".{c}")).show_ui(ui, |ui| {
+                                                for k in CONTAINERS {
+                                                    changed |= ui.selectable_value(c, k.to_string(), format!(".{k}")).changed();
+                                                }
+                                            });
+                                        }
+                                        Part::VideoCodec => {
+                                            let v = p.video_codec.as_mut().unwrap();
+                                            let before = v.clone();
+                                            codecs::video_codec_combo(ui, ("pv", &name), v, &enc, 230.0);
+                                            changed |= before != *v;
+                                        }
+                                        Part::Quality => {
+                                            let q = p.quality.as_mut().unwrap();
+                                            ui.horizontal(|ui| {
+                                                let mut crf = matches!(q, Quality::Crf(_));
+                                                if ui.radio_value(&mut crf, true, "CRF").clicked() && !matches!(q, Quality::Crf(_)) {
+                                                    *q = Quality::Crf(23);
+                                                    changed = true;
+                                                }
+                                                if ui.radio_value(&mut crf, false, "Bitrate").clicked() && !matches!(q, Quality::Bitrate(_)) {
+                                                    *q = Quality::Bitrate(8000);
+                                                    changed = true;
+                                                }
+                                                match q {
+                                                    Quality::Crf(v) => changed |= ui.add(DragValue::new(v).range(0..=51)).changed(),
+                                                    Quality::Bitrate(k) => changed |= ui.add(DragValue::new(k).range(100..=400_000).speed(50.0).suffix(" kbps")).changed(),
+                                                }
+                                            });
+                                        }
+                                        Part::Speed => {
+                                            let sp = p.preset.as_mut().unwrap();
+                                            egui::ComboBox::from_id_salt(("ps", &name)).selected_text(sp.clone()).show_ui(ui, |ui| {
+                                                for k in SPEEDS {
+                                                    changed |= ui.selectable_value(sp, k.to_string(), k).changed();
+                                                }
+                                            });
+                                        }
+                                        Part::PixFmt => {
+                                            let pf = p.pix_fmt.as_mut().unwrap();
+                                            egui::ComboBox::from_id_salt(("pp", &name)).selected_text(pf.clone()).show_ui(ui, |ui| {
+                                                changed |= ui.selectable_value(pf, "auto".to_string(), "auto").changed();
+                                                for k in PIX_FMTS {
+                                                    changed |= ui.selectable_value(pf, k.to_string(), k).changed();
+                                                }
+                                            });
+                                        }
+                                        Part::Resize => {
+                                            let sc = p.scale.as_mut().unwrap();
+                                            ui.horizontal(|ui| {
+                                                let (mut w, mut h) = (sc.w.unwrap_or(0), sc.h.unwrap_or(0));
+                                                let fmt = |n: f64, _: std::ops::RangeInclusive<usize>| if n == 0.0 { "auto".to_string() } else { format!("{n:.0}") };
+                                                let a = ui.add(DragValue::new(&mut w).range(0..=16384).speed(2.0).custom_formatter(fmt));
+                                                ui.label("×");
+                                                let b = ui.add(DragValue::new(&mut h).range(0..=16384).speed(2.0).custom_formatter(fmt));
+                                                if a.changed() || b.changed() {
+                                                    *sc = Scale { w: (w > 0).then_some(w), h: (h > 0).then_some(h) };
+                                                    changed = true;
+                                                }
+                                            });
+                                        }
+                                        Part::AudioCodec => {
+                                            let a = p.audio_codec.as_mut().unwrap();
+                                            let before = a.clone();
+                                            codecs::audio_codec_combo(ui, ("pa", &name), a, &enc, 230.0);
+                                            changed |= before != *a;
+                                        }
+                                        Part::AudioBitrate => {
+                                            changed |= ui.add(DragValue::new(p.audio_bitrate_kbps.as_mut().unwrap()).range(32..=1536).speed(2.0).suffix(" kbps")).changed();
+                                        }
+                                        Part::AudioMode => {
+                                            let m = p.audio_mode.as_mut().unwrap();
+                                            egui::ComboBox::from_id_salt(("pm", &name)).selected_text(audio_mode_label(*m)).show_ui(ui, |ui| {
+                                                for k in [AudioMode::None, AudioMode::Merge, AudioMode::Separate] {
+                                                    changed |= ui.selectable_value(m, k, audio_mode_label(k)).changed();
+                                                }
+                                            });
+                                        }
+                                        Part::VideoEffects | Part::Captions => {
+                                            let text = match part {
+                                                Part::VideoEffects => {
+                                                    let names: Vec<&str> = p.video_effects.as_ref().unwrap().iter().map(|e| e.name()).collect();
+                                                    if names.is_empty() { "none".to_string() } else { names.join(", ") }
+                                                }
+                                                _ => {
+                                                    let (t, b) = p.captions.as_ref().unwrap();
+                                                    format!("top {} · bottom {}", if t.on { "on" } else { "off" }, if b.on { "on" } else { "off" })
+                                                }
+                                            };
+                                            ui.horizontal(|ui| {
+                                                ui.add(egui::Label::new(RichText::new(text).size(12.0).color(Color32::from_gray(160))).truncate());
+                                                if ui.small_button("Update from current").on_hover_text("Replace with what is set up in the editor now").clicked() {
+                                                    p.fill(part, &cur_container, &cur);
+                                                    changed = true;
+                                                }
+                                            });
+                                        }
+                                    }
+                                    ui.end_row();
+                                }
                             });
+
                         });
                     });
                     ui.add_space(8.0);
@@ -212,6 +302,7 @@ impl App {
         if !open {
             self.show_presets = false;
             self.preset_rename = None;
+            self.fx_rename = None;
             self.preset_msg = None;
         }
 
@@ -236,8 +327,7 @@ impl App {
         }
         if let Some(n) = apply {
             if let Some(p) = self.presets.get(&n).cloned() {
-                let container = p.apply(&mut self.s);
-                self.set_container(&container);
+                self.apply_preset(&p);
                 self.preset_msg = Some(format!("Applied “{n}”."));
             }
         }
@@ -256,6 +346,94 @@ impl App {
         }
         if import {
             self.import_presets();
+        }
+    }
+
+    /// The "Audio effects" tab: named effect stacks, applied to one track at a time.
+    fn fx_presets_tab(&mut self, ui: &mut egui::Ui) {
+        if self.fx_presets.is_empty() {
+            ui.add_space(30.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new("No audio presets yet").size(15.0).color(Color32::from_gray(190)));
+                ui.add_space(4.0);
+                ui.weak("Set up effects on a track, then Audio effects → Audio presets → Save preset…");
+            });
+            return;
+        }
+        let mut apply: Option<String> = None;
+        let mut delete: Option<String> = None;
+        let mut rename: Option<(String, String)> = None;
+        let mut changed = false;
+        let track = self.fx.window.filter(|i| *i < self.s.tracks.len()).or(if self.s.tracks.is_empty() { None } else { Some(0) });
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let names: Vec<String> = self.fx_presets.keys().cloned().collect();
+            for name in names {
+                egui::Frame::NONE.fill(Color32::from_rgb(40, 42, 48)).stroke(egui::Stroke::new(1.0, Color32::from_gray(54))).corner_radius(10).inner_margin(egui::Margin::same(14)).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    let renaming = self.fx_rename.as_ref().map_or(false, |(old, _)| *old == name);
+                    ui.horizontal(|ui| {
+                        if renaming {
+                            let new = &mut self.fx_rename.as_mut().unwrap().1;
+                            let r = ui.add(egui::TextEdit::singleline(new).desired_width(200.0));
+                            r.request_focus();
+                            if ui.small_button("OK").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                                rename = Some((name.clone(), new.trim().to_string()));
+                            }
+                            if ui.small_button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                self.fx_rename = None;
+                            }
+                        } else {
+                            ui.label(RichText::new(&name).strong().size(14.0));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.small_button("Delete").clicked() {
+                                delete = Some(name.clone());
+                            }
+                            if ui.small_button("Rename").clicked() {
+                                self.fx_rename = Some((name.clone(), name.clone()));
+                            }
+                            let tip = track.map_or("Open a video or audio file first".to_string(), |i| format!("Replace the effects of “{}”", self.s.tracks[i].label));
+                            if ui.add_enabled(track.is_some(), egui::Button::new(RichText::new("Apply to track").color(Color32::BLACK)).fill(theme::ACCENT).small()).on_hover_text(tip).clicked() {
+                                apply = Some(name.clone());
+                            }
+                        });
+                    });
+                    let fx = self.fx_presets.get_mut(&name).unwrap();
+                    let names: Vec<&str> = fx.iter().map(|e| e.name()).collect();
+                    ui.add(egui::Label::new(RichText::new(if names.is_empty() { "no effects".to_string() } else { names.join(" · ") }).size(12.0).color(Color32::from_gray(140))).truncate());
+                    egui::CollapsingHeader::new(RichText::new("Edit").size(12.5)).id_salt(("fxedit", &name)).show(ui, |ui| {
+                        changed |= super::fx_ui::preset_effects(ui, fx);
+                    });
+                });
+                ui.add_space(8.0);
+            }
+        });
+        if let Some((old, new)) = rename {
+            if new.is_empty() {
+                self.preset_msg = Some("A preset needs a name.".into());
+            } else if new != old && self.fx_presets.contains_key(&new) {
+                self.preset_msg = Some(format!("A preset named “{new}” already exists."));
+            } else {
+                if let Some(p) = self.fx_presets.remove(&old) {
+                    self.fx_presets.insert(new, p);
+                }
+                self.fx_rename = None;
+                self.preset_msg = None;
+                changed = true;
+            }
+        }
+        if let Some(n) = delete {
+            self.fx_presets.remove(&n);
+            changed = true;
+        }
+        if let (Some(n), Some(i)) = (apply, track) {
+            if let Some(fx) = self.fx_presets.get(&n) {
+                self.s.tracks[i].effects = fx.clone();
+                self.preset_msg = Some(format!("Applied “{n}” to {}.", self.s.tracks[i].label));
+            }
+        }
+        if changed {
+            self.save_fx_presets();
         }
     }
 

@@ -5,13 +5,12 @@ use crate::app::{fmt_time, App, TrkDrag};
 use crate::theme;
 use super::tracks::peak_in;
 use eframe::egui::{self, pos2, vec2, Align2, Color32, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke};
-use ffcut_core::waveform::PEAKS_PER_SEC;
 use ffcut_core::{EnvPoint, TrackSource};
 
 const ENV_MAX: f32 = 12.0;
 const ENV_MIN: f32 = -48.0;
 const EDGE: f32 = 8.0;
-const MIN_SPAN: f64 = 1.0;
+const MIN_SPAN: f64 = 0.2;
 const RULER_H: f32 = 20.0;
 const BAR_H: f32 = 12.0;
 
@@ -74,7 +73,8 @@ impl App {
                 self.zoom_to(a - (b - a) * 0.05, (b - a) * 1.1);
             }
             ui.add_space(8.0);
-            ui.add(egui::Label::new(RichText::new("Wheel: zoom · Shift+wheel or middle-drag: scroll · Double-click or Alt+click: add a volume keyframe · Right-click: menu").size(11.5).color(Color32::from_gray(125))).truncate());
+            let hint = format!("{}: zoom · {} or middle-drag: scroll · Double-click or Alt+click: add a volume keyframe · Right-click: menu", self.settings.zoom_key().label(), self.settings.scroll_key().label());
+            ui.add(egui::Label::new(RichText::new(hint).size(11.5).color(Color32::from_gray(125))).truncate());
         });
 
         // ---- layout
@@ -88,19 +88,22 @@ impl App {
         let x_of = |t: f64, t0: f64, span: f64| wave_r.left() + ((t - t0) / span) as f32 * wave_r.width();
         let t_at = |x: f32, t0: f64, span: f64| t0 + ((x - wave_r.left()) / wave_r.width()) as f64 * span;
 
-        // ---- zoom / scroll
+        // ---- zoom / scroll (the modifiers are the user's choice, see Settings → Interface)
         if resp.hovered() {
-            let (scroll, shift, pos) = ui.input(|i| (i.smooth_scroll_delta, i.modifiers.shift, i.pointer.hover_pos()));
-            if scroll.x != 0.0 || (shift && scroll.y != 0.0) {
-                let d = if scroll.x != 0.0 { scroll.x } else { scroll.y };
-                t0 -= d as f64 / wave_r.width() as f64 * span;
-                self.zoom_to(t0, span);
-            } else if scroll.y != 0.0 {
-                if let Some(p) = pos {
-                    let tc = t_at(p.x, t0, span);
-                    let new_span = (span * (-scroll.y as f64 * 0.0025).exp()).clamp(MIN_SPAN.min(dur), dur);
-                    let frac = ((p.x - wave_r.left()) / wave_r.width()) as f64;
-                    self.zoom_to(tc - frac * new_span, new_span);
+            let (zoom_k, scroll_k) = (self.settings.zoom_key(), self.settings.scroll_key());
+            let pos = ui.input(|i| i.pointer.hover_pos());
+            for (d, m) in Self::wheel_events(ui.ctx()) {
+                let (t0_now, span_now) = self.view();
+                if d.x != 0.0 || scroll_k.matches(&m) {
+                    let step = if d.x != 0.0 { d.x } else { d.y };
+                    self.zoom_to(t0_now - step as f64 / wave_r.width() as f64 * span_now, span_now);
+                } else if zoom_k.matches(&m) && d.y != 0.0 {
+                    if let Some(p) = pos {
+                        let tc = t_at(p.x, t0_now, span_now);
+                        let new_span = (span_now * (-d.y as f64 * 0.0025).exp()).clamp(MIN_SPAN.min(dur), dur);
+                        let frac = ((p.x - wave_r.left()) / wave_r.width()) as f64;
+                        self.zoom_to(tc - frac * new_span, new_span);
+                    }
                 }
             }
             (t0, span) = self.view();
@@ -273,10 +276,34 @@ impl App {
 
         let mid = wave_r.center().y;
         let half = wave_r.height() * 0.5 - 6.0;
+        // With effects the picture comes from the rendered preview (so it shows what the effects do);
+        // until that is ready, and outside the trim range, from the file itself.
+        let baked = if t.has_fx() { self.baked_path(&t) } else { None };
+        let baked_src = baked.as_ref().map(|p| TrackSource::External { path: p.to_string_lossy().into_owned(), duration: dur });
+        if let Some(b) = &baked_src {
+            self.want_wave(&ctx, b);
+        }
+        let baked_key = baked_src.as_ref().map(|b| self.wave_key(b));
+        let src_key = self.wave_key(&src);
+        let baked_ready = baked_key.as_ref().map_or(false, |k| matches!(self.waves.lock().unwrap().get(k), Some(crate::app::Wave::Ready(_))));
+        let (hi_key, hi_file, hi_ord) = match (&baked_src, baked_ready) {
+            (Some(TrackSource::External { path, .. }), true) => (baked_key.clone().unwrap(), std::path::PathBuf::from(path), 0),
+            _ => match &src {
+                TrackSource::Original(i) => (src_key.clone(), self.clip.as_ref().map(|c| c.path.clone()).unwrap_or_default(), *i),
+                TrackSource::External { path, .. } => (src_key.clone(), std::path::PathBuf::from(path), 0),
+            },
+        };
+        self.want_hires(&ctx, &hi_key, &hi_file, hi_ord, (t0, span), px_per_s as f64);
+        let hi = self.hires_for(&hi_key, (t0, span), px_per_s as f64);
         {
             let wave = self.waves.lock().unwrap();
-            match wave.get(&self.wave_key(&src)) {
-                Some(crate::app::Wave::Ready(peaks)) => {
+            let low = |k: &str| match wave.get(k) {
+                Some(crate::app::Wave::Ready(p)) => Some(p),
+                _ => None,
+            };
+            match low(&src_key) {
+                Some(src_peaks) => {
+                    let baked_peaks = if baked_ready { baked_key.as_deref().and_then(low) } else { None };
                     let (x0, x1) = (wave_r.left().floor() as i32, wave_r.right().ceil() as i32);
                     for xi in x0..x1 {
                         let x = xi as f32;
@@ -284,19 +311,27 @@ impl App {
                         if s1 < 0.0 || s0 > dur {
                             continue;
                         }
-                        let g = if t.has_fx() { ffcut_core::audiofx::gain_at(&t, (s0 + s1) * 0.5) } else { 1.0 };
-                        let a = peak_in(peaks, s0.max(0.0), s1.max(0.0)) * (t.volume * g).clamp(0.02, 3.0).sqrt();
-                        let h = (a * half).clamp(0.5, half);
                         let inside = s1 >= self.trim_start - 1e-6 && s0 <= self.trim_end + 1e-6;
+                        let use_baked = baked_peaks.is_some() && inside;
+                        let (raw, gain) = if use_baked {
+                            // the finer picture (if there is one) is of this same file
+                            (hi.as_ref().map_or_else(|| peak_in(baked_peaks.unwrap(), s0.max(0.0), s1.max(0.0)), |h| h.peak(s0, s1)), 1.0)
+                        } else {
+                            let g = if t.has_fx() { ffcut_core::audiofx::gain_at(&t, (s0 + s1) * 0.5) } else { 1.0 };
+                            let raw = match (&hi, baked_peaks.is_some()) {
+                                (Some(h), false) => h.peak(s0, s1),
+                                _ => peak_in(src_peaks, s0.max(0.0), s1.max(0.0)),
+                            };
+                            (raw, g)
+                        };
+                        let a = raw * (t.volume * gain).clamp(0.02, 3.0).sqrt();
+                        let h = (a * half).clamp(0.5, half);
                         p.line_segment([pos2(x + 0.5, mid - h), pos2(x + 0.5, mid + h)], Stroke::new(1.0, if inside { theme::OK } else { Color32::from_gray(80) }));
                     }
-                    let _ = PEAKS_PER_SEC;
                 }
-                Some(crate::app::Wave::Failed) => {
-                    p.text(wave_r.center(), Align2::CENTER_CENTER, "no waveform", FontId::proportional(13.0), Color32::from_gray(130));
-                }
-                _ => {
-                    p.text(wave_r.center(), Align2::CENTER_CENTER, "reading waveform…", FontId::proportional(13.0), Color32::from_gray(130));
+                None => {
+                    let failed = matches!(wave.get(&src_key), Some(crate::app::Wave::Failed));
+                    p.text(wave_r.center(), Align2::CENTER_CENTER, if failed { "no waveform" } else { "reading waveform…" }, FontId::proportional(13.0), Color32::from_gray(130));
                 }
             }
         }

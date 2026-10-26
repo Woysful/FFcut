@@ -133,10 +133,6 @@ impl Chord {
         Chord { key, ctrl: m.command || m.ctrl, shift: m.shift, alt: m.alt }
     }
 
-    pub fn modifiers(&self) -> Modifiers {
-        Modifiers { alt: self.alt, ctrl: false, shift: self.shift, mac_cmd: false, command: self.ctrl }
-    }
-
     /// How many modifiers it needs: the more specific one has to be tried first.
     pub fn weight(&self) -> u8 {
         self.ctrl as u8 + self.shift as u8 + self.alt as u8

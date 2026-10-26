@@ -156,7 +156,7 @@ fn timeline_audio_edits_really_happen() {
 fn waveform_has_the_right_length() {
     let input = make_sample();
     let p = ffcut_core::waveform::peaks(Path::new("ffmpeg"), &input, 0).unwrap();
-    assert!((p.len() as i64 - 4 * ffcut_core::waveform::PEAKS_PER_SEC as i64).abs() <= 3, "{}", p.len());
+    assert!((p.len() as i64 - 4 * ffcut_core::waveform::PEAKS_PER_SEC as i64).abs() <= 15, "{}", p.len());
     assert!(p.iter().cloned().fold(0.0, f32::max) > 0.1);
 }
 

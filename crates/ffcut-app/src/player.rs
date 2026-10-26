@@ -38,6 +38,18 @@ struct Fbo {
 struct Shared {
     render: ManuallyDrop<RenderContext<'static>>,
     fbo: Mutex<Option<Fbo>>,
+    /// The part of the picture (u0, v0, u1, v1 in 0..1, as displayed) the loupe wants to see.
+    loupe_req: Mutex<Option<[f32; 4]>>,
+    loupe_out: Mutex<Option<LoupeImg>>,
+}
+
+/// A piece of the displayed picture, read back for the crop loupe (RGBA, top row first).
+pub struct LoupeImg {
+    pub w: usize,
+    pub h: usize,
+    pub rgba: Vec<u8>,
+    /// The part of the picture it shows (u0, v0, u1, v1).
+    pub region: [f32; 4],
 }
 unsafe impl Send for Shared {}
 unsafe impl Sync for Shared {}
@@ -173,7 +185,7 @@ impl Player {
             bridge: spawn_bridge(mpv),
             target: Cell::new(None),
             mpv,
-            shared: Arc::new(Shared { render: ManuallyDrop::new(render), fbo: Mutex::new(None) }),
+            shared: Arc::new(Shared { render: ManuallyDrop::new(render), fbo: Mutex::new(None), loupe_req: Mutex::new(None), loupe_out: Mutex::new(None) }),
             loaded: false,
             duration: 0.0,
             seek_gen: Cell::new(0),
@@ -331,6 +343,15 @@ impl Player {
         cur.0 = rotate_deg;
     }
 
+    /// Asks for a piece of the picture for the loupe (it arrives with the next frame).
+    pub fn request_loupe(&self, region: [f32; 4]) {
+        *self.shared.loupe_req.lock().unwrap() = Some(region);
+    }
+
+    pub fn take_loupe(&self) -> Option<LoupeImg> {
+        self.shared.loupe_out.lock().unwrap().take()
+    }
+
     /// Draws the current frame into `rect`.
     pub fn paint(&self, ui: &egui::Ui, rect: egui::Rect) {
         let shared = self.shared.clone();
@@ -373,6 +394,39 @@ impl Player {
                     gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
                     gl.read_pixels(w / 2, h / 2, 1, 1, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut px)));
                     eprintln!("fbo status {st:#x} gl err {err:#x} {w}x{h} centre pixel {px:?}");
+                }
+
+                // 1b) the crop loupe: read back a small part of the picture (as displayed, so flips are undone)
+                if let Some(region) = shared.loupe_req.lock().unwrap().take() {
+                    let [mut u0, mut v0, mut u1, mut v1] = region;
+                    if flip_h {
+                        (u0, u1) = (1.0 - u1, 1.0 - u0);
+                    }
+                    if flip_v {
+                        (v0, v1) = (1.0 - v1, 1.0 - v0);
+                    }
+                    let px0 = ((u0 * w as f32).floor() as i32).clamp(0, w - 1);
+                    let px1 = ((u1 * w as f32).ceil() as i32).clamp(px0 + 1, w);
+                    let py0 = (((1.0 - v1) * h as f32).floor() as i32).clamp(0, h - 1);
+                    let py1 = (((1.0 - v0) * h as f32).ceil() as i32).clamp(py0 + 1, h);
+                    let (cw, ch) = ((px1 - px0) as usize, (py1 - py0) as usize);
+                    let mut buf = vec![0u8; cw * ch * 4];
+                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
+                    gl.read_pixels(px0, py0, cw as i32, ch as i32, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut buf)));
+                    // GL rows run bottom-up: put the top row first, and mirror what the display mirrors
+                    let mut rgba = Vec::with_capacity(buf.len());
+                    for row in 0..ch {
+                        let src = if flip_v { row } else { ch - 1 - row };
+                        let line = &buf[src * cw * 4..(src + 1) * cw * 4];
+                        if flip_h {
+                            for px in line.chunks_exact(4).rev() {
+                                rgba.extend_from_slice(px);
+                            }
+                        } else {
+                            rgba.extend_from_slice(line);
+                        }
+                    }
+                    *shared.loupe_out.lock().unwrap() = Some(LoupeImg { w: cw, h: ch, rgba, region });
                 }
 
                 // 2) our FBO -> screen, at the egui viewport position

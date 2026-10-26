@@ -48,6 +48,9 @@ pub fn apply(ctx: &egui::Context) {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
         s.spacing.button_padding = egui::vec2(10.0, 5.0);
         s.spacing.interact_size.y = 26.0;
+        // tooltips appear only when the pointer rests on a control, not while it travels over the menus
+        s.interaction.tooltip_delay = 0.9;
+        s.interaction.show_tooltips_only_when_still = true;
         // JetBrains Mono is wide: slightly smaller sizes keep the layout as it was
         use egui::{FontId, TextStyle::*};
         for (st, size) in [(Body, 12.5), (Button, 12.5), (Small, 10.5), (Monospace, 12.5), (Heading, 16.0)] {

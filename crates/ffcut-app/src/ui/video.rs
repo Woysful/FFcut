@@ -39,7 +39,7 @@ impl App {
                 self.set_fs(&ctx, if self.fs == FsMode::Video { FsMode::Off } else { FsMode::Video });
             }
             if self.crop_on && self.fs != FsMode::Video {
-                self.crop_overlay(ui, inner, fw as f32, fh as f32);
+                self.crop_overlay(ui, rect, inner, fw as f32, fh as f32);
             } else if self.fs != FsMode::Video {
                 self.vfx_overlay(ui, inner);
             }
@@ -75,7 +75,7 @@ impl App {
         });
     }
 
-    fn crop_overlay(&mut self, ui: &mut egui::Ui, rect: Rect, fw: f32, fh: f32) {
+    fn crop_overlay(&mut self, ui: &mut egui::Ui, full: Rect, rect: Rect, fw: f32, fh: f32) {
         let sx = rect.width() / fw;
         let sy = rect.height() / fh;
         let to_screen = |x: f32, y: f32| pos2(rect.left() + x * sx, rect.top() + y * sy);
@@ -146,6 +146,17 @@ impl App {
                 }
             }
             self.crop_edges = [x0, y0, x1, y1];
+            // resizing: a loupe at the moving corner / edge
+            if let Grip::Edge { l, t, r, b } = g {
+                let ptr = ui.input(|i| i.pointer.interact_pos()).unwrap_or(rect.center());
+                let px = if l { x0 } else if r { x1 } else { ((ptr.x - rect.left()) / sx).clamp(x0, x1) };
+                let py = if t { y0 } else if b { y1 } else { ((ptr.y - rect.top()) / sy).clamp(y0, y1) };
+                let crop_screen = Rect::from_min_max(to_screen(x0, y0), to_screen(x1, y1));
+                self.crop_loupe(ui, full, to_screen(px, py), crop_screen);
+            }
+        } else if self.loupe_dirty {
+            self.loupe_dirty = false;
+            self.settings.save();
         }
 
         // handles drawn last so they are on top
@@ -166,5 +177,82 @@ impl App {
         let bg = Rect::from_min_size(pos, galley.size()).expand2(vec2(5.0, 2.0));
         ui.painter().rect_filled(bg, 4.0, Color32::from_black_alpha(190));
         ui.painter().galley(pos, galley, Color32::WHITE);
+    }
+}
+
+impl App {
+    /// A magnifier next to the crop edge being dragged, for placing it to the pixel.
+    /// Wheel: magnification. Ctrl + wheel: size of the window.
+    fn crop_loupe(&mut self, ui: &mut egui::Ui, full: Rect, at: egui::Pos2, crop: Rect) {
+        let ctx = ui.ctx().clone();
+        let (mut size, mut zoom) = (self.settings.loupe_size.unwrap_or(150.0), self.settings.loupe_zoom.unwrap_or(4.0));
+        for (d, m) in Self::wheel_events(&ctx) {
+            if m.ctrl || m.command {
+                size = (size * (d.y * 0.003).exp()).clamp(90.0, 320.0);
+            } else {
+                zoom = (zoom * (d.y * 0.004).exp()).clamp(2.0, 16.0);
+            }
+            self.loupe_dirty = true;
+        }
+        self.settings.loupe_size = Some(size);
+        self.settings.loupe_zoom = Some(zoom);
+
+        // the piece of the picture around the point (kept inside the picture)
+        let side = size / zoom;
+        let mut c = at;
+        c.x = c.x.clamp(full.left() + side / 2.0, full.right() - side / 2.0);
+        c.y = c.y.clamp(full.top() + side / 2.0, full.bottom() - side / 2.0);
+        let region = Rect::from_center_size(c, vec2(side, side));
+        self.player.request_loupe([
+            (region.left() - full.left()) / full.width(),
+            (region.top() - full.top()) / full.height(),
+            (region.right() - full.left()) / full.width(),
+            (region.bottom() - full.top()) / full.height(),
+        ]);
+        if let Some(img) = self.player.take_loupe() {
+            let ci = egui::ColorImage::from_rgba_unmultiplied([img.w, img.h], &img.rgba);
+            match &mut self.loupe_tex {
+                Some(t) => t.set(ci, egui::TextureOptions::NEAREST),
+                None => self.loupe_tex = Some(ctx.load_texture("crop-loupe", ci, egui::TextureOptions::NEAREST)),
+            }
+            self.loupe_region = img.region;
+        }
+        ctx.request_repaint();
+        let Some(tex) = self.loupe_tex.clone() else { return };
+
+        // the window sits diagonally from the point, on the side where there is room
+        let gap = 26.0;
+        let x = if at.x + gap + size <= full.right() { at.x + gap } else { at.x - gap - size };
+        let y = if at.y - gap - size >= full.top() { at.y - gap - size } else { at.y + gap };
+        let win = Rect::from_min_size(pos2(x, y), vec2(size, size));
+        let radius = 14.0;
+        let p = ui.painter();
+        p.rect_filled(win.expand(3.0), radius + 3.0, Color32::from_black_alpha(160));
+        ui.put(win, egui::Image::new((tex.id(), win.size())).corner_radius(radius));
+        // the crop edges and the point, in the picture the loupe shows
+        let used = Rect::from_min_max(
+            pos2(full.left() + self.loupe_region[0] * full.width(), full.top() + self.loupe_region[1] * full.height()),
+            pos2(full.left() + self.loupe_region[2] * full.width(), full.top() + self.loupe_region[3] * full.height()),
+        );
+        let k = size / used.width().max(1.0);
+        let to_win = |p: egui::Pos2| pos2(win.left() + (p.x - used.left()) * k, win.top() + (p.y - used.top()) * k);
+        let lp = ui.painter().with_clip_rect(win.shrink(1.0));
+        let line = Stroke::new(1.5, theme::CROP);
+        for xx in [crop.left(), crop.right()] {
+            let w = to_win(pos2(xx, 0.0)).x;
+            lp.line_segment([pos2(w, win.top()), pos2(w, win.bottom())], line);
+        }
+        for yy in [crop.top(), crop.bottom()] {
+            let w = to_win(pos2(0.0, yy)).y;
+            lp.line_segment([pos2(win.left(), w), pos2(win.right(), w)], line);
+        }
+        let dot = to_win(at);
+        lp.circle_stroke(dot, 3.5, Stroke::new(1.0, Color32::WHITE));
+        ui.painter().rect_stroke(win, radius, Stroke::new(2.0, Color32::from_white_alpha(210)), StrokeKind::Inside);
+        let label = format!("×{zoom:.1}");
+        let g = ui.painter().layout_no_wrap(label, egui::FontId::monospace(11.0), Color32::WHITE);
+        let at_l = pos2(win.left() + 8.0, win.bottom() - 8.0 - g.size().y);
+        ui.painter().rect_filled(Rect::from_min_size(at_l, g.size()).expand2(vec2(4.0, 1.0)), 4.0, Color32::from_black_alpha(170));
+        ui.painter().galley(at_l, g, Color32::WHITE);
     }
 }

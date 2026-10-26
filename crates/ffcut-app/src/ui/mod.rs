@@ -122,11 +122,13 @@ impl App {
         ui.menu_button("Presets", |ui| {
             if ui.add_enabled(self.clip.is_some(), egui::Button::new("Save preset…")).clicked() {
                 ui.close();
+                self.save_parts = Preset::default_parts(&self.s);
                 self.show_save_preset = true;
                 self.preset_name.clear();
             }
             if ui.button("Edit presets…").clicked() {
                 ui.close();
+                self.presets_tab = 0;
                 self.show_presets = true;
             }
             ui.separator();
@@ -137,8 +139,7 @@ impl App {
             for name in names {
                 if ui.add_enabled(self.clip.is_some(), egui::Button::new(&name)).clicked() {
                     if let Some(p) = self.presets.get(&name).cloned() {
-                        let container = p.apply(&mut self.s);
-                        self.set_container(&container);
+                        self.apply_preset(&p);
                     }
                     ui.close();
                 }
@@ -149,7 +150,6 @@ impl App {
     /// Windows: settings, save preset, presets editor, errors.
     pub fn windows(&mut self, ctx: &egui::Context) {
         self.presets_window(ctx);
-        self.fx_window(ctx);
         if let Some((title, body)) = self.error_window.clone() {
             let open = os_window(ctx, "error", &title, [620.0, 380.0], |ui| {
                 egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
@@ -166,15 +166,28 @@ impl App {
         }
 
         if self.show_save_preset {
-            let open = os_window(ctx, "save_preset", "Save preset", [420.0, 190.0], |ui| {
-                ui.label("Saves codec, quality, audio, scale and container.\n(Trim, crop and rotation belong to the clip and are not saved.)");
+            let open = os_window(ctx, "save_preset", "Save preset", [440.0, 420.0], |ui| {
+                ui.label("Choose what goes into the preset. (Trim, crop and rotation belong to the clip and are never saved.)");
+                ui.add_space(4.0);
+                for part in ffcut_core::presets::Part::ALL {
+                    let mut on = self.save_parts.contains(&part);
+                    if ui.checkbox(&mut on, part.label()).changed() {
+                        if on {
+                            self.save_parts.push(part);
+                        } else {
+                            self.save_parts.retain(|p| *p != part);
+                        }
+                    }
+                }
+                ui.add_space(6.0);
                 let r = ui.text_edit_singleline(&mut self.preset_name);
                 r.request_focus();
                 let name = self.preset_name.trim().to_string();
+                let ok_name = !name.is_empty() && !self.save_parts.is_empty();
                 let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| {
-                    if (ui.add_enabled(!name.is_empty(), egui::Button::new("Save")).clicked() || (enter && !name.is_empty())) && !name.is_empty() {
-                        self.presets.insert(name, Preset::capture(&self.container, &self.s));
+                    if (ui.add_enabled(ok_name, egui::Button::new("Save")).clicked() || (enter && ok_name)) && ok_name {
+                        self.presets.insert(name, Preset::from_parts(&self.container, &self.s, &self.save_parts));
                         if let Err(e) = ffcut_core::presets::save(&self.presets_path, &self.presets) {
                             self.status = Some(Status::Error(format!("Cannot save presets: {e}")));
                         }
@@ -187,6 +200,36 @@ impl App {
             });
             if !open {
                 self.show_save_preset = false;
+            }
+        }
+
+        if let Some(track) = self.fx_save_track {
+            let open = os_window(ctx, "save_fx_preset", "Save audio preset", [380.0, 140.0], |ui| {
+                ui.label("Saves the effects of this track under a name. Apply it to any track later.");
+                let r = ui.text_edit_singleline(&mut self.fx_preset_name);
+                r.request_focus();
+                let name = self.fx_preset_name.trim().to_string();
+                let ok = !name.is_empty();
+                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                ui.horizontal(|ui| {
+                    if (ui.add_enabled(ok, egui::Button::new("Save")).clicked() || (enter && ok)) && ok {
+                        let mut fx = self.s.tracks.get(track).map(|t| t.effects.clone()).unwrap_or_default();
+                        for e in &mut fx {
+                            if let ffcut_core::EffectKind::Norm(n) = &mut e.kind {
+                                n.measured = None; // a measurement belongs to one clip
+                            }
+                        }
+                        self.fx_presets.insert(name, fx);
+                        self.save_fx_presets();
+                        self.fx_save_track = None;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        self.fx_save_track = None;
+                    }
+                });
+            });
+            if !open {
+                self.fx_save_track = None;
             }
         }
 
@@ -290,6 +333,40 @@ pub fn os_window_raw(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2],
     open
 }
 
+/// Width of the label column of every sidebar row, so fields line up from one group to the next.
+pub const LABEL_W: f32 = 100.0;
+/// Width of every numeric field in the sidebar.
+pub const NUM_W: f32 = 84.0;
+
+/// One sidebar row: a label in the fixed column, then the controls.
+pub fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        let h = ui.spacing().interact_size.y;
+        ui.allocate_ui_with_layout(egui::vec2(LABEL_W, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.set_min_size(egui::vec2(LABEL_W, h));
+            ui.add(egui::Label::new(RichText::new(label).color(egui::Color32::from_gray(170))).truncate());
+        });
+        add(ui)
+    })
+    .inner
+}
+
+/// A numeric field of the standard width.
+pub fn num(ui: &mut egui::Ui, dv: egui::DragValue<'_>) -> egui::Response {
+    let h = ui.spacing().interact_size.y;
+    ui.add_sized([NUM_W, h], dv)
+}
+
+/// A two-column grid of "label | control" rows with the same label column as [`field`].
+pub fn grid(id: impl std::hash::Hash + std::fmt::Debug) -> egui::Grid {
+    egui::Grid::new(id).num_columns(2).min_col_width(LABEL_W).spacing([8.0, 6.0])
+}
+
+/// Makes the sliders below fill the rest of the row (call once at the top of a card, after its width is set).
+pub fn fit_sliders(ui: &mut egui::Ui) {
+    ui.spacing_mut().slider_width = (ui.available_width() - LABEL_W - 110.0).max(70.0);
+}
+
 /// A rounded "card" with a title: the building block of the settings pages.
 pub fn card(ui: &mut egui::Ui, title: &str, hint: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::NONE
@@ -312,4 +389,24 @@ pub fn card(ui: &mut egui::Ui, title: &str, hint: Option<&str>, add: impl FnOnce
 /// A context menu that stays open when its fields are clicked (so values can be typed); buttons close it with `ui.close()`.
 pub(super) fn ctx_menu(resp: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
     egui::Popup::context_menu(resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(add);
+}
+
+/// A compact titled box for the sidebar: the explanation shows as a tooltip on the title, not as text.
+pub fn side_card(ui: &mut egui::Ui, title: &str, tip: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(egui::Color32::from_rgb(40, 42, 48))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(54)))
+        .corner_radius(8)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let t = ui.label(RichText::new(title).size(13.0).strong().color(egui::Color32::from_gray(235)));
+            if let Some(h) = tip {
+                t.on_hover_text(h);
+            }
+            ui.add_space(4.0);
+            fit_sliders(ui);
+            add(ui);
+        });
+    ui.add_space(6.0);
 }
