@@ -68,6 +68,43 @@ pub struct Settings {
     pub loupe_zoom: Option<f32>,
     pub volume: Option<f32>,
     pub muted: bool,
+    /// The user's own defaults for the output dropdowns (right-click a dropdown → "Use as default").
+    pub defaults: Defaults,
+}
+
+/// Output choices the user made the default; `None` = the built-in one.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Defaults {
+    /// For video files.
+    pub container: Option<String>,
+    /// For audio files.
+    pub audio_container: Option<String>,
+    pub video_codec: Option<ffcut_core::VideoCodec>,
+    pub audio_codec: Option<ffcut_core::AudioCodec>,
+    /// The x264 / x265 speed preset.
+    pub speed: Option<String>,
+    /// "auto" or a pixel format.
+    pub pix_fmt: Option<String>,
+    pub audio_mode: Option<ffcut_core::AudioMode>,
+}
+
+impl Defaults {
+    /// The encoding choices; they are set once at start and then stay from file to file.
+    pub fn apply(&self, s: &mut ffcut_core::ExportSettings) {
+        if let Some(c) = &self.video_codec {
+            s.video_codec = c.clone();
+        }
+        if let Some(c) = &self.audio_codec {
+            s.audio_codec = c.clone();
+        }
+        if let Some(p) = &self.speed {
+            s.preset = p.clone();
+        }
+        if let Some(p) = &self.pix_fmt {
+            s.pix_fmt = (p != "auto").then(|| p.clone());
+        }
+    }
 }
 
 pub fn config_dir() -> PathBuf {

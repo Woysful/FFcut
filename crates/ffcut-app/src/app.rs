@@ -202,7 +202,11 @@ impl App {
             ffmpeg_version: String::new(),
             encoders: Arc::new(Mutex::new(None)),
             clip: None,
-            s: ExportSettings::default(),
+            s: {
+                let mut s = ExportSettings::default();
+                settings.defaults.apply(&mut s);
+                s
+            },
             container: "mp4".into(),
             out_str: String::new(),
             trim_start: 0.0,
@@ -350,7 +354,7 @@ impl App {
         self.s.flip_h = false;
         self.s.flip_v = false;
         self.s.crop = None;
-        self.s.audio_mode = AudioMode::Separate;
+        self.s.audio_mode = self.settings.defaults.audio_mode.unwrap_or(AudioMode::Separate);
         self.s.audio_only = false;
         self.s.tracks = info.audio.iter().map(|a| TrackEdit::original(a.index, crate::ui::audio_label(a), info.duration)).collect();
         self.waves.lock().unwrap().clear();
@@ -371,27 +375,12 @@ impl App {
         self.hist.clear();
         self.status = None;
 
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
         self.multitrack = false;
         self.aview = AudioView::default();
-        self.container = if info.audio_only {
-            let lossless = info.audio.first().is_some_and(|a| a.codec == "flac" || a.codec.starts_with("pcm"));
-            if AUDIO_CONTAINERS.contains(&ext.as_str()) {
-                ext
-            } else if lossless {
-                "flac".into()
-            } else {
-                "mp3".into()
-            }
-        } else if CONTAINERS.contains(&ext.as_str()) {
-            ext
-        } else {
-            "mp4".into()
-        };
-        self.out_str = default_output(path, &self.container).to_string_lossy().into_owned();
-
         self.player.open(path, info.duration);
         self.clip = Some(Clip { path: path.to_path_buf(), info });
+        self.container = self.default_container();
+        self.out_str = default_output(path, &self.container).to_string_lossy().into_owned();
         self.apply_preview_transform();
         self.player.set_loop(None);
     }
@@ -452,6 +441,26 @@ impl App {
 
     pub fn audio_mode(&self) -> bool {
         self.clip.as_ref().is_some_and(|c| c.info.audio_only)
+    }
+
+    /// The container a file starts with: the user's default when it fits, otherwise [`Self::builtin_container`].
+    pub fn default_container(&self) -> String {
+        let own = if self.audio_mode() { &self.settings.defaults.audio_container } else { &self.settings.defaults.container };
+        own.clone().filter(|c| self.containers().contains(&c.as_str())).unwrap_or_else(|| self.builtin_container())
+    }
+
+    /// The source's own container when it is on the list; otherwise mp4, or for audio files flac / mp3.
+    pub fn builtin_container(&self) -> String {
+        let Some(c) = &self.clip else { return "mp4".into() };
+        let ext = c.path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        if self.containers().contains(&ext.as_str()) {
+            ext
+        } else if c.info.audio_only {
+            let lossless = c.info.audio.first().is_some_and(|a| a.codec == "flac" || a.codec.starts_with("pcm"));
+            if lossless { "flac" } else { "mp3" }.into()
+        } else {
+            "mp4".into()
+        }
     }
 
     pub fn containers(&self) -> &'static [&'static str] {

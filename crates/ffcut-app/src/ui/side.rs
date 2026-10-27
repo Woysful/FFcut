@@ -5,7 +5,7 @@
 
 use super::widgets::{self, caption, field, hint, num, resettable, warn};
 use super::{audio_label, codecs};
-use crate::app::{fmt_time, parse_time, App, CONTAINERS};
+use crate::app::{fmt_time, parse_time, App, AUDIO_EXPORT, CONTAINERS};
 use crate::hotkeys::Action;
 use crate::theme::{self, size};
 use eframe::egui::{self, pos2, vec2, Color32, DragValue, RichText, Sense, Stroke};
@@ -470,39 +470,44 @@ impl App {
         for (i, t) in self.s.tracks.iter().enumerate() {
             let selected = sel == Some(i) && self.s.tracks.len() > 1;
             let stroke = if selected { Stroke::new(1.5, theme::ACCENT) } else { Stroke::new(1.0, theme::LINE) };
-            let r = widgets::box_frame().stroke(stroke).inner_margin(egui::Margin::symmetric(8, 3)).corner_radius(theme::radius::WIDGET).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    let mut on = !t.deleted;
-                    if ui.checkbox(&mut on, "").on_hover_text("Include this track in the export").changed() {
-                        toggle = Some(i);
-                    }
-                    let dim = t.deleted || !heard[i];
-                    let ext = matches!(t.source, TrackSource::External { .. });
-                    let name = format!("{}{}", if ext { "+ " } else { "" }, t.label);
-                    ui.add(egui::Label::new(RichText::new(name).color(if dim { theme::TEXT_OFF } else { theme::TEXT })).truncate()).on_hover_text(&t.label);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if t.has_fx() && !t.deleted {
-                            widgets::badge(ui, "FX", theme::ACCENT);
+            // the row's click sense is registered before its contents, so the checkbox stays on top of it
+            let row = egui::UiBuilder::new().sense(Sense::click());
+            let r = ui.scope_builder(row, |ui| {
+                let frame = widgets::box_frame().stroke(stroke).inner_margin(egui::Margin::symmetric(8, 3)).corner_radius(theme::radius::WIDGET);
+                frame.show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.horizontal(|ui| {
+                        let mut on = !t.deleted;
+                        if ui.checkbox(&mut on, "").on_hover_text("Include this track in the export").changed() {
+                            toggle = Some(i);
                         }
-                        let state = if t.deleted {
-                            ""
-                        } else if t.solo {
-                            "solo"
-                        } else if t.muted {
-                            "muted"
-                        } else if !heard[i] {
-                            "silent"
-                        } else {
-                            ""
-                        };
-                        if !state.is_empty() {
-                            widgets::badge(ui, state, theme::WARN).on_hover_text("Changed on the track view (S / M buttons)");
-                        }
+                        let dim = t.deleted || !heard[i];
+                        let ext = matches!(t.source, TrackSource::External { .. });
+                        let name = format!("{}{}", if ext { "+ " } else { "" }, t.label);
+                        ui.add(egui::Label::new(RichText::new(name).color(if dim { theme::TEXT_OFF } else { theme::TEXT })).truncate()).on_hover_text(&t.label);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if t.has_fx() && !t.deleted {
+                                widgets::badge(ui, "FX", theme::ACCENT);
+                            }
+                            let state = if t.deleted {
+                                ""
+                            } else if t.solo {
+                                "solo"
+                            } else if t.muted {
+                                "muted"
+                            } else if !heard[i] {
+                                "silent"
+                            } else {
+                                ""
+                            };
+                            if !state.is_empty() {
+                                widgets::badge(ui, state, theme::WARN).on_hover_text("Changed on the track view (S / M buttons)");
+                            }
+                        });
                     });
                 });
             });
-            if !t.deleted && r.response.interact(Sense::click()).clicked() {
+            if !t.deleted && r.response.clicked() {
                 pick = Some(i);
             }
             ui.add_space(2.0);
@@ -610,7 +615,7 @@ impl App {
                 }
             });
         }
-        field(ui, "Container", |ui| {
+        let act = field(ui, "Container", |ui| {
             let cur = self.container.clone();
             let r = egui::ComboBox::from_id_salt("container").selected_text(format!(".{cur}")).width(ui.available_width()).show_ui(ui, |ui| {
                 for c in self.containers().iter().copied() {
@@ -619,12 +624,21 @@ impl App {
                     }
                 }
             });
-            r.response.on_hover_text(if self.audio_mode() {
+            let r = r.response.on_hover_text(if self.audio_mode() {
                 "Copy keeps the original codec when the container can hold it; otherwise the audio is re-encoded."
             } else {
                 "Not every codec fits every container (e.g. HEVC in .webm). ffmpeg will tell you if it does not."
             });
+            // sound-only outputs (audio files, "Audio only") have their own default
+            let builtin = if self.s.audio_only { self.sound_container().to_string() } else { self.builtin_container() };
+            let sound = self.audio_mode() || self.s.audio_only;
+            let d = &mut self.settings.defaults;
+            let own = if sound { &mut d.audio_container } else { &mut d.container };
+            widgets::default_menu(&r, &self.container, own, &builtin, |c| format!(".{c}"))
         });
+        if let Some(c) = self.default_act(act).filter(|c| self.containers().contains(&c.as_str())) {
+            self.set_container(&c);
+        }
         if !self.audio_mode() && !self.s.audio_only {
             ui.add_space(6.0);
             caption(ui, "Video");
@@ -635,20 +649,33 @@ impl App {
             caption(ui, "Audio");
             self.audio_codec_rows(ui, &enc);
         }
+        ui.add_space(4.0);
+        hint(ui, "Right-click a dropdown to make its choice the default for new files.");
     }
 
     fn video_codec_rows(&mut self, ui: &mut egui::Ui, enc: &Option<probe::Encoders>) {
-        field(ui, "Codec", |ui| {
+        let act = field(ui, "Codec", |ui| {
             let w = ui.available_width();
-            codecs::video_codec_combo(ui, "vcodec", &mut self.s.video_codec, enc, w);
+            let r = codecs::video_codec_combo(ui, "vcodec", &mut self.s.video_codec, enc, w);
+            widgets::default_menu(&r, &self.s.video_codec, &mut self.settings.defaults.video_codec, &VideoCodec::Auto, codecs::video_text)
         });
+        if let Some(c) = self.default_act(act) {
+            self.s.video_codec = c;
+        }
         let filters =
             self.s.vfx.is_active() || self.s.rotation != Rotation::None || self.s.flip_h || self.s.flip_v || self.crop.on || self.s.scale != Scale::default();
         if matches!(self.s.video_codec, VideoCodec::Copy) {
             if filters {
                 warn(ui, "Crop, rotation, resize and effects need re-encoding: choose a codec, or they are left out.");
-            } else {
-                hint(ui, "The video is copied as it is: fast and lossless, but the cuts snap to keyframes.");
+            }
+            if self.trimmed() {
+                warn(
+                    ui,
+                    "Copy with a trim: the cut snaps to keyframes, so it is not frame-exact, and the start of the file can show \
+                     artifacts (frozen or broken frames). Choose a codec (e.g. Auto) for an exact cut.",
+                );
+            } else if !filters {
+                hint(ui, "The video is copied as it is: fast and lossless.");
             }
             return;
         }
@@ -674,8 +701,8 @@ impl App {
             }
         }
         if matches!(name.as_str(), "libx264" | "libx265") {
-            field(ui, "Speed", |ui| {
-                egui::ComboBox::from_id_salt("preset")
+            let act = field(ui, "Speed", |ui| {
+                let r = egui::ComboBox::from_id_salt("preset")
                     .selected_text(&self.s.preset)
                     .width(ui.available_width())
                     .show_ui(ui, |ui| {
@@ -685,42 +712,63 @@ impl App {
                     })
                     .response
                     .on_hover_text("Encoder preset: slower makes a smaller file at the same quality, but takes longer.");
+                widgets::default_menu(&r, &self.s.preset, &mut self.settings.defaults.speed, &"medium".to_string(), |p| p.clone())
             });
+            if let Some(p) = self.default_act(act) {
+                self.s.preset = p;
+            }
         }
-        field(ui, "Pixel format", |ui| {
+        let act = field(ui, "Pixel format", |ui| {
             let cur = self.s.pix_fmt.clone().unwrap_or_else(|| "auto".into());
-            egui::ComboBox::from_id_salt("pixfmt").selected_text(cur).width(ui.available_width()).show_ui(ui, |ui| {
+            let r = egui::ComboBox::from_id_salt("pixfmt").selected_text(&cur).width(ui.available_width()).show_ui(ui, |ui| {
                 ui.selectable_value(&mut self.s.pix_fmt, None, "auto");
                 for p in PIX_FMTS {
                     ui.selectable_value(&mut self.s.pix_fmt, Some(p.to_string()), p);
                 }
             });
+            widgets::default_menu(&r.response, &cur, &mut self.settings.defaults.pix_fmt, &"auto".to_string(), |p| p.clone())
         });
+        if let Some(p) = self.default_act(act) {
+            self.s.pix_fmt = (p != "auto").then_some(p);
+        }
     }
 
     /// Track packing, codec and bitrate (the tracks themselves are in the Audio section).
     fn audio_codec_rows(&mut self, ui: &mut egui::Ui, enc: &Option<probe::Encoders>) {
         let audible_n = audible(&self.s.tracks).len();
         if !self.audio_mode() {
-            field(ui, "Tracks", |ui| {
-                egui::ComboBox::from_id_salt("audio_mode").selected_text(audio_mode_label(self.s.audio_mode)).width(ui.available_width()).show_ui(ui, |ui| {
-                    for (m, tip) in [
-                        (AudioMode::Separate, "Every audible track stays a separate audio stream"),
-                        (AudioMode::Merge, "All audible tracks are mixed into a single stream"),
-                        (AudioMode::None, "No audio in the output"),
-                    ] {
-                        ui.selectable_value(&mut self.s.audio_mode, m, audio_mode_label(m)).on_hover_text(tip);
-                    }
-                });
+            let act = field(ui, "Tracks", |ui| {
+                let r = egui::ComboBox::from_id_salt("audio_mode").selected_text(audio_mode_label(self.s.audio_mode)).width(ui.available_width()).show_ui(
+                    ui,
+                    |ui| {
+                        for (m, tip) in [
+                            (AudioMode::Separate, "Every audible track stays a separate audio stream"),
+                            (AudioMode::Merge, "All audible tracks are mixed into a single stream"),
+                            (AudioMode::None, "No audio in the output"),
+                        ] {
+                            ui.selectable_value(&mut self.s.audio_mode, m, audio_mode_label(m)).on_hover_text(tip);
+                        }
+                    },
+                );
+                widgets::default_menu(&r.response, &self.s.audio_mode, &mut self.settings.defaults.audio_mode, &AudioMode::Separate, |m| {
+                    audio_mode_label(*m).to_string()
+                })
             });
+            if let Some(m) = self.default_act(act) {
+                self.s.audio_mode = m;
+            }
         }
         if self.s.audio_mode == AudioMode::None || audible_n == 0 {
             return;
         }
-        field(ui, "Codec", |ui| {
+        let act = field(ui, "Codec", |ui| {
             let w = ui.available_width();
-            codecs::audio_codec_combo(ui, "acodec", &mut self.s.audio_codec, enc, w);
+            let r = codecs::audio_codec_combo(ui, "acodec", &mut self.s.audio_codec, enc, w);
+            widgets::default_menu(&r, &self.s.audio_codec, &mut self.settings.defaults.audio_codec, &AudioCodec::Copy, codecs::audio_text)
         });
+        if let Some(c) = self.default_act(act) {
+            self.s.audio_codec = c;
+        }
         if let AudioCodec::Encoder(c) = &self.s.audio_codec {
             if !codecs::is_lossless_audio(c) {
                 field(ui, "Bitrate", |ui| {
@@ -748,13 +796,37 @@ impl App {
     fn set_audio_only(&mut self, on: bool) {
         self.s.audio_only = on;
         if !on && !CONTAINERS.contains(&self.container.as_str()) {
-            self.set_container("mp4");
+            let c = self.settings.defaults.container.clone().filter(|c| CONTAINERS.contains(&c.as_str()));
+            self.set_container(c.as_deref().unwrap_or("mp4"));
         }
         if on && !self.cmd.edited {
             // a plain video container is rarely what one wants for sound only
-            let c = if self.s.tracks.iter().filter(|t| !t.deleted).count() > 1 { "mka" } else { "m4a" };
-            self.set_container(c);
+            let own = self.settings.defaults.audio_container.clone().filter(|c| AUDIO_EXPORT.contains(&c.as_str()));
+            let c = own.unwrap_or_else(|| self.sound_container().to_string());
+            self.set_container(&c);
         }
+    }
+
+    /// The built-in container of "Audio only": one that keeps several tracks apart when there are several.
+    fn sound_container(&self) -> &'static str {
+        if self.s.tracks.iter().filter(|t| !t.deleted).count() > 1 {
+            "mka"
+        } else {
+            "m4a"
+        }
+    }
+
+    /// Saves the settings when a dropdown's default changed; returns the value to go back to, if asked.
+    fn default_act<T>(&mut self, act: widgets::DefaultAct<T>) -> Option<T> {
+        if act.saved {
+            self.settings.save();
+        }
+        act.reset
+    }
+
+    /// The trim is not the whole file.
+    fn trimmed(&self) -> bool {
+        self.trim_start > 0.001 || self.trim_end < self.dur() - 0.001
     }
 }
 

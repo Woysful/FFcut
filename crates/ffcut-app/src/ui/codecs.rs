@@ -85,30 +85,52 @@ pub fn audio_text(a: &AudioCodec) -> String {
 }
 
 /// Encoders this ffmpeg really has. While the list is still loading everything is shown.
-pub fn video_codec_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, value: &mut VideoCodec, enc: &Option<Encoders>, width: f32) {
+pub fn video_codec_combo(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut VideoCodec,
+    enc: &Option<Encoders>,
+    width: f32,
+) -> egui::Response {
     let has = |n: &str| enc.as_ref().is_none_or(|e| e.video.iter().any(|v| v == n));
-    egui::ComboBox::from_id_salt(id).selected_text(video_text(value)).width(width).height(460.0).show_ui(ui, |ui| {
-        heading(ui, "Stream Copy");
-        ui.selectable_value(value, VideoCodec::Copy, "Copy (lossless)");
-        ui.selectable_value(value, VideoCodec::Auto, "Auto (same as source)");
-        let mk = |n: &str| VideoCodec::Encoder(n.into());
-        group(ui, "CPU Codecs", V_CPU, has, value, mk);
-        group(ui, "Nvidia GPU - NVENC", V_NVENC, has, value, mk);
-        group(ui, "AMD GPU - AMF", V_AMF, has, value, mk);
-        group(ui, "Intel GPU - QSV", V_QSV, has, value, mk);
-        group(ui, "VAAPI (Linux GPU)", V_VAAPI, has, value, mk);
-    });
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(video_text(value))
+        .width(width)
+        .height(460.0)
+        .show_ui(ui, |ui| {
+            heading(ui, "Stream Copy");
+            ui.selectable_value(value, VideoCodec::Copy, "Copy (lossless)");
+            ui.selectable_value(value, VideoCodec::Auto, "Auto (same as source)");
+            let mk = |n: &str| VideoCodec::Encoder(n.into());
+            group(ui, "CPU Codecs", V_CPU, has, value, mk);
+            group(ui, "Nvidia GPU - NVENC", V_NVENC, has, value, mk);
+            group(ui, "AMD GPU - AMF", V_AMF, has, value, mk);
+            group(ui, "Intel GPU - QSV", V_QSV, has, value, mk);
+            group(ui, "VAAPI (Linux GPU)", V_VAAPI, has, value, mk);
+        })
+        .response
 }
 
-pub fn audio_codec_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, value: &mut AudioCodec, enc: &Option<Encoders>, width: f32) {
+pub fn audio_codec_combo(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut AudioCodec,
+    enc: &Option<Encoders>,
+    width: f32,
+) -> egui::Response {
     let has = |n: &str| enc.as_ref().is_none_or(|e| e.audio.iter().any(|v| v == n));
-    egui::ComboBox::from_id_salt(id).selected_text(audio_text(value)).width(width).height(460.0).show_ui(ui, |ui| {
-        heading(ui, "Stream Copy");
-        ui.selectable_value(value, AudioCodec::Copy, "Copy (lossless)");
-        let mk = |n: &str| AudioCodec::Encoder(n.into());
-        group(ui, "Lossy", A_LOSSY, has, value, mk);
-        group(ui, "Lossless", A_LOSSLESS, has, value, mk);
-    });
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(audio_text(value))
+        .width(width)
+        .height(460.0)
+        .show_ui(ui, |ui| {
+            heading(ui, "Stream Copy");
+            ui.selectable_value(value, AudioCodec::Copy, "Copy (lossless)");
+            let mk = |n: &str| AudioCodec::Encoder(n.into());
+            group(ui, "Lossy", A_LOSSY, has, value, mk);
+            group(ui, "Lossless", A_LOSSLESS, has, value, mk);
+        })
+        .response
 }
 
 pub fn is_lossless_audio(c: &str) -> bool {

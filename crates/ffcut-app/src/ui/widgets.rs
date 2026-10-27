@@ -57,6 +57,42 @@ pub fn value_sized(ui: &mut egui::Ui, size: impl Into<egui::Vec2>, w: impl egui:
     .inner
 }
 
+/// What the right-click menu of a dropdown asked for, see [`default_menu`].
+pub struct DefaultAct<T> {
+    /// Go back to this value.
+    pub reset: Option<T>,
+    /// The saved default changed: the settings need saving.
+    pub saved: bool,
+}
+
+/// Right-click menu of a dropdown: make the current choice the default for new files, go back to the
+/// default, or forget the user's own default (then `builtin` applies again).
+pub fn default_menu<T: Clone + PartialEq>(resp: &egui::Response, cur: &T, own: &mut Option<T>, builtin: &T, name: impl Fn(&T) -> String) -> DefaultAct<T> {
+    let mut act = DefaultAct { reset: None, saved: false };
+    // the dropdown's own list already uses the default popup id of this response
+    egui::Popup::context_menu(resp).id(resp.id.with("default-menu")).style(theme::menu_style).show(|ui| {
+        let def = own.clone().unwrap_or_else(|| builtin.clone());
+        if ui.add_enabled(*cur != def, egui::Button::new(format!("Use {} as default", name(cur)))).clicked() {
+            *own = Some(cur.clone());
+            act.saved = true;
+            ui.close();
+        }
+        if ui.add_enabled(*cur != def, egui::Button::new(format!("Reset to default ({})", name(&def)))).clicked() {
+            act.reset = Some(def);
+            ui.close();
+        }
+        if own.is_some() {
+            ui.separator();
+            if ui.button(format!("Forget my default (built-in: {})", name(builtin))).clicked() {
+                *own = None;
+                act.saved = true;
+                ui.close();
+            }
+        }
+    });
+    act
+}
+
 /// A numeric field of the standard width.
 pub fn num(ui: &mut egui::Ui, dv: egui::DragValue<'_>) -> egui::Response {
     let h = ui.spacing().interact_size.y;

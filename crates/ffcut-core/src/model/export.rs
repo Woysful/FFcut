@@ -120,7 +120,7 @@ impl Default for ExportSettings {
             flip_h: false,
             flip_v: false,
             scale: Scale::default(),
-            video_codec: VideoCodec::Copy,
+            video_codec: VideoCodec::Auto,
             quality: Quality::Crf(23),
             preset: "medium".into(),
             pix_fmt: None,

@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn lossless_trim() {
-        let s = ExportSettings { trim_start: 5.0, trim_end: Some(15.5), ..Default::default() };
+        let s = ExportSettings { trim_start: 5.0, trim_end: Some(15.5), video_codec: VideoCodec::Copy, ..Default::default() };
         assert_eq!(build(&s), "ffmpeg -hide_banner -y -ss 5 -i in.mkv -t 10.5 -map 0:v:0 -c:v copy -map 0:a -c:a copy out.mp4");
     }
 
@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn copy_with_filters_falls_back_to_same_family() {
-        let s = ExportSettings { flip_h: true, ..Default::default() };
+        let s = ExportSettings { flip_h: true, video_codec: VideoCodec::Copy, ..Default::default() };
         let c = build(&s);
         assert!(c.contains("-vf hflip"));
         assert!(c.contains("-c:v libx265"));
