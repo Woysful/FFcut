@@ -3,7 +3,7 @@
 //! Order follows the work: what the file is → which part → how the picture is changed → effects → sound →
 //! what comes out → the exact command. Every section remembers whether it was left open.
 
-use super::widgets::{self, caption, field, hint, num, resettable, warn};
+use super::widgets::{self, caption, field, hint, num, resettable, warn, ComboExt};
 use super::{audio_label, codecs};
 use crate::app::{fmt_time, parse_time, App, AUDIO_EXPORT, CONTAINERS};
 use crate::hotkeys::Action;
@@ -484,7 +484,9 @@ impl App {
                         let dim = t.deleted || !heard[i];
                         let ext = matches!(t.source, TrackSource::External { .. });
                         let name = format!("{}{}", if ext { "+ " } else { "" }, t.label);
-                        ui.add(egui::Label::new(RichText::new(name).color(if dim { theme::TEXT_OFF } else { theme::TEXT })).truncate()).on_hover_text(&t.label);
+                        // not selectable: a selectable label takes the click, and the row would not be picked
+                        let label = egui::Label::new(RichText::new(name).color(if dim { theme::TEXT_OFF } else { theme::TEXT })).truncate().selectable(false);
+                        ui.add(label).on_hover_text(&t.label);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if t.has_fx() && !t.deleted {
                                 widgets::badge(ui, "FX", theme::ACCENT);
@@ -555,7 +557,7 @@ impl App {
     /// Named effect stacks: apply one to the track, save the track's effects as a new one, or manage them.
     fn fx_presets_row(&mut self, ui: &mut egui::Ui, track: usize) {
         field(ui, "Presets", |ui| {
-            egui::ComboBox::from_id_salt("audio_presets").selected_text("Choose…").width(ui.available_width()).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt("audio_presets").selected_text("Choose…").width(ui.available_width()).show_list(ui, |ui| {
                 if ui.add_enabled(!self.s.tracks[track].effects.is_empty(), egui::Button::selectable(false, "Save these effects…")).clicked() {
                     self.presets_ui.name.clear();
                     self.presets_ui.fx_save_track = Some(track);
@@ -617,7 +619,7 @@ impl App {
         }
         let act = field(ui, "Container", |ui| {
             let cur = self.container.clone();
-            let r = egui::ComboBox::from_id_salt("container").selected_text(format!(".{cur}")).width(ui.available_width()).show_ui(ui, |ui| {
+            let r = egui::ComboBox::from_id_salt("container").selected_text(format!(".{cur}")).width(ui.available_width()).show_list(ui, |ui| {
                 for c in self.containers().iter().copied() {
                     if ui.selectable_label(cur == c, format!(".{c}")).clicked() {
                         self.set_container(c);
@@ -705,7 +707,7 @@ impl App {
                 let r = egui::ComboBox::from_id_salt("preset")
                     .selected_text(&self.s.preset)
                     .width(ui.available_width())
-                    .show_ui(ui, |ui| {
+                    .show_list(ui, |ui| {
                         for p in SPEEDS {
                             ui.selectable_value(&mut self.s.preset, p.to_string(), p);
                         }
@@ -720,7 +722,7 @@ impl App {
         }
         let act = field(ui, "Pixel format", |ui| {
             let cur = self.s.pix_fmt.clone().unwrap_or_else(|| "auto".into());
-            let r = egui::ComboBox::from_id_salt("pixfmt").selected_text(&cur).width(ui.available_width()).show_ui(ui, |ui| {
+            let r = egui::ComboBox::from_id_salt("pixfmt").selected_text(&cur).width(ui.available_width()).show_list(ui, |ui| {
                 ui.selectable_value(&mut self.s.pix_fmt, None, "auto");
                 for p in PIX_FMTS {
                     ui.selectable_value(&mut self.s.pix_fmt, Some(p.to_string()), p);
@@ -738,7 +740,7 @@ impl App {
         let audible_n = audible(&self.s.tracks).len();
         if !self.audio_mode() {
             let act = field(ui, "Tracks", |ui| {
-                let r = egui::ComboBox::from_id_salt("audio_mode").selected_text(audio_mode_label(self.s.audio_mode)).width(ui.available_width()).show_ui(
+                let r = egui::ComboBox::from_id_salt("audio_mode").selected_text(audio_mode_label(self.s.audio_mode)).width(ui.available_width()).show_list(
                     ui,
                     |ui| {
                         for (m, tip) in [

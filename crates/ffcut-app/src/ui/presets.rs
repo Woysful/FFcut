@@ -1,6 +1,7 @@
 //! The presets window: export presets and audio effect presets. Rename, edit, apply, export, import, delete.
 
 use super::side::{audio_mode_label, quality_fields, size_fields, PIX_FMTS, SPEEDS};
+use super::widgets::ComboExt;
 use super::{codecs, widgets};
 use crate::app::{App, CONTAINERS};
 use crate::state::PresetsTab;
@@ -100,7 +101,7 @@ fn part_editor(
     match part {
         Part::Container => {
             let c = p.container.get_or_insert_with(|| "mp4".into());
-            egui::ComboBox::from_id_salt(("pc", id)).selected_text(format!(".{c}")).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt(("pc", id)).selected_text(format!(".{c}")).show_list(ui, |ui| {
                 for k in CONTAINERS {
                     changed |= ui.selectable_value(c, k.to_string(), format!(".{k}")).changed();
                 }
@@ -124,7 +125,7 @@ fn part_editor(
         }
         Part::Speed => {
             let sp = p.preset.get_or_insert_with(|| "medium".into());
-            egui::ComboBox::from_id_salt(("ps", id)).selected_text(sp.clone()).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt(("ps", id)).selected_text(sp.clone()).show_list(ui, |ui| {
                 for k in SPEEDS {
                     changed |= ui.selectable_value(sp, k.to_string(), k).changed();
                 }
@@ -132,7 +133,7 @@ fn part_editor(
         }
         Part::PixFmt => {
             let pf = p.pix_fmt.get_or_insert_with(|| "auto".into());
-            egui::ComboBox::from_id_salt(("pp", id)).selected_text(pf.clone()).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt(("pp", id)).selected_text(pf.clone()).show_list(ui, |ui| {
                 for k in std::iter::once("auto").chain(PIX_FMTS) {
                     changed |= ui.selectable_value(pf, k.to_string(), k).changed();
                 }
@@ -153,7 +154,7 @@ fn part_editor(
         }
         Part::AudioMode => {
             let m = p.audio_mode.get_or_insert(AudioMode::Separate);
-            egui::ComboBox::from_id_salt(("pm", id)).selected_text(audio_mode_label(*m)).show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt(("pm", id)).selected_text(audio_mode_label(*m)).show_list(ui, |ui| {
                 for k in [AudioMode::Separate, AudioMode::Merge, AudioMode::None] {
                     changed |= ui.selectable_value(m, k, audio_mode_label(k)).changed();
                 }

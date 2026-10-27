@@ -1,7 +1,7 @@
 //! The "Video effects & text" sidebar section (colour, curves, style, restoration, covered areas, text,
 //! captions) and the markers it draws on the video.
 
-use super::widgets::{self, StackAct, StackEntry};
+use super::widgets::{self, ComboExt, StackAct, StackEntry};
 use crate::app::App;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, StrokeKind};
@@ -61,7 +61,7 @@ fn font_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, pat
         });
         return;
     };
-    egui::ComboBox::from_id_salt(id).selected_text(font_label(fonts, path)).width(ui.available_width()).height(360.0).show_ui(ui, |ui| {
+    egui::ComboBox::from_id_salt(id).selected_text(font_label(fonts, path)).width(ui.available_width()).height(360.0).show_list(ui, |ui| {
         for f in fonts {
             let p = f.path.to_string_lossy();
             if ui.selectable_label(*path == p, &f.name).clicked() {

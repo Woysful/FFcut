@@ -1,5 +1,6 @@
 //! Grouped codec drop-downs, shared by the sidebar and the presets editor.
 
+use super::widgets::ComboExt;
 use crate::theme;
 use eframe::egui;
 use ffcut_core::probe::Encoders;
@@ -97,7 +98,7 @@ pub fn video_codec_combo(
         .selected_text(video_text(value))
         .width(width)
         .height(460.0)
-        .show_ui(ui, |ui| {
+        .show_list(ui, |ui| {
             heading(ui, "Stream Copy");
             ui.selectable_value(value, VideoCodec::Copy, "Copy (lossless)");
             ui.selectable_value(value, VideoCodec::Auto, "Auto (same as source)");
@@ -123,7 +124,7 @@ pub fn audio_codec_combo(
         .selected_text(audio_text(value))
         .width(width)
         .height(460.0)
-        .show_ui(ui, |ui| {
+        .show_list(ui, |ui| {
             heading(ui, "Stream Copy");
             ui.selectable_value(value, AudioCodec::Copy, "Copy (lossless)");
             let mk = |n: &str| AudioCodec::Encoder(n.into());

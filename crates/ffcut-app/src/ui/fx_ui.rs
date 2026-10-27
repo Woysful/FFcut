@@ -1,7 +1,7 @@
 //! The audio effects of one track (fades, equalizer, compressor, de-esser, noise reduction, normalization),
 //! shown in the sidebar and in the audio presets editor.
 
-use super::widgets::{self, StackAct, StackEntry};
+use super::widgets::{self, ComboExt, StackAct, StackEntry};
 use super::{field, grid};
 use crate::app::App;
 use crate::theme;
@@ -285,7 +285,7 @@ fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Opt
                 ui.horizontal(|ui| {
                     ui.checkbox(&mut b.on, "");
                     let w = ui.available_width() - 72.0;
-                    egui::ComboBox::from_id_salt(("eqkind", k, b_i)).selected_text(kind_name(b.kind)).width(w).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt(("eqkind", k, b_i)).selected_text(kind_name(b.kind)).width(w).show_list(ui, |ui| {
                         for kd in [EqKind::Peak, EqKind::LowShelf, EqKind::HighShelf, EqKind::HighPass, EqKind::LowPass] {
                             ui.selectable_value(&mut b.kind, kd, kind_name(kd));
                         }
@@ -374,7 +374,7 @@ fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Opt
         EffectKind::Norm(n) => {
             field(ui, "Mode", |ui| {
                 let cur = if n.mode == NormMode::Peak { "Peak level" } else { "Loudness (LUFS)" };
-                egui::ComboBox::from_id_salt(("normmode", k)).selected_text(cur).width(ui.available_width()).show_ui(ui, |ui| {
+                egui::ComboBox::from_id_salt(("normmode", k)).selected_text(cur).width(ui.available_width()).show_list(ui, |ui| {
                     if ui.selectable_label(n.mode == NormMode::Peak, "Peak level").clicked() && n.mode != NormMode::Peak {
                         *n = Normalize::new(NormMode::Peak);
                     }

@@ -57,6 +57,31 @@ pub fn value_sized(ui: &mut egui::Ui, size: impl Into<egui::Vec2>, w: impl egui:
     .inner
 }
 
+/// Dropdown lists that close only when an entry is picked or the click lands outside: egui closes them on
+/// any click, so a click on the list's background or a heading used to drop the list.
+pub trait ComboExt {
+    fn show_list<R>(self, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<Option<R>>;
+}
+
+impl ComboExt for egui::ComboBox {
+    fn show_list<R>(self, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<Option<R>> {
+        self.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show_ui(ui, |ui| {
+            // plain text (headings) must not take clicks, so that a clicked widget is always an entry
+            ui.style_mut().interaction.selectable_labels = false;
+            let r = add(ui);
+            // an entry is click-only and in the list's own layer (the dropdown button is not, even where the
+            // list covers it); the popup's own background (its area senses clicks as "<popup id>/move"), the
+            // scroll bar (click + drag) and text fields keep the list open
+            let picked = ui.ctx().interaction_snapshot(|s| s.clicked).and_then(|id| ui.ctx().read_response(id));
+            if picked.is_some_and(|p| p.layer_id == ui.layer_id() && p.sense.senses_click() && !p.sense.senses_drag() && p.id != ui.layer_id().id.with("move"))
+            {
+                ui.close();
+            }
+            r
+        })
+    }
+}
+
 /// What the right-click menu of a dropdown asked for, see [`default_menu`].
 pub struct DefaultAct<T> {
     /// Go back to this value.
@@ -137,7 +162,7 @@ pub fn caption(ui: &mut egui::Ui, text: &str) -> egui::Response {
 
 /// A short coloured word next to a title ("auto", "edited", "3 on").
 pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
-    ui.label(RichText::new(text).size(size::SMALL).color(color))
+    ui.add(egui::Label::new(RichText::new(text).size(size::SMALL).color(color)).selectable(false))
 }
 
 /// The main action of a place: accent fill, dark text.
