@@ -1,12 +1,12 @@
-//! All widgets. Each file adds an `impl App` block for one area of the window.
+//! All widgets. Each file adds an `impl App` block for one area of the window; `widgets` holds the small
+//! building blocks they share.
 
 mod audio_view;
 mod codecs;
+mod command;
 mod fx_ui;
 mod icons;
 mod meter;
-pub use meter::MeterState;
-mod command;
 mod presets;
 mod settings_ui;
 mod side;
@@ -14,10 +14,15 @@ mod tracks;
 mod transport;
 mod vfx_ui;
 mod video;
+pub mod widgets;
 
-use crate::app::{open_in_file_manager, App, Status};
+pub use meter::MeterState;
+pub use side::{Section, SideState};
+pub use widgets::{card, ctx_menu, field, grid, num};
+
+use crate::app::{App, Status};
 use crate::hotkeys::{chords, Action};
-use crate::theme;
+use crate::theme::{self, size};
 use eframe::egui::{self, vec2, Align, Layout, Rect, RichText};
 use ffcut_core::presets::Preset;
 use ffcut_core::AudioStream;
@@ -35,11 +40,38 @@ pub fn audio_label(a: &AudioStream) -> String {
     s
 }
 
+/// What the name prompt of a "save as" dialog asks for.
+enum Prompt {
+    Save(String),
+    Cancel,
+}
+
+/// A name field with Save / Cancel (Enter saves). `ready` = everything else needed to save is there.
+fn name_prompt(ui: &mut egui::Ui, name: &mut String, ready: bool) -> Option<Prompt> {
+    let r = ui.add(egui::TextEdit::singleline(name).hint_text("Name").desired_width(f32::INFINITY));
+    r.request_focus();
+    let trimmed = name.trim().to_string();
+    let ok = ready && !trimmed.is_empty();
+    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let mut out = None;
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.add_enabled(ok, widgets::primary_button("Save")).clicked() || (enter && ok) {
+            out = Some(Prompt::Save(trimmed.clone()));
+        }
+        if ui.button("Cancel").clicked() {
+            out = Some(Prompt::Cancel);
+        }
+    });
+    out
+}
+
 impl App {
     pub fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("menu").show(ui, |ui| {
             let bar = ui.max_rect();
-            egui::MenuBar::new().ui(ui, |ui| {
+            let config = egui::containers::menu::MenuConfig::new().style(theme::menu_style);
+            egui::MenuBar::new().style(theme::menu_style).config(config).ui(ui, |ui| {
                 ui.menu_button("File", |ui| {
                     if ui.button(format!("Open…   {}", self.keys(Action::Open))).clicked() {
                         ui.close();
@@ -53,7 +85,7 @@ impl App {
                     ui.separator();
                     if ui.button("Settings…").clicked() {
                         ui.close();
-                        self.show_settings = true;
+                        self.dialogs.settings = true;
                     }
                     ui.separator();
                     if ui.button("Quit").clicked() {
@@ -74,35 +106,36 @@ impl App {
                 });
 
                 ui.menu_button("Help", |ui| {
-                    ui.label(RichText::new("Keyboard shortcuts (change them in Settings → Hotkeys)").weak());
-                    egui::Grid::new("help-keys").num_columns(2).spacing([14.0, 2.0]).show(ui, |ui| {
-                        for a in Action::ALL {
-                            let keys: Vec<String> = chords(&self.settings.hotkeys, a).iter().map(|c| c.display()).collect();
-                            ui.label(RichText::new(if keys.is_empty() { "—".to_string() } else { keys.join("  /  ") }).monospace().size(12.0));
-                            ui.label(a.label());
-                            ui.end_row();
-                        }
+                    widgets::menu_indent(ui, |ui| widgets::hint(ui, "Keyboard shortcuts (change them in Settings → Hotkeys)"));
+                    widgets::menu_indent(ui, |ui| {
+                        egui::Grid::new("help-keys").num_columns(2).spacing([14.0, 2.0]).show(ui, |ui| {
+                            for a in Action::ALL {
+                                let keys: Vec<String> = chords(&self.settings.hotkeys, a).iter().map(|c| c.display()).collect();
+                                ui.label(RichText::new(if keys.is_empty() { "—".to_string() } else { keys.join("  /  ") }).monospace().size(12.0));
+                                ui.label(a.label());
+                                ui.end_row();
+                            }
+                        })
                     });
                     ui.separator();
                     if ui.button("Check for updates").clicked() {
                         ui.close();
-                        self.show_about = true;
+                        self.dialogs.about = true;
                         self.start_update_check(ui.ctx(), true);
                     }
                     if ui.button(format!("About FFcut {}", crate::update::VERSION)).clicked() {
                         ui.close();
-                        self.show_about = true;
+                        self.dialogs.about = true;
                     }
                 });
 
-                // right: presets
+                // right (next to the sidebar): presets, and the "lamp" when a newer release exists
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    self.presets_menu(ui);
-                    // the "lamp": a newer release exists
-                    if let Some(r) = &self.update_found {
-                        let b = egui::Button::new(RichText::new(format!("● Update {}", r.version)).size(12.5).color(theme::ACCENT)).frame(false);
+                    ui.menu_button("Presets", |ui| self.presets_menu(ui));
+                    if let Some(r) = &self.updates.found {
+                        let b = egui::Button::new(RichText::new(format!("● Update {}", r.version)).color(theme::ACCENT)).frame(false);
                         if ui.add(b).on_hover_text("A new version of FFcut is available. Click for details.").clicked() {
-                            self.show_update = true;
+                            self.dialogs.update = true;
                         }
                     }
                 });
@@ -110,196 +143,206 @@ impl App {
                 // centre: what is open (painted over the free middle part, never pushes the menus)
                 if let Some(c) = &self.clip {
                     let text = crate::layout::info_line(&c.path, &c.info, &self.settings.info_items, &self.settings.path_sep);
-                    let w = (bar.width() - 2.0 * 190.0).max(100.0);
+                    let w = (bar.width() - 2.0 * 230.0).max(100.0);
                     let r = Rect::from_center_size(bar.center(), vec2(w, bar.height()));
-                    ui.put(r, egui::Label::new(RichText::new(text).size(12.5).color(egui::Color32::from_gray(170))).truncate());
+                    ui.put(r, egui::Label::new(RichText::new(text).color(theme::TEXT_LABEL)).truncate());
                 }
             });
         });
     }
 
     fn presets_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Presets", |ui| {
-            if ui.add_enabled(self.clip.is_some(), egui::Button::new("Save preset…")).clicked() {
+        if ui.add_enabled(self.clip.is_some(), egui::Button::new("Save current settings…")).clicked() {
+            ui.close();
+            self.presets_ui.save_parts = Preset::default_parts(&self.s);
+            self.presets_ui.name.clear();
+            self.dialogs.save_preset = true;
+        }
+        if ui.button("Manage presets…").clicked() {
+            ui.close();
+            self.presets_ui.tab = crate::state::PresetsTab::Export;
+            self.dialogs.presets = true;
+        }
+        ui.separator();
+        if self.presets.export.is_empty() {
+            widgets::menu_indent(ui, |ui| ui.weak("No presets yet"));
+        }
+        let mut chosen = None;
+        for name in self.presets.export.keys() {
+            if ui.add_enabled(self.clip.is_some(), egui::Button::new(name)).clicked() {
+                chosen = Some(name.clone());
                 ui.close();
-                self.save_parts = Preset::default_parts(&self.s);
-                self.show_save_preset = true;
-                self.preset_name.clear();
             }
-            if ui.button("Edit presets…").clicked() {
-                ui.close();
-                self.presets_tab = 0;
-                self.show_presets = true;
-            }
-            ui.separator();
-            if self.presets.is_empty() {
-                ui.weak("No presets yet");
-            }
-            let names: Vec<String> = self.presets.keys().cloned().collect();
-            for name in names {
-                if ui.add_enabled(self.clip.is_some(), egui::Button::new(&name)).clicked() {
-                    if let Some(p) = self.presets.get(&name).cloned() {
-                        self.apply_preset(&p);
-                    }
-                    ui.close();
-                }
-            }
-        });
+        }
+        if let Some(p) = chosen.and_then(|n| self.presets.export.get(&n).cloned()) {
+            self.apply_preset(&p);
+        }
     }
 
-    /// Windows: settings, save preset, presets editor, errors.
+    /// Windows: settings, save preset, presets editor, errors, about, update.
     pub fn windows(&mut self, ctx: &egui::Context) {
         self.presets_window(ctx);
-        if let Some((title, body)) = self.error_window.clone() {
-            let open = os_window(ctx, "error", &title, [620.0, 380.0], |ui| {
-                egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
-                    ui.add(egui::Label::new(RichText::new(&body).monospace()).selectable(true));
-                });
-                ui.add_space(6.0);
-                if ui.button("Copy message").clicked() {
-                    ctx.copy_text(body.clone());
-                }
-            });
-            if !open {
-                self.error_window = None;
-            }
-        }
-
-        if self.show_save_preset {
-            let open = os_window(ctx, "save_preset", "Save preset", [440.0, 420.0], |ui| {
-                ui.label("Choose what goes into the preset. (Trim, crop and rotation belong to the clip and are never saved.)");
-                ui.add_space(4.0);
-                for part in ffcut_core::presets::Part::ALL {
-                    let mut on = self.save_parts.contains(&part);
-                    if ui.checkbox(&mut on, part.label()).changed() {
-                        if on {
-                            self.save_parts.push(part);
-                        } else {
-                            self.save_parts.retain(|p| *p != part);
-                        }
-                    }
-                }
-                ui.add_space(6.0);
-                let r = ui.text_edit_singleline(&mut self.preset_name);
-                r.request_focus();
-                let name = self.preset_name.trim().to_string();
-                let ok_name = !name.is_empty() && !self.save_parts.is_empty();
-                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| {
-                    if (ui.add_enabled(ok_name, egui::Button::new("Save")).clicked() || (enter && ok_name)) && ok_name {
-                        self.presets.insert(name, Preset::from_parts(&self.container, &self.s, &self.save_parts));
-                        if let Err(e) = ffcut_core::presets::save(&self.presets_path, &self.presets) {
-                            self.status = Some(Status::Error(format!("Cannot save presets: {e}")));
-                        }
-                        self.show_save_preset = false;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.show_save_preset = false;
-                    }
-                });
-            });
-            if !open {
-                self.show_save_preset = false;
-            }
-        }
-
-        if let Some(track) = self.fx_save_track {
-            let open = os_window(ctx, "save_fx_preset", "Save audio preset", [380.0, 140.0], |ui| {
-                ui.label("Saves the effects of this track under a name. Apply it to any track later.");
-                let r = ui.text_edit_singleline(&mut self.fx_preset_name);
-                r.request_focus();
-                let name = self.fx_preset_name.trim().to_string();
-                let ok = !name.is_empty();
-                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                ui.horizontal(|ui| {
-                    if (ui.add_enabled(ok, egui::Button::new("Save")).clicked() || (enter && ok)) && ok {
-                        let mut fx = self.s.tracks.get(track).map(|t| t.effects.clone()).unwrap_or_default();
-                        for e in &mut fx {
-                            if let ffcut_core::EffectKind::Norm(n) = &mut e.kind {
-                                n.measured = None; // a measurement belongs to one clip
-                            }
-                        }
-                        self.fx_presets.insert(name, fx);
-                        self.save_fx_presets();
-                        self.fx_save_track = None;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        self.fx_save_track = None;
-                    }
-                });
-            });
-            if !open {
-                self.fx_save_track = None;
-            }
-        }
-
-        if self.show_about {
-            let open = os_window(ctx, "about", "About FFcut", [460.0, 230.0], |ui| {
-                ui.label(RichText::new(format!("FFcut {}", crate::update::VERSION)).size(18.0).strong());
-                ui.label("A small native ffmpeg front end: trim, crop, rotate, re-encode, audio tracks.");
-                ui.add_space(4.0);
-                if crate::update::configured() {
-                    ui.hyperlink_to(crate::update::repo_url(), crate::update::repo_url());
-                }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.add_enabled(self.update_rx.is_none(), egui::Button::new("Check for updates")).clicked() {
-                        self.start_update_check(ui.ctx(), true);
-                    }
-                    if let Some(m) = &self.update_msg {
-                        ui.label(RichText::new(m).color(egui::Color32::from_gray(170)));
-                    }
-                });
-                if self.update_found.is_some() && ui.button("Show the new version…").clicked() {
-                    self.show_update = true;
-                }
-            });
-            if !open {
-                self.show_about = false;
-            }
-        }
-
-        if self.show_update {
-            let rel = self.update_found.clone();
-            let open = os_window(ctx, "update", "Update available", [500.0, 420.0], |ui| {
-                let Some(r) = &rel else {
-                    ui.label("You have the latest version.");
-                    return;
-                };
-                ui.label(RichText::new(format!("FFcut {} is out", r.version)).size(16.0).strong());
-                ui.weak(format!("You have {}.", crate::update::VERSION));
-                if !r.notes.is_empty() {
-                    ui.add_space(6.0);
-                    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                        ui.add(egui::Label::new(RichText::new(&r.notes).size(12.5)).wrap());
-                    });
-                }
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    let b = egui::Button::new(RichText::new("Open the release page").color(egui::Color32::BLACK)).fill(theme::ACCENT);
-                    if ui.add(b).clicked() {
-                        let _ = open::that(&r.page);
-                    }
-                    if ui.button("Skip this version").on_hover_text("Hide the lamp until an even newer version appears").clicked() {
-                        self.settings.skipped_version = r.version.clone();
-                        self.settings.save();
-                        self.update_found = None;
-                        self.show_update = false;
-                    }
-                });
-                ui.add_space(4.0);
-                ui.weak("Windows: download the zip from the release page and replace the old folder.\nLinux: download the new AppImage (or let GearLever / AppImageUpdate do it).");
-            });
-            if !open {
-                self.show_update = false;
-            }
-        }
-
+        self.error_dialog(ctx);
+        self.save_preset_dialog(ctx);
+        self.save_fx_preset_dialog(ctx);
+        self.about_dialog(ctx);
+        self.update_dialog(ctx);
         self.settings_window(ctx);
     }
 
-    pub fn show_in_folder(&self, p: &std::path::Path) {
-        open_in_file_manager(p);
+    fn error_dialog(&mut self, ctx: &egui::Context) {
+        let Some((title, body)) = &self.dialogs.error else { return };
+        let (title, body) = (title.clone(), body.clone());
+        let open = os_window(ctx, "error", &title, [620.0, 380.0], |ui| {
+            egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                ui.add(egui::Label::new(RichText::new(&body).monospace()).selectable(true));
+            });
+            ui.add_space(6.0);
+            if ui.button("Copy message").clicked() {
+                ctx.copy_text(body.clone());
+            }
+        });
+        if !open {
+            self.dialogs.error = None;
+        }
+    }
+
+    fn save_preset_dialog(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.save_preset {
+            return;
+        }
+        let mut close = false;
+        let open = os_window(ctx, "save_preset", "Save preset", [440.0, 440.0], |ui| {
+            widgets::hint(ui, "Choose what goes into the preset. Trim, crop and rotation belong to the clip and are never saved.");
+            ui.add_space(4.0);
+            let parts = &mut self.presets_ui.save_parts;
+            for part in ffcut_core::presets::Part::ALL {
+                let mut on = parts.contains(&part);
+                if ui.checkbox(&mut on, part.label()).changed() {
+                    if on {
+                        parts.push(part);
+                    } else {
+                        parts.retain(|p| *p != part);
+                    }
+                }
+            }
+            ui.add_space(6.0);
+            let ready = !self.presets_ui.save_parts.is_empty();
+            match name_prompt(ui, &mut self.presets_ui.name, ready) {
+                Some(Prompt::Save(name)) => {
+                    let p = Preset::from_parts(&self.container, &self.s, &self.presets_ui.save_parts);
+                    self.presets.export.insert(name, p);
+                    if let Err(e) = self.presets.save_export() {
+                        self.status = Some(Status::Error(e));
+                    }
+                    close = true;
+                }
+                Some(Prompt::Cancel) => close = true,
+                None => {}
+            }
+        });
+        if !open || close {
+            self.dialogs.save_preset = false;
+        }
+    }
+
+    fn save_fx_preset_dialog(&mut self, ctx: &egui::Context) {
+        let Some(track) = self.presets_ui.fx_save_track else { return };
+        let mut close = false;
+        let open = os_window(ctx, "save_fx_preset", "Save audio preset", [400.0, 170.0], |ui| {
+            widgets::hint(ui, "Saves the effects of this track under a name. Apply it to any track later.");
+            ui.add_space(4.0);
+            match name_prompt(ui, &mut self.presets_ui.name, true) {
+                Some(Prompt::Save(name)) => {
+                    let mut fx = self.s.tracks.get(track).map(|t| t.effects.clone()).unwrap_or_default();
+                    for e in &mut fx {
+                        if let ffcut_core::EffectKind::Norm(n) = &mut e.kind {
+                            n.measured = None; // a measurement belongs to one clip
+                        }
+                    }
+                    self.presets.fx.insert(name, fx);
+                    self.save_fx_presets();
+                    close = true;
+                }
+                Some(Prompt::Cancel) => close = true,
+                None => {}
+            }
+        });
+        if !open || close {
+            self.presets_ui.fx_save_track = None;
+        }
+    }
+
+    fn about_dialog(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.about {
+            return;
+        }
+        let open = os_window(ctx, "about", "About FFcut", [460.0, 240.0], |ui| {
+            ui.label(RichText::new(format!("FFcut {}", crate::update::VERSION)).size(size::PAGE).strong());
+            ui.label("A small native ffmpeg front end: trim, crop, rotate, re-encode, audio tracks.");
+            ui.add_space(4.0);
+            if crate::update::configured() {
+                ui.hyperlink_to(crate::update::repo_url(), crate::update::repo_url());
+            }
+            ui.add_space(6.0);
+            self.update_check_row(ui);
+        });
+        if !open {
+            self.dialogs.about = false;
+        }
+    }
+
+    /// "Check for updates" with the result of the last check (About and Settings → Updates).
+    pub(super) fn update_check_row(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            if ui.add_enabled(self.updates.rx.is_none(), egui::Button::new("Check for updates")).clicked() {
+                self.start_update_check(ui.ctx(), true);
+            }
+            if let Some(m) = &self.updates.msg {
+                ui.label(RichText::new(m).color(theme::TEXT_LABEL));
+            }
+        });
+        if self.updates.found.is_some() && ui.button("Show the new version…").clicked() {
+            self.dialogs.update = true;
+        }
+    }
+
+    fn update_dialog(&mut self, ctx: &egui::Context) {
+        if !self.dialogs.update {
+            return;
+        }
+        let rel = self.updates.found.clone();
+        let open = os_window(ctx, "update", "Update available", [500.0, 420.0], |ui| {
+            let Some(r) = &rel else {
+                ui.label("You have the latest version.");
+                return;
+            };
+            ui.label(RichText::new(format!("FFcut {} is out", r.version)).size(size::HEADING).strong());
+            ui.weak(format!("You have {}.", crate::update::VERSION));
+            if !r.notes.is_empty() {
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                    ui.add(egui::Label::new(&r.notes).wrap());
+                });
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                if ui.add(widgets::primary_button("Open the release page")).clicked() {
+                    let _ = open::that(&r.page);
+                }
+                if ui.button("Skip this version").on_hover_text("Hide the lamp until an even newer version appears").clicked() {
+                    self.settings.skipped_version = r.version.clone();
+                    self.settings.save();
+                    self.updates.found = None;
+                    self.dialogs.update = false;
+                }
+            });
+            ui.add_space(4.0);
+            widgets::hint(ui, "Windows: download the zip from the release page and replace the old folder.\nLinux: download the new AppImage (or let GearLever / AppImageUpdate do it).");
+        });
+        if !open {
+            self.dialogs.update = false;
+        }
     }
 }
 
@@ -320,7 +363,7 @@ pub fn os_window_raw(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2],
     let builder = egui::ViewportBuilder::default()
         .with_title(title)
         .with_inner_size(size)
-        .with_min_inner_size([480.0, 300.0])
+        .with_min_inner_size([size[0].min(480.0), size[1].min(300.0)])
         .with_app_id("ffcut")
         .with_minimize_button(false)
         .with_maximize_button(false);
@@ -331,82 +374,4 @@ pub fn os_window_raw(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2],
         body(ui);
     });
     open
-}
-
-/// Width of the label column of every sidebar row, so fields line up from one group to the next.
-pub const LABEL_W: f32 = 100.0;
-/// Width of every numeric field in the sidebar.
-pub const NUM_W: f32 = 84.0;
-
-/// One sidebar row: a label in the fixed column, then the controls.
-pub fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        let h = ui.spacing().interact_size.y;
-        ui.allocate_ui_with_layout(egui::vec2(LABEL_W, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            ui.set_min_size(egui::vec2(LABEL_W, h));
-            ui.add(egui::Label::new(RichText::new(label).color(egui::Color32::from_gray(170))).truncate());
-        });
-        add(ui)
-    })
-    .inner
-}
-
-/// A numeric field of the standard width.
-pub fn num(ui: &mut egui::Ui, dv: egui::DragValue<'_>) -> egui::Response {
-    let h = ui.spacing().interact_size.y;
-    ui.add_sized([NUM_W, h], dv)
-}
-
-/// A two-column grid of "label | control" rows with the same label column as [`field`].
-pub fn grid(id: impl std::hash::Hash + std::fmt::Debug) -> egui::Grid {
-    egui::Grid::new(id).num_columns(2).min_col_width(LABEL_W).spacing([8.0, 6.0])
-}
-
-/// Makes the sliders below fill the rest of the row (call once at the top of a card, after its width is set).
-pub fn fit_sliders(ui: &mut egui::Ui) {
-    ui.spacing_mut().slider_width = (ui.available_width() - LABEL_W - 110.0).max(70.0);
-}
-
-/// A rounded "card" with a title: the building block of the settings pages.
-pub fn card(ui: &mut egui::Ui, title: &str, hint: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::NONE
-        .fill(egui::Color32::from_rgb(40, 42, 48))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(54)))
-        .corner_radius(10)
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.label(RichText::new(title).size(14.0).strong().color(egui::Color32::from_gray(235)));
-            if let Some(h) = hint {
-                ui.add(egui::Label::new(RichText::new(h).size(11.5).color(egui::Color32::from_gray(140))).wrap());
-            }
-            ui.add_space(8.0);
-            add(ui);
-        });
-    ui.add_space(12.0);
-}
-
-/// A context menu that stays open when its fields are clicked (so values can be typed); buttons close it with `ui.close()`.
-pub(super) fn ctx_menu(resp: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Popup::context_menu(resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(add);
-}
-
-/// A compact titled box for the sidebar: the explanation shows as a tooltip on the title, not as text.
-pub fn side_card(ui: &mut egui::Ui, title: &str, tip: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::NONE
-        .fill(egui::Color32::from_rgb(40, 42, 48))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_gray(54)))
-        .corner_radius(8)
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            let t = ui.label(RichText::new(title).size(13.0).strong().color(egui::Color32::from_gray(235)));
-            if let Some(h) = tip {
-                t.on_hover_text(h);
-            }
-            ui.add_space(4.0);
-            fit_sliders(ui);
-            add(ui);
-        });
-    ui.add_space(6.0);
 }

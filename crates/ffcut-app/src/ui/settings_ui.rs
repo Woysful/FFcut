@@ -2,38 +2,42 @@
 
 use super::{card, os_window_raw};
 use crate::app::App;
-use crate::theme;
+use crate::theme::{self, radius, size};
 use eframe::egui::{self, vec2, Align, Color32, Layout, RichText};
 
 const PAGES: [&str; 5] = ["General", "Interface", "Hotkeys", "Updates", "About"];
 
 fn dim(t: impl Into<String>) -> RichText {
-    RichText::new(t.into()).size(11.5).color(Color32::from_gray(140))
+    RichText::new(t.into()).size(size::HINT).color(theme::TEXT_DIM)
 }
 
 impl App {
     pub fn settings_window(&mut self, ctx: &egui::Context) {
-        if !self.show_settings {
+        if !self.dialogs.settings {
             return;
         }
         let open = os_window_raw(ctx, "settings", "Settings", [820.0, 600.0], |ui| {
-            egui::Panel::left("settings_nav").exact_size(190.0).resizable(false).frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(12, 16))).show(ui, |ui| {
-                ui.label(RichText::new("Settings").size(18.0).strong());
-                ui.add_space(12.0);
-                ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
-                    for (i, name) in PAGES.iter().enumerate() {
-                        let sel = self.settings_tab == i;
-                        let b = egui::Button::new(RichText::new(*name).size(13.5).color(if sel { Color32::WHITE } else { Color32::from_gray(185) }))
-                            .fill(if sel { theme::ACCENT.gamma_multiply(0.55) } else { Color32::TRANSPARENT })
-                            .stroke(egui::Stroke::NONE)
-                            .corner_radius(8)
-                            .min_size(vec2(0.0, 34.0));
-                        if ui.add(b).clicked() {
-                            self.settings_tab = i;
+            egui::Panel::left("settings_nav")
+                .exact_size(190.0)
+                .resizable(false)
+                .frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(12, 16)))
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Settings").size(size::PAGE).strong());
+                    ui.add_space(12.0);
+                    ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
+                        for (i, name) in PAGES.iter().enumerate() {
+                            let sel = self.settings_tab == i;
+                            let b = egui::Button::new(RichText::new(*name).size(size::TITLE).color(if sel { Color32::WHITE } else { theme::TEXT_LABEL }))
+                                .fill(if sel { theme::ACCENT.gamma_multiply(0.55) } else { Color32::TRANSPARENT })
+                                .stroke(egui::Stroke::NONE)
+                                .corner_radius(radius::CARD)
+                                .min_size(vec2(0.0, 34.0));
+                            if ui.add(b).clicked() {
+                                self.settings_tab = i;
+                            }
                         }
-                    }
+                    });
                 });
-            });
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin::symmetric(22, 18))).show(ui, |ui| {
                 ui.label(RichText::new(PAGES[self.settings_tab.min(PAGES.len() - 1)]).size(20.0).strong());
                 ui.add_space(10.0);
@@ -47,7 +51,7 @@ impl App {
             });
         });
         if !open {
-            self.show_settings = false;
+            self.dialogs.settings = false;
             self.hk_capture = None;
         }
     }
@@ -114,7 +118,11 @@ impl App {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
                 for (name, what) in crate::layout::TITLE_VARS {
-                    if ui.add(egui::Button::new(RichText::new(format!("{{{name}}}")).size(11.5)).corner_radius(12).min_size(vec2(0.0, 22.0))).on_hover_text(*what).clicked() {
+                    if ui
+                        .add(egui::Button::new(RichText::new(format!("{{{name}}}")).size(11.5)).corner_radius(12).min_size(vec2(0.0, 22.0)))
+                        .on_hover_text(*what)
+                        .clicked()
+                    {
                         insert = Some(name);
                     }
                 }
@@ -126,10 +134,11 @@ impl App {
             if r.lost_focus() {
                 self.settings.save();
             }
-            let preview = crate::layout::render_title(&self.settings.title_template, self.clip.as_ref().map(|c| (c.path.as_path(), &c.info)), &self.settings.path_sep);
+            let preview =
+                crate::layout::render_title(&self.settings.title_template, self.clip.as_ref().map(|c| (c.path.as_path(), &c.info)), &self.settings.path_sep);
             ui.add_space(6.0);
             ui.label(dim("Preview"));
-            ui.label(RichText::new(preview).size(13.0).color(Color32::from_gray(215)));
+            ui.label(RichText::new(preview).size(size::TITLE).color(theme::TEXT));
         });
 
         card(ui, "Path display", Some("How folder separators look in {path}, {dir} and the file info line."), |ui| {
@@ -156,19 +165,23 @@ impl App {
             let mut changed = false;
             let n = self.settings.info_items.len();
             for (i, it) in self.settings.info_items.iter_mut().enumerate() {
-                egui::Frame::NONE.fill(if i % 2 == 0 { Color32::from_white_alpha(5) } else { Color32::TRANSPARENT }).corner_radius(6).inner_margin(egui::Margin::symmetric(8, 3)).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        changed |= ui.checkbox(&mut it.on, crate::layout::info_label(&it.key)).changed();
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.add_enabled(i + 1 < n, egui::Button::new("▼").small()).on_hover_text("Move down").clicked() {
-                                mv = Some((i, 1));
-                            }
-                            if ui.add_enabled(i > 0, egui::Button::new("▲").small()).on_hover_text("Move up").clicked() {
-                                mv = Some((i, -1));
-                            }
+                egui::Frame::NONE
+                    .fill(if i % 2 == 0 { Color32::from_white_alpha(5) } else { Color32::TRANSPARENT })
+                    .corner_radius(radius::WIDGET)
+                    .inner_margin(egui::Margin::symmetric(8, 3))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            changed |= ui.checkbox(&mut it.on, crate::layout::info_label(&it.key)).changed();
+                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                if ui.add_enabled(i + 1 < n, egui::Button::new("▼").small()).on_hover_text("Move down").clicked() {
+                                    mv = Some((i, 1));
+                                }
+                                if ui.add_enabled(i > 0, egui::Button::new("▲").small()).on_hover_text("Move up").clicked() {
+                                    mv = Some((i, -1));
+                                }
+                            });
                         });
                     });
-                });
             }
             if let Some((i, d)) = mv {
                 self.settings.info_items.swap(i, (i as isize + d) as usize);
@@ -185,32 +198,41 @@ impl App {
             }
         });
 
-        card(ui, "Waveform: zoom and scroll", Some("Which key goes with the mouse wheel in the audio-file waveform. A key can do only one of the two."), |ui| {
-            use crate::settings::ModKey;
-            let (mut zoom, mut scroll) = (self.settings.zoom_key(), self.settings.scroll_key());
-            let (z0, s0) = (zoom, scroll);
-            ui.horizontal(|ui| {
-                ui.label("Zoom");
-                for k in ModKey::ALL {
-                    ui.selectable_value(&mut zoom, k, k.label());
+        card(
+            ui,
+            "Waveform: zoom and scroll",
+            Some("Which key goes with the mouse wheel in the audio-file waveform. A key can do only one of the two."),
+            |ui| {
+                use crate::settings::ModKey;
+                let (mut zoom, mut scroll) = (self.settings.zoom_key(), self.settings.scroll_key());
+                let (z0, s0) = (zoom, scroll);
+                ui.horizontal(|ui| {
+                    ui.label("Zoom");
+                    for k in ModKey::ALL {
+                        ui.selectable_value(&mut zoom, k, k.label());
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Scroll");
+                    for k in ModKey::ALL {
+                        ui.selectable_value(&mut scroll, k, k.label());
+                    }
+                });
+                // both on one key is not possible: the one that was not just touched gives way
+                if zoom == scroll {
+                    if zoom != z0 {
+                        scroll = z0
+                    } else {
+                        zoom = s0
+                    }
                 }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Scroll");
-                for k in ModKey::ALL {
-                    ui.selectable_value(&mut scroll, k, k.label());
+                if (zoom, scroll) != (z0, s0) {
+                    self.settings.zoom_mod = Some(zoom);
+                    self.settings.scroll_mod = Some(scroll);
+                    self.settings.save();
                 }
-            });
-            // both on one key is not possible: the one that was not just touched gives way
-            if zoom == scroll {
-                if zoom != z0 { scroll = z0 } else { zoom = s0 }
-            }
-            if (zoom, scroll) != (z0, s0) {
-                self.settings.zoom_mod = Some(zoom);
-                self.settings.scroll_mod = Some(scroll);
-                self.settings.save();
-            }
-        });
+            },
+        );
 
         card(ui, "Timer", Some("The timer above the timeline can show time or frame numbers. You can also click it to switch."), |ui| {
             let mut frames = self.settings.show_frames;
@@ -255,42 +277,50 @@ impl App {
             }
             ui.ctx().request_repaint();
         }
-        card(ui, "Keyboard shortcuts", Some("Click a field, then press the new keys. Backspace clears it, Esc cancels. Each action can have two keys."), |ui| {
-            egui::Grid::new("hotkeys").num_columns(4).spacing([10.0, 8.0]).show(ui, |ui| {
-                for a in Action::ALL {
-                    ui.label(a.label());
-                    let list = chords(&self.settings.hotkeys, a);
-                    for slot in 0..2 {
-                        let recording = self.hk_capture == Some((a, slot));
-                        let text = if recording { "Press keys…".to_string() } else { list.get(slot).map(|c| c.display()).unwrap_or_else(|| "—".into()) };
-                        let b = egui::Button::new(RichText::new(text).monospace().size(12.5).color(if recording { theme::ACCENT } else { Color32::from_gray(220) })).min_size(vec2(104.0, 24.0)).selected(recording);
-                        if ui.add(b).clicked() {
-                            self.hk_capture = if recording { None } else { Some((a, slot)) };
-                            self.hk_note.clear();
+        card(
+            ui,
+            "Keyboard shortcuts",
+            Some("Click a field, then press the new keys. Backspace clears it, Esc cancels. Each action can have two keys."),
+            |ui| {
+                egui::Grid::new("hotkeys").num_columns(4).spacing([10.0, 8.0]).show(ui, |ui| {
+                    for a in Action::ALL {
+                        ui.label(a.label());
+                        let list = chords(&self.settings.hotkeys, a);
+                        for slot in 0..2 {
+                            let recording = self.hk_capture == Some((a, slot));
+                            let text =
+                                if recording { "Press keys…".to_string() } else { list.get(slot).map(|c| c.display()).unwrap_or_else(|| "—".into()) };
+                            let b = egui::Button::new(RichText::new(text).monospace().size(12.5).color(if recording { theme::ACCENT } else { theme::TEXT }))
+                                .min_size(vec2(104.0, 24.0))
+                                .selected(recording);
+                            if ui.add(b).clicked() {
+                                self.hk_capture = if recording { None } else { Some((a, slot)) };
+                                self.hk_note.clear();
+                            }
                         }
+                        let changed = self.settings.hotkeys.contains_key(a.id());
+                        if ui.add_enabled(changed, egui::Button::new("Reset").small()).on_hover_text("Back to the default keys").clicked() {
+                            self.settings.hotkeys.remove(a.id());
+                            self.hk_note.clear();
+                            self.settings.save();
+                        }
+                        ui.end_row();
                     }
-                    let changed = self.settings.hotkeys.contains_key(a.id());
-                    if ui.add_enabled(changed, egui::Button::new("Reset").small()).on_hover_text("Back to the default keys").clicked() {
-                        self.settings.hotkeys.remove(a.id());
-                        self.hk_note.clear();
-                        self.settings.save();
-                    }
-                    ui.end_row();
+                });
+                if !self.hk_note.is_empty() {
+                    ui.add_space(6.0);
+                    super::widgets::warn(ui, self.hk_note.clone());
                 }
-            });
-            if !self.hk_note.is_empty() {
-                ui.add_space(6.0);
-                ui.colored_label(theme::WARN, &self.hk_note);
-            }
-            ui.add_space(8.0);
-            if ui.add_enabled(!self.settings.hotkeys.is_empty(), egui::Button::new("Reset all to defaults")).clicked() {
-                self.settings.hotkeys.clear();
-                self.hk_note.clear();
-                self.settings.save();
-            }
-            ui.add_space(4.0);
-            ui.label(dim("Esc always leaves the video fullscreen. Letters and arrows are ignored while a text field is being edited; Open, Export and the fullscreen keys always work."));
-        });
+                ui.add_space(8.0);
+                if ui.add_enabled(!self.settings.hotkeys.is_empty(), egui::Button::new("Reset all to defaults")).clicked() {
+                    self.settings.hotkeys.clear();
+                    self.hk_note.clear();
+                    self.settings.save();
+                }
+                ui.add_space(4.0);
+                ui.label(dim("Esc always leaves the video fullscreen. Letters and arrows are ignored while a text field is being edited; Open, Export and the fullscreen keys always work."));
+            },
+        );
     }
 
     fn page_updates(&mut self, ui: &mut egui::Ui) {
@@ -303,17 +333,7 @@ impl App {
                 self.settings.save();
             }
             ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.add_enabled(self.update_rx.is_none(), egui::Button::new("Check now")).clicked() {
-                    self.start_update_check(ui.ctx(), true);
-                }
-                if let Some(m) = &self.update_msg {
-                    ui.label(RichText::new(m).color(Color32::from_gray(180)));
-                }
-            });
-            if self.update_found.is_some() && ui.button("Show the new version…").clicked() {
-                self.show_update = true;
-            }
+            self.update_check_row(ui);
         });
     }
 

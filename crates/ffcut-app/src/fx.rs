@@ -30,12 +30,12 @@ impl Drop for TempDir {
 }
 
 pub struct FxState {
-    pub renders: Arc<Mutex<HashMap<String, Render>>>,
-    pub measures: Arc<Mutex<HashMap<String, Measure>>>,
+    /// Keyed by `audiofx::render_key`.
+    pub renders: Arc<Mutex<HashMap<u64, Render>>>,
+    /// Keyed by `audiofx::norm_key`.
+    pub measures: Arc<Mutex<HashMap<u64, Measure>>>,
     dir: TempDir,
     counter: Arc<std::sync::atomic::AtomicUsize>,
-    /// Track whose effects window is open.
-    pub window: Option<usize>,
     /// Track whose volume keyframes are being edited on its lane.
     pub env_edit: Option<usize>,
     /// Keyframe the lane's context menu was opened on.
@@ -69,7 +69,6 @@ impl Default for FxState {
             measures: Default::default(),
             dir: TempDir(dir),
             counter: Default::default(),
-            window: None,
             env_edit: None,
             ctx_point: None,
             eq_sel: None,
@@ -84,7 +83,6 @@ impl FxState {
     pub fn clear(&mut self) {
         self.renders.lock().unwrap().clear();
         self.measures.lock().unwrap().clear();
-        self.window = None;
         self.env_edit = None;
         self.eq_sel = None;
     }
@@ -93,7 +91,6 @@ impl FxState {
 impl App {
     /// Notices edits of the track list. Expensive follow-ups (rendering a preview, measuring, switching mpv's
     /// audio) wait until the edits have stopped for a moment, so dragging a slider or a point stays smooth.
-    /// (The pointer cannot tell: the effects window is a window of its own.)
     pub fn track_changes(&mut self, ctx: &egui::Context) {
         if self.fx.snapshot != self.s.tracks {
             self.fx.snapshot = self.s.tracks.clone();
@@ -136,7 +133,7 @@ impl App {
             return t.source.clone();
         }
         let (Some(ffmpeg), Some((file, ordinal))) = (self.ffmpeg.clone(), self.track_input(t)) else { return t.source.clone() };
-        self.fx.renders.lock().unwrap().insert(key.clone(), Render::Loading);
+        self.fx.renders.lock().unwrap().insert(key, Render::Loading);
         let n = self.fx.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let _ = std::fs::create_dir_all(&self.fx.dir.0);
         let out = self.fx.dir.0.join(format!("t{n}.flac"));
@@ -210,10 +207,10 @@ impl App {
                     continue;
                 }
                 let (Some(ffmpeg), Some((file, ordinal))) = (self.ffmpeg.clone(), self.track_input(&t)) else { continue };
-                self.fx.measures.lock().unwrap().insert(key.clone(), Measure::Loading);
+                self.fx.measures.lock().unwrap().insert(key, Measure::Loading);
                 let (measures, ctx) = (self.fx.measures.clone(), ctx.clone());
                 std::thread::spawn(move || {
-                    let r = audiofx::measure(&ffmpeg, &file, ordinal, &t, idx);
+                    let r = ffcut_core::analysis::measure(&ffmpeg, &file, ordinal, &t, idx).map_err(|e| e.to_string());
                     measures.lock().unwrap().insert(key, Measure::Done(r));
                     ctx.request_repaint();
                 });
@@ -232,10 +229,7 @@ impl App {
     /// What mpv should play in the track view: every audible track, with its rendered edits.
     pub fn want_mix(&self, ctx: &egui::Context) -> PreviewAudio {
         PreviewAudio::Mix(
-            ffcut_core::audible(&self.s.tracks)
-                .iter()
-                .map(|t| (self.preview_source(ctx, t), (t.volume.max(0.0) * 1000.0).round() as u32))
-                .collect(),
+            ffcut_core::audible(&self.s.tracks).iter().map(|t| (self.preview_source(ctx, t), (t.volume.max(0.0) * 1000.0).round() as u32)).collect(),
         )
     }
 }

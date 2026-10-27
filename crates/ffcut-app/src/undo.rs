@@ -4,6 +4,7 @@
 //! and nothing moved for a frame), so a whole drag, or a typed value, is one step.
 
 use crate::app::App;
+use crate::state::CropState;
 use eframe::egui;
 use ffcut_core::ExportSettings;
 
@@ -13,8 +14,7 @@ const LIMIT: usize = 200;
 pub struct Snap {
     s: ExportSettings,
     trim: (f64, f64),
-    crop_on: bool,
-    crop_edges: [f32; 4],
+    crop: CropState,
 }
 
 #[derive(Default)]
@@ -44,11 +44,11 @@ impl History {
 
 impl App {
     fn snap(&self) -> Snap {
-        Snap { s: self.s.clone(), trim: (self.trim_start, self.trim_end), crop_on: self.crop_on, crop_edges: self.crop_edges }
+        Snap { s: self.s.clone(), trim: (self.trim_start, self.trim_end), crop: self.crop }
     }
 
     fn same_as(&self, o: &Snap) -> bool {
-        self.s == o.s && (self.trim_start, self.trim_end) == o.trim && self.crop_on == o.crop_on && self.crop_edges == o.crop_edges
+        (self.trim_start, self.trim_end) == o.trim && self.crop == o.crop && self.s == o.s
     }
 
     /// Once per frame, before the UI draws.
@@ -63,7 +63,7 @@ impl App {
             self.hist.prev = Some(s);
             return;
         }
-        let moving = self.hist.prev.as_ref().map_or(true, |p| !self.same_as(p));
+        let moving = self.hist.prev.as_ref().is_none_or(|p| !self.same_as(p));
         if moving {
             self.hist.prev = Some(self.snap());
             ctx.request_repaint(); // one more frame to see that it stopped
@@ -85,8 +85,7 @@ impl App {
     fn apply_snap(&mut self, sn: Snap) {
         self.s = sn.s.clone();
         (self.trim_start, self.trim_end) = sn.trim;
-        self.crop_on = sn.crop_on;
-        self.crop_edges = sn.crop_edges;
+        self.crop = sn.crop;
         self.trk_drag = None;
         self.fx.env_edit = None;
         self.sync_loop();
@@ -121,7 +120,7 @@ impl App {
     /// Writes a change that has not settled yet into the history right away.
     fn track_history_now(&mut self) {
         let cur = self.snap();
-        if self.hist.base.as_ref().map_or(false, |b| *b != cur) {
+        if self.hist.base.as_ref().is_some_and(|b| *b != cur) {
             if let Some(b) = self.hist.base.replace(cur.clone()) {
                 self.hist.undo.push(b);
             }

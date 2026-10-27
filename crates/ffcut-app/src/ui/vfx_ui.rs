@@ -1,24 +1,20 @@
-//! The video effects window (colour, curves, style, restoration, covered areas, text, captions) and the
-//! markers it draws on the video.
+//! The "Video effects & text" sidebar section (colour, curves, style, restoration, covered areas, text,
+//! captions) and the markers it draws on the video.
 
+use super::widgets::{self, StackAct, StackEntry};
 use crate::app::App;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, StrokeKind};
 use ffcut_core::fonts::Font;
 use ffcut_core::videofx::*;
 
-const GREY: Color32 = Color32::from_gray(130);
-
-/// A titled box inside the sidebar (the explanation is a tooltip on the title).
-fn group(ui: &mut egui::Ui, title: &str, tip: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
-    super::side_card(ui, title, tip, add);
-}
-
-enum StackAct {
-    Remove(usize),
-    Up(usize),
-    Down(usize),
-}
+/// Curves editor channels: name and the colour of its line.
+const CHANNELS: [(&str, Color32); 4] = [
+    ("Master", Color32::from_gray(225)),
+    ("Red", Color32::from_rgb(235, 90, 90)),
+    ("Green", Color32::from_rgb(100, 210, 110)),
+    ("Blue", Color32::from_rgb(100, 150, 245)),
+];
 
 fn vfx_tip(k: &VKind) -> Option<&'static str> {
     Some(match k {
@@ -35,7 +31,12 @@ fn vfx_tip(k: &VKind) -> Option<&'static str> {
 
 fn pct_slider(ui: &mut egui::Ui, v: &mut f32, label: &str) {
     ui.label(label);
-    ui.add(egui::Slider::new(v, 0.0..=1.0).custom_formatter(|n, _| format!("{:.0} %", n * 100.0)).custom_parser(|s| s.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|n| n / 100.0)));
+    widgets::value(
+        ui,
+        egui::Slider::new(v, 0.0..=1.0)
+            .custom_formatter(|n, _| format!("{:.0} %", n * 100.0))
+            .custom_parser(|s| s.trim().trim_end_matches('%').trim().parse::<f64>().ok().map(|n| n / 100.0)),
+    );
     ui.end_row();
 }
 
@@ -45,14 +46,18 @@ fn font_label(fonts: &[Font], path: &str) -> String {
     if path.is_empty() {
         return "System default".into();
     }
-    fonts.iter().find(|f| f.path.to_string_lossy() == path).map(|f| f.name.clone()).unwrap_or_else(|| std::path::Path::new(path).file_stem().map_or(path.to_string(), |s| s.to_string_lossy().into_owned()))
+    fonts
+        .iter()
+        .find(|f| f.path.to_string_lossy() == path)
+        .map(|f| f.name.clone())
+        .unwrap_or_else(|| std::path::Path::new(path).file_stem().map_or(path.to_string(), |s| s.to_string_lossy().into_owned()))
 }
 
 fn font_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, path: &mut String, fonts: Option<&[Font]>) {
     let Some(fonts) = fonts else {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new("Looking for fonts…").color(GREY));
+            ui.label(RichText::new("Looking for fonts…").color(theme::TEXT_DIM));
         });
         return;
     };
@@ -84,10 +89,12 @@ fn spline(pts: &[(f32, f32)], n: usize) -> Vec<(f32, f32)> {
         return pts.to_vec();
     }
     if k == 2 {
-        return (0..=n).map(|i| {
-            let x = i as f32 / n as f32;
-            (x, pts[0].1 + (pts[1].1 - pts[0].1) * (x - pts[0].0) / (pts[1].0 - pts[0].0).max(1e-6))
-        }).collect();
+        return (0..=n)
+            .map(|i| {
+                let x = i as f32 / n as f32;
+                (x, pts[0].1 + (pts[1].1 - pts[0].1) * (x - pts[0].0) / (pts[1].0 - pts[0].0).max(1e-6))
+            })
+            .collect();
     }
     // second derivatives (natural boundary), tridiagonal solve
     let h: Vec<f32> = (0..k - 1).map(|i| (pts[i + 1].0 - pts[i].0).max(1e-6)).collect();
@@ -137,7 +144,13 @@ fn curve_plot(ui: &mut egui::Ui, pts: &mut Vec<(f32, f32)>, sel: &mut Option<usi
             if k < n {
                 let (lo, hi) = (if k == 0 { 0.0 } else { pts[k - 1].0 + 0.01 }, if k + 1 == n { 1.0 } else { pts[k + 1].0 - 0.01 });
                 // the end points keep their place on the left / right edge and only move up and down
-                let x = if k == 0 { 0.0 } else if k == last(pts) { 1.0 } else { x.clamp(lo, hi.max(lo)) };
+                let x = if k == 0 {
+                    0.0
+                } else if k == last(pts) {
+                    1.0
+                } else {
+                    x.clamp(lo, hi.max(lo))
+                };
                 pts[k] = (x, y);
             }
         }
@@ -167,10 +180,10 @@ fn curve_plot(ui: &mut egui::Ui, pts: &mut Vec<(f32, f32)>, sel: &mut Option<usi
             }
         }
     }
-    if resp.hover_pos().map_or(false, |p| hit(pts, p).is_some()) {
+    if resp.hover_pos().is_some_and(|p| hit(pts, p).is_some()) {
         ui.ctx().set_cursor_icon(CursorIcon::Grab);
     }
-    if sel.map_or(false, |k| k >= pts.len()) {
+    if sel.is_some_and(|k| k >= pts.len()) {
         *sel = None;
     }
 
@@ -202,12 +215,12 @@ fn range_ui(ui: &mut egui::Ui, range: &mut Option<(f64, f64)>, now: f64, dur: f6
             *range = if on { Some((now, (now + 3.0).min(dur).max(now + 0.1))) } else { None };
         }
         if let Some((a, b)) = range {
-            ui.add(egui::DragValue::new(a).range(0.0..=dur).speed(0.05).suffix(" s").fixed_decimals(2));
+            super::widgets::value(ui, egui::DragValue::new(a).range(0.0..=dur).speed(0.05).suffix(" s").fixed_decimals(2));
             if ui.small_button("◂ playhead").on_hover_text("Start at the playhead").clicked() {
                 *a = now.min(*b);
             }
             ui.label("to");
-            ui.add(egui::DragValue::new(b).range(0.0..=dur).speed(0.05).suffix(" s").fixed_decimals(2));
+            super::widgets::value(ui, egui::DragValue::new(b).range(0.0..=dur).speed(0.05).suffix(" s").fixed_decimals(2));
             if ui.small_button("playhead ▸").on_hover_text("End at the playhead").clicked() {
                 *b = now.max(*a);
             }
@@ -231,18 +244,19 @@ struct Ctx<'a> {
 fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
     match &mut e.kind {
         VKind::Color(c) => {
-            super::grid(("color", k)).show(ui, |ui| {
+            widgets::grid(("color", k)).show(ui, |ui| {
                 ui.label("Brightness");
-                ui.add(egui::Slider::new(&mut c.brightness, -1.0..=1.0).fixed_decimals(2));
+                super::widgets::value(ui, egui::Slider::new(&mut c.brightness, -1.0..=1.0).fixed_decimals(2));
                 ui.end_row();
                 ui.label("Contrast");
-                ui.add(egui::Slider::new(&mut c.contrast, 0.0..=2.0).fixed_decimals(2));
+                super::widgets::value(ui, egui::Slider::new(&mut c.contrast, 0.0..=2.0).fixed_decimals(2));
                 ui.end_row();
                 ui.label("Saturation");
-                ui.add(egui::Slider::new(&mut c.saturation, 0.0..=3.0).fixed_decimals(2));
+                super::widgets::value(ui, egui::Slider::new(&mut c.saturation, 0.0..=3.0).fixed_decimals(2));
                 ui.end_row();
                 ui.label("Gamma");
-                ui.add(egui::Slider::new(&mut c.gamma, 0.1..=4.0).logarithmic(true).fixed_decimals(2)).on_hover_text("Above 1 lightens the mid-tones, below 1 darkens them");
+                super::widgets::value(ui, egui::Slider::new(&mut c.gamma, 0.1..=4.0).logarithmic(true).fixed_decimals(2))
+                    .on_hover_text("Above 1 lightens the mid-tones, below 1 darkens them");
                 ui.end_row();
             });
             if *c != ColorAdj::default() && ui.small_button("Reset").clicked() {
@@ -251,7 +265,7 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
         }
         VKind::Curves(c) => {
             ui.horizontal(|ui| {
-                for (i, (name, col)) in [("Master", Color32::from_gray(225)), ("Red", Color32::from_rgb(235, 90, 90)), ("Green", Color32::from_rgb(100, 210, 110)), ("Blue", Color32::from_rgb(100, 150, 245))].into_iter().enumerate() {
+                for (i, (name, col)) in CHANNELS.into_iter().enumerate() {
                     if ui.selectable_label(*cx.curve_ch == i, RichText::new(name).color(col)).clicked() {
                         *cx.curve_ch = i;
                         *cx.curve_sel = None;
@@ -259,7 +273,7 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
                 }
             });
             let ch = (*cx.curve_ch).min(3);
-            let color = [Color32::from_gray(225), Color32::from_rgb(235, 90, 90), Color32::from_rgb(100, 210, 110), Color32::from_rgb(100, 150, 245)][ch];
+            let color = CHANNELS[ch].1;
             let pts = match ch {
                 0 => &mut c.master,
                 1 => &mut c.r,
@@ -275,28 +289,28 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
             }
         }
         VKind::Vignette(s) => {
-            super::grid(("vig", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
+            widgets::grid(("vig", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
         }
         VKind::Sharpen(a) => {
-            super::grid(("sharp", k)).show(ui, |ui| {
+            widgets::grid(("sharp", k)).show(ui, |ui| {
                 ui.label("Amount");
-                ui.add(egui::Slider::new(a, 0.0..=3.0).fixed_decimals(2));
+                super::widgets::value(ui, egui::Slider::new(a, 0.0..=3.0).fixed_decimals(2));
                 ui.end_row();
             });
         }
         VKind::Denoise(s) => {
-            super::grid(("dn", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
+            widgets::grid(("dn", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
         }
         VKind::Deblock(s) => {
-            super::grid(("db", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
+            widgets::grid(("db", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
         }
         VKind::Deband(s) => {
-            super::grid(("dband", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
+            widgets::grid(("dband", k)).show(ui, |ui| pct_slider(ui, s, "Strength"));
         }
         VKind::Deflicker(n) => {
             ui.horizontal(|ui| {
                 ui.label("Window");
-                ui.add(egui::DragValue::new(n).range(2..=30).speed(0.2).suffix(" frames"));
+                super::widgets::value(ui, egui::DragValue::new(n).range(2..=30).speed(0.2).suffix(" frames"));
             });
         }
         VKind::Area(a) => {
@@ -313,14 +327,22 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
                     ui.color_edit_button_srgb(&mut a.color);
                 });
             } else {
-                super::grid(("area", k)).show(ui, |ui| pct_slider(ui, &mut a.amount, if a.shape == AreaShape::Blur { "Blur" } else { "Block size" }));
+                widgets::grid(("area", k)).show(ui, |ui| pct_slider(ui, &mut a.amount, if a.shape == AreaShape::Blur { "Blur" } else { "Block size" }));
             }
             for (title, pair) in [("Position", [("X", 0usize), ("Y", 1)]), ("Size", [("Width", 2), ("Height", 3)])] {
-                super::field(ui, title, |ui| {
+                widgets::field(ui, title, |ui| {
                     for (label, i) in pair {
-                        let v = match i { 0 => &mut a.x, 1 => &mut a.y, 2 => &mut a.w, _ => &mut a.h };
+                        let v = match i {
+                            0 => &mut a.x,
+                            1 => &mut a.y,
+                            2 => &mut a.w,
+                            _ => &mut a.h,
+                        };
                         let mut p = *v * 100.0;
-                        if super::num(ui, egui::DragValue::new(&mut p).range(0.0..=100.0).speed(0.3).suffix(" %").fixed_decimals(1)).on_hover_text(label).changed() {
+                        if widgets::num(ui, egui::DragValue::new(&mut p).range(0.0..=100.0).speed(0.3).suffix(" %").fixed_decimals(1))
+                            .on_hover_text(label)
+                            .changed()
+                        {
                             *v = p / 100.0;
                         }
                     }
@@ -334,12 +356,13 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
         }
         VKind::Text(t) => {
             ui.add(egui::TextEdit::multiline(&mut t.text).desired_rows(2).desired_width(f32::INFINITY).hint_text("Text"));
-            super::grid(("text", k)).show(ui, |ui| {
+            widgets::grid(("text", k)).show(ui, |ui| {
                 ui.label("Font");
                 font_combo(ui, ("font", k), &mut t.font, cx.fonts);
                 ui.end_row();
                 ui.label("Size");
-                ui.add(egui::Slider::new(&mut t.size, 1.0..=30.0).suffix(" %").fixed_decimals(1)).on_hover_text("Percent of the picture height");
+                super::widgets::value(ui, egui::Slider::new(&mut t.size, 1.0..=30.0).suffix(" %").fixed_decimals(1))
+                    .on_hover_text("Percent of the picture height");
                 ui.end_row();
                 ui.label("Colour");
                 ui.color_edit_button_srgb(&mut t.color);
@@ -347,7 +370,8 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
                 ui.label("Outline");
                 ui.horizontal(|ui| {
                     ui.color_edit_button_srgb(&mut t.outline_color);
-                    super::num(ui, egui::DragValue::new(&mut t.outline).range(0.0..=30.0).speed(0.2).suffix(" %").fixed_decimals(0)).on_hover_text("Thickness, percent of the font size (0 = none)");
+                    widgets::num(ui, egui::DragValue::new(&mut t.outline).range(0.0..=30.0).speed(0.2).suffix(" %").fixed_decimals(0))
+                        .on_hover_text("Thickness, percent of the font size (0 = none)");
                 });
                 ui.end_row();
                 ui.label("Background");
@@ -377,10 +401,13 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
                 });
                 ui.end_row();
             });
-            super::field(ui, "Position", |ui| {
+            widgets::field(ui, "Position", |ui| {
                 for (label, v) in [("X", &mut t.x), ("Y", &mut t.y)] {
                     let mut p = *v * 100.0;
-                    if super::num(ui, egui::DragValue::new(&mut p).range(0.0..=100.0).speed(0.3).suffix(" %").fixed_decimals(1)).on_hover_text(label).changed() {
+                    if widgets::num(ui, egui::DragValue::new(&mut p).range(0.0..=100.0).speed(0.3).suffix(" %").fixed_decimals(1))
+                        .on_hover_text(label)
+                        .changed()
+                    {
                         *v = p / 100.0;
                     }
                 }
@@ -400,12 +427,12 @@ fn caption_ui(ui: &mut egui::Ui, id: &str, c: &mut Caption, fonts: Option<&[Font
         return;
     }
     ui.add(egui::TextEdit::multiline(&mut c.text).id_salt((id, "text")).desired_rows(2).desired_width(f32::INFINITY).hint_text("Caption text"));
-    super::grid(("cap", id)).show(ui, |ui| {
+    widgets::grid(("cap", id)).show(ui, |ui| {
         ui.label("Font");
         font_combo(ui, ("capfont", id), &mut c.font, fonts);
         ui.end_row();
         ui.label("Size");
-        ui.add(egui::Slider::new(&mut c.size, 1.0..=20.0).suffix(" %").fixed_decimals(1)).on_hover_text("Percent of the picture width");
+        super::widgets::value(ui, egui::Slider::new(&mut c.size, 1.0..=20.0).suffix(" %").fixed_decimals(1)).on_hover_text("Percent of the picture width");
         ui.end_row();
         ui.label("Colours");
         ui.horizontal(|ui| {
@@ -430,7 +457,7 @@ fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
         ui.close();
         added = true;
     };
-    ui.label(RichText::new("COLOUR").size(10.5).color(GREY));
+    widgets::caption(ui, "COLOUR");
     if ui.button("Brightness / contrast / saturation / gamma").clicked() {
         push(ui, VKind::Color(ColorAdj::default()));
     }
@@ -438,7 +465,7 @@ fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
         push(ui, VKind::Curves(Curves::default()));
     }
     ui.separator();
-    ui.label(RichText::new("STYLE").size(10.5).color(GREY));
+    widgets::caption(ui, "STYLE");
     if ui.button("Vignette").clicked() {
         push(ui, VKind::Vignette(0.5));
     }
@@ -446,7 +473,7 @@ fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
         push(ui, VKind::Sharpen(1.0));
     }
     ui.separator();
-    ui.label(RichText::new("RESTORATION").size(10.5).color(GREY));
+    widgets::caption(ui, "RESTORATION");
     if ui.button("Denoise").clicked() {
         push(ui, VKind::Denoise(0.5));
     }
@@ -460,7 +487,7 @@ fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
         push(ui, VKind::Deflicker(5));
     }
     ui.separator();
-    ui.label(RichText::new("HIDE A PART OF THE PICTURE").size(10.5).color(GREY));
+    widgets::caption(ui, "HIDE A PART OF THE PICTURE");
     if ui.button("Blur area").clicked() {
         push(ui, VKind::Area(Area::new(AreaShape::Blur)));
     }
@@ -478,29 +505,23 @@ fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
 }
 
 impl App {
-    /// The "Effects & text" group of the sidebar. `vfx.window` tells whether it is open (the video shows the markers then).
-    pub fn vfx_section(&mut self, ui: &mut egui::Ui) {
+    /// Body of the "Video effects & text" sidebar section. While it is open the video shows the markers.
+    pub fn vfx_body(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        if self.vfx.window {
-            self.load_fonts(&ctx);
-        }
-        let fonts_guard = self.vfx.fonts.lock().unwrap().clone();
-        let default_font = fonts_guard.as_deref().and_then(ffcut_core::fonts::pick_default).map(|f| f.path.to_string_lossy().into_owned()).unwrap_or_default();
+        self.load_fonts(&ctx);
+        let fonts = self.vfx.fonts.lock().unwrap().clone();
+        let default_font = fonts.as_deref().and_then(ffcut_core::fonts::pick_default).map(|f| f.path.to_string_lossy().into_owned()).unwrap_or_default();
 
-        let fx0 = self.s.vfx.clone();
-        let mut fx = fx0.clone();
+        let mut fx = self.s.vfx.clone();
         // texts made before the fonts were known get the default font
-        if fonts_guard.is_some() {
-            for c in [&mut fx.top, &mut fx.bottom] {
-                if c.font.is_empty() {
-                    c.font = default_font.clone();
-                }
-            }
-            for e in &mut fx.effects {
-                if let VKind::Text(t) = &mut e.kind {
-                    if t.font.is_empty() {
-                        t.font = default_font.clone();
-                    }
+        if fonts.is_some() {
+            let texts = fx.effects.iter_mut().filter_map(|e| match &mut e.kind {
+                VKind::Text(t) => Some(&mut t.font),
+                _ => None,
+            });
+            for f in [&mut fx.top.font, &mut fx.bottom.font].into_iter().chain(texts) {
+                if f.is_empty() {
+                    *f = default_font.clone();
                 }
             }
         }
@@ -508,107 +529,65 @@ impl App {
         let mut sel = self.vfx.sel;
         let mut curve_ch = self.vfx.curve_ch;
         let mut curve_sel = self.vfx.curve_sel;
-        let err = self.vfx.error.clone();
-        
-        let n_on = self.s.vfx.count_on();
-        let title = if n_on > 0 { format!("Effects & text ({n_on})") } else { "Effects & text".to_string() };
-        let shown = super::side::saved_header(ui, RichText::new(title).strong().size(13.5), "vfx-section", false).show(ui, |ui| {
-            ui.add_space(2.0);
 
-            group(ui, "Captions", Some("A bar of solid colour above or below the video with text on it, like in video memes."), |ui| {
-                caption_ui(ui, "Top", &mut fx.top, fonts_guard.as_deref());
-                ui.add_space(6.0);
-                caption_ui(ui, "Bottom", &mut fx.bottom, fonts_guard.as_deref());
-            });
-
-            ui.label(RichText::new("EFFECTS").size(11.0).strong().color(Color32::from_gray(150))).on_hover_text("Colour and restoration are applied to the picture first, then areas and text are drawn on top, each group top to bottom. Click an area or text to show its frame on the video.\nThe preview runs the same ffmpeg filters as the export and refreshes a moment after you stop editing.");
-            let mut act: Option<StackAct> = None;
-            let count = fx.effects.len();
-            for (k, e) in fx.effects.iter_mut().enumerate() {
-                let selected = sel == Some(k);
-                let resp = egui::Frame::NONE
-                    .fill(Color32::from_rgb(40, 42, 48))
-                    .stroke(Stroke::new(if selected && e.is_overlay() { 1.5 } else { 1.0 }, if selected && e.is_overlay() { theme::ACCENT } else { Color32::from_gray(54) }))
-                    .corner_radius(8)
-                    .inner_margin(egui::Margin::same(10))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        super::fit_sliders(ui);
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut e.on, "").on_hover_text("Bypass: keep it in the list but do not apply it");
-                            let name = ui.label(RichText::new(e.name()).size(13.0).strong().color(if e.on { Color32::from_gray(235) } else { Color32::from_gray(120) }));
-                            if let Some(t) = vfx_tip(&e.kind) {
-                                name.on_hover_text(t);
-                            }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("✕").on_hover_text("Remove").clicked() {
-                                    act = Some(StackAct::Remove(k));
-                                }
-                                if ui.add_enabled(k + 1 < count, egui::Button::new("▼").small()).on_hover_text("Apply later").clicked() {
-                                    act = Some(StackAct::Down(k));
-                                }
-                                if ui.add_enabled(k > 0, egui::Button::new("▲").small()).on_hover_text("Apply earlier").clicked() {
-                                    act = Some(StackAct::Up(k));
-                                }
-                            });
-                        });
-                        ui.add_space(4.0);
-                        let mut cx = Ctx { fonts: fonts_guard.as_deref(), now, dur, curve_ch: &mut curve_ch, curve_sel: &mut curve_sel };
-                        ui.add_enabled_ui(e.on, |ui| effect_body(ui, k, e, &mut cx));
-                    });
-                ui.add_space(8.0);
-                // pressing anywhere on a card selects it (its frame shows on the video)
-                if ui.input(|i| i.pointer.any_pressed()) && ui.input(|i| i.pointer.interact_pos()).map_or(false, |p| resp.response.rect.contains(p)) {
-                    sel = Some(k);
-                }
-            }
-            match act {
-                Some(StackAct::Remove(k)) => {
-                    fx.effects.remove(k);
-                    sel = None;
-                    curve_sel = None;
-                }
-                Some(StackAct::Up(k)) => {
-                    fx.effects.swap(k, k - 1);
-                    sel = None;
-                    curve_sel = None;
-                }
-                Some(StackAct::Down(k)) => {
-                    fx.effects.swap(k, k + 1);
-                    sel = None;
-                    curve_sel = None;
-                }
-                None => {}
-            }
-            if fx.effects.is_empty() {
-                ui.label(RichText::new("No effects yet.").color(Color32::from_gray(130)));
-            }
-            ui.horizontal(|ui| {
-                ui.menu_button("+ Add effect", |ui| {
-                    if add_menu(ui, &mut fx, &default_font) {
-                        sel = Some(fx.effects.len() - 1);
-                    }
-                });
-                if ui.add_enabled(!fx.effects.is_empty() || fx.top.on || fx.bottom.on, egui::Button::new("Reset all")).on_hover_text("Remove every effect and both captions").clicked() {
-                    fx = VideoFx::default();
-                    sel = None;
-                    curve_sel = None;
-                }
-            });
-            if let Some(e) = &err {
-                ui.colored_label(theme::ERR, format!("The preview could not apply this: {e}"));
-            }
+        widgets::side_box(ui, "Captions", Some("A bar of solid colour above or below the video with text on it, like in video memes."), |ui| {
+            caption_ui(ui, "Top", &mut fx.top, fonts.as_deref());
+            ui.add_space(6.0);
+            caption_ui(ui, "Bottom", &mut fx.bottom, fonts.as_deref());
         });
 
-        if fx != fx0 {
+        ui.add_space(2.0);
+        widgets::caption(ui, "Effects").on_hover_text(
+            "Colour and restoration are applied to the picture first, then areas and text are drawn on top, each group top to bottom. \
+             Click an area or text to show its frame on the video.\nThe preview runs the same ffmpeg filters as the export and refreshes a moment after you stop editing.",
+        );
+        let mut act: Option<StackAct> = None;
+        let count = fx.effects.len();
+        for (k, e) in fx.effects.iter_mut().enumerate() {
+            let entry = StackEntry { k, count, name: e.name(), tip: vfx_tip(&e.kind), highlight: sel == Some(k) && e.is_overlay() };
+            let mut on = e.on;
+            let mut cx = Ctx { fonts: fonts.as_deref(), now, dur, curve_ch: &mut curve_ch, curve_sel: &mut curve_sel };
+            let resp = widgets::stack_card(ui, entry, &mut on, &mut act, |ui| effect_body(ui, k, e, &mut cx));
+            e.on = on;
+            // pressing anywhere on a card selects it (its frame shows on the video)
+            if ui.input(|i| i.pointer.any_pressed() && i.pointer.interact_pos().is_some_and(|p| resp.rect.contains(p))) {
+                sel = Some(k);
+            }
+        }
+        if let Some(a) = act {
+            a.apply(&mut fx.effects);
+            sel = None;
+            curve_sel = None;
+        }
+        if fx.effects.is_empty() {
+            widgets::hint(ui, "No effects yet.");
+        }
+        ui.horizontal(|ui| {
+            widgets::menu_button(ui, "+ Add effect", |ui| {
+                if add_menu(ui, &mut fx, &default_font) {
+                    sel = Some(fx.effects.len() - 1);
+                }
+            });
+            if ui
+                .add_enabled(!fx.effects.is_empty() || fx.top.on || fx.bottom.on, egui::Button::new("Reset all"))
+                .on_hover_text("Remove every effect and both captions")
+                .clicked()
+            {
+                fx = VideoFx::default();
+                sel = None;
+                curve_sel = None;
+            }
+        });
+        if let Some(e) = &self.vfx.error {
+            widgets::error(ui, format!("The preview could not apply this: {e}"));
+        }
+
+        if fx != self.s.vfx {
             self.s.vfx = fx;
         }
         self.vfx.sel = sel.filter(|k| *k < self.s.vfx.effects.len());
         self.vfx.curve_ch = curve_ch;
         self.vfx.curve_sel = curve_sel;
-        self.vfx.window = shown.body_returned.is_some();
-        super::side::note_section_state(ui, "vfx-section", shown.openness >= 0.5);
-        ui.add_space(6.0);
     }
 
     /// Frame of the selected area / marker of the selected text on the video. `rect` = the picture (without bars).
@@ -624,13 +603,9 @@ impl App {
         let id = ui.id().with(("vfx-overlay", k));
         match &mut e.kind {
             VKind::Area(a) => {
-                let mut r = [a.x, a.y, a.w, a.h];
-                if rect_handles(ui, id, rect, &mut r) {
-                    a.x = r[0];
-                    a.y = r[1];
-                    a.w = r[2];
-                    a.h = r[3];
-                }
+                let mut r = [a.x, a.y, a.x + a.w, a.y + a.h];
+                area_frame(ui, id, rect, &mut r);
+                [a.x, a.y, a.w, a.h] = [r[0], r[1], r[2] - r[0], r[3] - r[1]];
             }
             VKind::Text(t) => {
                 let c = pos2(rect.left() + t.x * rect.width(), rect.top() + t.y * rect.height());
@@ -654,75 +629,16 @@ impl App {
     }
 }
 
-#[derive(Clone, Copy)]
-enum Grip {
-    Body,
-    Edge { l: bool, t: bool, r: bool, b: bool },
-}
-
-/// A draggable, resizable frame over `rect`; `r` = (x, y, w, h) as fractions of it. True when it changed.
-fn rect_handles(ui: &mut egui::Ui, id: egui::Id, rect: Rect, r: &mut [f32; 4]) -> bool {
+/// A draggable, resizable frame over `rect`; `e` = edges (x0, y0, x1, y1) as fractions of it.
+fn area_frame(ui: &mut egui::Ui, id: egui::Id, rect: Rect, e: &mut [f32; 4]) {
     let to = |x: f32, y: f32| pos2(rect.left() + x * rect.width(), rect.top() + y * rect.height());
-    let (mut x0, mut y0, mut x1, mut y1) = (r[0], r[1], r[0] + r[2], r[1] + r[3]);
-    let cr = Rect::from_min_max(to(x0, y0), to(x1, y1));
+    let cr = Rect::from_min_max(to(e[0], e[1]), to(e[2], e[3]));
     let p = ui.painter();
     p.rect_filled(cr, 0.0, theme::ACCENT.gamma_multiply(0.18));
     p.rect_stroke(cr, 0.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
-
-    let m = 12.0_f32;
-    let (l, rr, t, b, c) = (cr.left(), cr.right(), cr.top(), cr.bottom(), cr.center());
-    let h = |p: Pos2| Rect::from_center_size(p, vec2(m * 1.4, m * 1.4));
-    let e = |l, t, r, b| Grip::Edge { l, t, r, b };
-    let grips = [
-        (cr.shrink(m * 0.5), Grip::Body, CursorIcon::Grab),
-        (h(pos2(c.x, t)), e(false, true, false, false), CursorIcon::ResizeVertical),
-        (h(pos2(c.x, b)), e(false, false, false, true), CursorIcon::ResizeVertical),
-        (h(pos2(l, c.y)), e(true, false, false, false), CursorIcon::ResizeHorizontal),
-        (h(pos2(rr, c.y)), e(false, false, true, false), CursorIcon::ResizeHorizontal),
-        (h(pos2(l, t)), e(true, true, false, false), CursorIcon::ResizeNwSe),
-        (h(pos2(rr, t)), e(false, true, true, false), CursorIcon::ResizeNeSw),
-        (h(pos2(l, b)), e(true, false, false, true), CursorIcon::ResizeNeSw),
-        (h(pos2(rr, b)), e(false, false, true, true), CursorIcon::ResizeNwSe),
-    ];
-    let mut active: Option<(Grip, egui::Vec2)> = None;
-    for (i, (gr, grip, cursor)) in grips.iter().enumerate().rev() {
-        let resp = ui.interact(*gr, id.with(i), Sense::click_and_drag());
-        if resp.hovered() || resp.dragged() {
-            ui.ctx().set_cursor_icon(*cursor);
-        }
-        if resp.dragged() && active.is_none() {
-            active = Some((*grip, resp.drag_delta()));
-        }
+    let zones = widgets::grips(cr, 12.0);
+    if let Some((g, d)) = widgets::drag_grips(ui, id, &zones) {
+        widgets::move_edges(e, g, vec2(d.x / rect.width(), d.y / rect.height()), vec2(1.0, 1.0), 0.02);
     }
-    let mut changed = false;
-    if let Some((g, d)) = active {
-        let (dx, dy) = (d.x / rect.width(), d.y / rect.height());
-        let min = 0.02;
-        match g {
-            Grip::Body => {
-                let (w, hh) = (x1 - x0, y1 - y0);
-                x0 = (x0 + dx).clamp(0.0, 1.0 - w);
-                y0 = (y0 + dy).clamp(0.0, 1.0 - hh);
-                x1 = x0 + w;
-                y1 = y0 + hh;
-            }
-            Grip::Edge { l, t, r: rt, b } => {
-                if l { x0 = (x0 + dx).clamp(0.0, x1 - min); }
-                if rt { x1 = (x1 + dx).clamp(x0 + min, 1.0); }
-                if t { y0 = (y0 + dy).clamp(0.0, y1 - min); }
-                if b { y1 = (y1 + dy).clamp(y0 + min, 1.0); }
-            }
-        }
-        *r = [x0, y0, x1 - x0, y1 - y0];
-        changed = true;
-    }
-    let p = ui.painter();
-    for (gr, grip, _) in &grips {
-        if matches!(grip, Grip::Edge { .. }) {
-            let hr = Rect::from_center_size(gr.center(), vec2(8.0, 8.0));
-            p.rect_filled(hr, 2.0, theme::ACCENT);
-            p.rect_stroke(hr, 2.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Outside);
-        }
-    }
-    changed
+    widgets::paint_grips(ui.painter(), &zones, theme::ACCENT, 8.0);
 }

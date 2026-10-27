@@ -12,221 +12,19 @@
 //! * areas and text are placed in the rotated + flipped frame, in fractions of it (0..1), so they do not
 //!   depend on the resolution and the crop does not move them;
 //! * caption bars are added around the cropped picture; their text size is a share of its width.
+//!
+//! The data types live in `model::video` and are re-exported here.
 
-use serde::{Deserialize, Serialize};
+pub use crate::model::video::*;
 
-pub type Rgb = [u8; 3];
-
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
-pub struct VideoFx {
-    /// Effects, applied in this order inside their group (see the module doc).
-    #[serde(default)]
-    pub effects: Vec<VEffect>,
-    #[serde(default)]
-    pub top: Caption,
-    #[serde(default)]
-    pub bottom: Caption,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct VEffect {
-    /// Off = bypassed (kept in the list, not applied).
-    pub on: bool,
-    pub kind: VKind,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum VKind {
-    Color(ColorAdj),
-    Curves(Curves),
-    /// 0..1
-    Vignette(f32),
-    /// Unsharp amount, 0..3
-    Sharpen(f32),
-    /// 0..1
-    Denoise(f32),
-    /// 0..1 (weak → strong)
-    Deblock(f32),
-    /// 0..1
-    Deband(f32),
-    /// Averaging window in frames, 2..30
-    Deflicker(u32),
-    Area(Area),
-    Text(TextBlock),
-}
-
-impl VEffect {
-    pub fn new(kind: VKind) -> Self {
-        VEffect { on: true, kind }
-    }
-    pub fn name(&self) -> &'static str {
-        match &self.kind {
-            VKind::Color(_) => "Color",
-            VKind::Curves(_) => "Curves",
-            VKind::Vignette(_) => "Vignette",
-            VKind::Sharpen(_) => "Sharpen",
-            VKind::Denoise(_) => "Denoise",
-            VKind::Deblock(_) => "Deblock",
-            VKind::Deband(_) => "Deband",
-            VKind::Deflicker(_) => "Deflicker",
-            VKind::Area(a) => match a.shape {
-                AreaShape::Blur => "Blur area",
-                AreaShape::Pixelate => "Pixelate area",
-                AreaShape::Fill => "Cover area",
-            },
-            VKind::Text(_) => "Text",
-        }
-    }
-    /// Drawn on the rotated frame (areas, text) rather than on the decoded picture.
-    pub fn is_overlay(&self) -> bool {
-        matches!(self.kind, VKind::Area(_) | VKind::Text(_))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct ColorAdj {
-    /// -1..1, 0 = unchanged
-    pub brightness: f32,
-    /// 0..2, 1 = unchanged
-    pub contrast: f32,
-    /// 0..3, 1 = unchanged
-    pub saturation: f32,
-    /// 0.1..4, 1 = unchanged
-    pub gamma: f32,
-}
-
-impl Default for ColorAdj {
-    fn default() -> Self {
-        ColorAdj { brightness: 0.0, contrast: 1.0, saturation: 1.0, gamma: 1.0 }
-    }
-}
-
-/// Tone curves: points (input, output) in 0..1 per channel, sorted by input. Two points `(0,0) (1,1)` = identity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Curves {
-    pub master: Vec<(f32, f32)>,
-    pub r: Vec<(f32, f32)>,
-    pub g: Vec<(f32, f32)>,
-    pub b: Vec<(f32, f32)>,
-}
-
-pub fn identity_curve() -> Vec<(f32, f32)> {
-    vec![(0.0, 0.0), (1.0, 1.0)]
-}
-
-impl Default for Curves {
-    fn default() -> Self {
-        Curves { master: identity_curve(), r: identity_curve(), g: identity_curve(), b: identity_curve() }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AreaShape {
-    Blur,
-    Pixelate,
-    Fill,
-}
-
-/// A rectangle of the frame that is blurred, pixelated or covered with a colour.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct Area {
-    pub shape: AreaShape,
-    /// Position and size as fractions of the frame (0..1).
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
-    /// Blur / pixel size, 0..1.
-    pub amount: f32,
-    pub color: Rgb,
-    /// Seconds on the source timeline; `None` = the whole video.
-    pub range: Option<(f64, f64)>,
-}
-
-impl Area {
-    pub fn new(shape: AreaShape) -> Self {
-        Area { shape, x: 0.35, y: 0.35, w: 0.3, h: 0.3, amount: 0.6, color: [0, 0, 0], range: None }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum HAlign {
-    Left,
-    #[default]
-    Center,
-    Right,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum VAlign {
-    Top,
-    #[default]
-    Middle,
-    Bottom,
-}
-
-/// A block of text placed on the frame.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TextBlock {
-    /// Lines separated by `\n`.
-    pub text: String,
-    /// Path of a font file; empty = whatever ffmpeg finds by itself.
-    pub font: String,
-    /// Font size, percent of the frame height.
-    pub size: f32,
-    pub color: Rgb,
-    /// Outline thickness as a percent of the font size (0 = none).
-    pub outline: f32,
-    pub outline_color: Rgb,
-    /// Semi-transparent box behind the text.
-    pub boxed: bool,
-    pub box_color: Rgb,
-    /// Anchor point, fractions of the frame; `h` / `v` say which point of the text sits there.
-    pub x: f32,
-    pub y: f32,
-    pub h: HAlign,
-    pub v: VAlign,
-    pub range: Option<(f64, f64)>,
-}
-
-impl Default for TextBlock {
-    fn default() -> Self {
-        TextBlock {
-            text: "Text".into(),
-            font: String::new(),
-            size: 7.0,
-            color: [255, 255, 255],
-            outline: 8.0,
-            outline_color: [0, 0, 0],
-            boxed: false,
-            box_color: [0, 0, 0],
-            x: 0.5,
-            y: 0.9,
-            h: HAlign::Center,
-            v: VAlign::Bottom,
-            range: None,
-        }
-    }
-}
-
-/// A bar of solid colour with text above or below the picture (the "meme caption").
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Caption {
-    pub on: bool,
-    pub text: String,
-    pub font: String,
-    /// Font size, percent of the picture width.
-    pub size: f32,
-    pub color: Rgb,
-    pub bg: Rgb,
-    pub align: HAlign,
-}
-
-impl Default for Caption {
-    fn default() -> Self {
-        Caption { on: false, text: String::new(), font: String::new(), size: 6.0, color: [0, 0, 0], bg: [255, 255, 255], align: HAlign::Center }
-    }
-}
+/// A colour / curve setting this close to neutral changes nothing.
+const NEUTRAL_EPS: f32 = 0.001;
+/// An effect strength (0..1 scale) at or below this is off.
+const MIN_STRENGTH: f64 = 0.01;
+/// The smallest area side (fraction of the frame) that is still drawn.
+const MIN_AREA: f32 = 0.001;
+/// Curve points closer than this to the diagonal leave the channel unchanged.
+const CURVE_EPS: f32 = 0.002;
 
 // ------------------------------------------------------------------ what is active
 
@@ -252,7 +50,7 @@ impl VideoFx {
 
 fn overlay_valid(k: &VKind) -> bool {
     match k {
-        VKind::Area(a) => a.w > 0.001 && a.h > 0.001,
+        VKind::Area(a) => a.w > MIN_AREA && a.h > MIN_AREA,
         VKind::Text(t) => !t.text.trim().is_empty(),
         _ => false,
     }
@@ -261,9 +59,7 @@ fn overlay_valid(k: &VKind) -> bool {
 // ------------------------------------------------------------------ small helpers
 
 fn n(v: f64) -> String {
-    let s = format!("{v:.4}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s.is_empty() || s == "-0" { "0".into() } else { s.to_string() }
+    crate::fmtnum::num(v, 4)
 }
 
 fn rgb(c: Rgb) -> String {
@@ -282,7 +78,7 @@ fn enable(range: Option<(f64, f64)>, shift: f64) -> String {
 }
 
 fn is_identity(c: &[(f32, f32)]) -> bool {
-    c.len() < 2 || c.iter().all(|(x, y)| (x - y).abs() < 0.002)
+    c.len() < 2 || c.iter().all(|(x, y)| (x - y).abs() < CURVE_EPS)
 }
 
 fn curve_arg(c: &[(f32, f32)]) -> String {
@@ -291,23 +87,42 @@ fn curve_arg(c: &[(f32, f32)]) -> String {
     pts.iter().map(|(x, y)| format!("{}/{}", n(*x as f64), n(*y as f64))).collect::<Vec<_>>().join(" ")
 }
 
+/// Filters that turn the picture `deg` degrees clockwise (a multiple of 90), then mirror it.
+pub(crate) fn orient_filters(deg: i64, flip_h: bool, flip_v: bool) -> Vec<String> {
+    let mut f = Vec::new();
+    match deg.rem_euclid(360) {
+        90 => f.push("transpose=1".into()),
+        180 => f.push("hflip,vflip".into()),
+        270 => f.push("transpose=2".into()),
+        _ => {}
+    }
+    if flip_h {
+        f.push("hflip".into());
+    }
+    if flip_v {
+        f.push("vflip".into());
+    }
+    f
+}
+
 // ------------------------------------------------------------------ pixel effects
 
 /// The ffmpeg filter for a pixel effect, or `None` when it would change nothing.
-pub fn pixel_filter(k: &VKind) -> Option<String> {
+pub(crate) fn pixel_filter(k: &VKind) -> Option<String> {
+    let strength = |s: f32| Some(s.clamp(0.0, 1.0) as f64).filter(|s| *s > MIN_STRENGTH);
     match k {
         VKind::Color(c) => {
             let mut o = Vec::new();
-            if c.brightness.abs() > 0.001 {
+            if c.brightness.abs() > NEUTRAL_EPS {
                 o.push(format!("brightness={}", n(c.brightness as f64)));
             }
-            if (c.contrast - 1.0).abs() > 0.001 {
+            if (c.contrast - 1.0).abs() > NEUTRAL_EPS {
                 o.push(format!("contrast={}", n(c.contrast as f64)));
             }
-            if (c.saturation - 1.0).abs() > 0.001 {
+            if (c.saturation - 1.0).abs() > NEUTRAL_EPS {
                 o.push(format!("saturation={}", n(c.saturation as f64)));
             }
-            if (c.gamma - 1.0).abs() > 0.001 {
+            if (c.gamma - 1.0).abs() > NEUTRAL_EPS {
                 o.push(format!("gamma={}", n(c.gamma.clamp(0.1, 10.0) as f64)));
             }
             (!o.is_empty()).then(|| format!("eq={}", o.join(":")))
@@ -321,47 +136,35 @@ pub fn pixel_filter(k: &VKind) -> Option<String> {
             }
             (!o.is_empty()).then(|| format!("curves={}", o.join(":")))
         }
-        VKind::Vignette(s) => {
-            let s = s.clamp(0.0, 1.0) as f64;
-            (s > 0.01).then(|| {
-                // a smaller lens angle darkens more: pi/2 (none) .. 0.2 rad
-                let angle = std::f64::consts::FRAC_PI_2 - s * (std::f64::consts::FRAC_PI_2 - 0.2);
-                format!("vignette=angle={}", n(angle))
-            })
-        }
-        VKind::Sharpen(a) => (*a > 0.01).then(|| format!("unsharp=lx=5:ly=5:la={}:cx=5:cy=5:ca=0", n(a.clamp(0.0, 5.0) as f64))),
-        VKind::Denoise(s) => {
-            let s = s.clamp(0.0, 1.0) as f64;
-            (s > 0.01).then(|| format!("hqdn3d={}:{}:{}:{}", n(8.0 * s), n(6.0 * s), n(12.0 * s), n(9.0 * s)))
-        }
-        VKind::Deblock(s) => {
-            let s = s.clamp(0.0, 1.0) as f64;
-            (s > 0.01).then(|| {
-                let a = 0.05 + 0.4 * s;
-                format!("deblock=filter={}:block=8:alpha={}:beta={}", if s > 0.5 { "strong" } else { "weak" }, n(a), n(a / 2.0))
-            })
-        }
-        VKind::Deband(s) => {
-            let s = s.clamp(0.0, 1.0) as f64;
-            (s > 0.01).then(|| {
-                let t = 0.01 + 0.07 * s;
-                format!("deband=1thr={t}:2thr={t}:3thr={t}:range=16:blur=1", t = n(t))
-            })
-        }
+        VKind::Vignette(s) => strength(*s).map(|s| {
+            // a smaller lens angle darkens more: pi/2 (none) .. 0.2 rad
+            let angle = std::f64::consts::FRAC_PI_2 - s * (std::f64::consts::FRAC_PI_2 - 0.2);
+            format!("vignette=angle={}", n(angle))
+        }),
+        VKind::Sharpen(a) => (*a as f64 > MIN_STRENGTH).then(|| format!("unsharp=lx=5:ly=5:la={}:cx=5:cy=5:ca=0", n(a.clamp(0.0, 5.0) as f64))),
+        VKind::Denoise(s) => strength(*s).map(|s| format!("hqdn3d={}:{}:{}:{}", n(8.0 * s), n(6.0 * s), n(12.0 * s), n(9.0 * s))),
+        VKind::Deblock(s) => strength(*s).map(|s| {
+            let a = 0.05 + 0.4 * s;
+            format!("deblock=filter={}:block=8:alpha={}:beta={}", if s > 0.5 { "strong" } else { "weak" }, n(a), n(a / 2.0))
+        }),
+        VKind::Deband(s) => strength(*s).map(|s| {
+            let t = 0.01 + 0.07 * s;
+            format!("deband=1thr={t}:2thr={t}:3thr={t}:range=16:blur=1", t = n(t))
+        }),
         VKind::Deflicker(size) => Some(format!("deflicker=size={}:mode=am", (*size).clamp(2, 30))),
         VKind::Area(_) | VKind::Text(_) => None,
     }
 }
 
 /// Filters that work on the decoded picture, in stack order.
-pub fn pixel_filters(fx: &VideoFx) -> Vec<String> {
+pub(crate) fn pixel_filters(fx: &VideoFx) -> Vec<String> {
     fx.effects.iter().filter(|e| e.on).filter_map(|e| pixel_filter(&e.kind)).collect()
 }
 
 // ------------------------------------------------------------------ areas and text
 
 /// Pixel rectangle of an area inside a `w`×`h` frame (even numbers, inside the frame).
-pub fn area_px(a: &Area, w: u32, h: u32) -> (u32, u32, u32, u32) {
+pub(crate) fn area_px(a: &Area, w: u32, h: u32) -> (u32, u32, u32, u32) {
     let rw = even((a.w as f64 * w as f64).min(w as f64)).min(w & !1).max(2);
     let rh = even((a.h as f64 * h as f64).min(h as f64)).min(h & !1).max(2);
     let x = (((a.x as f64 * w as f64).round()) as i64).clamp(0, (w as i64 - rw as i64).max(0)) as u32;
@@ -376,10 +179,7 @@ fn area_filter(a: &Area, idx: usize, w: u32, h: u32, shift: f64) -> String {
         AreaShape::Fill => format!("drawbox=x={x}:y={y}:w={rw}:h={rh}:color={}:t=fill{en}", rgb(a.color)),
         AreaShape::Blur => {
             let sigma = 2.0 + 60.0 * a.amount.clamp(0.0, 1.0) as f64 * (rw.min(rh) as f64 / 400.0).clamp(0.2, 1.5);
-            format!(
-                "split=2[ba{idx}][bb{idx}];[bb{idx}]crop={rw}:{rh}:{x}:{y},gblur=sigma={}[bc{idx}];[ba{idx}][bc{idx}]overlay={x}:{y}{en}",
-                n(sigma)
-            )
+            format!("split=2[ba{idx}][bb{idx}];[bb{idx}]crop={rw}:{rh}:{x}:{y},gblur=sigma={}[bc{idx}];[ba{idx}][bc{idx}]overlay={x}:{y}{en}", n(sigma))
         }
         AreaShape::Pixelate => {
             let block = (4.0 + a.amount.clamp(0.0, 1.0) as f64 * 0.12 * w.min(h) as f64).round().max(2.0) as u32;
@@ -398,11 +198,6 @@ fn quote_value(s: &str) -> String {
     format!("'{t}'")
 }
 
-/// Text for `drawtext` (always used with `expansion=none`, so `%` and `{}` are plain characters).
-pub fn drawtext_quote(s: &str) -> String {
-    quote_value(s)
-}
-
 /// A font path as a drawtext option (`C:` needs its colon escaped).
 fn font_opt(path: &str) -> String {
     if path.is_empty() {
@@ -413,7 +208,16 @@ fn font_opt(path: &str) -> String {
 
 fn lines_of(text: &str) -> Vec<&str> {
     let v: Vec<&str> = text.lines().collect();
-    if v.is_empty() { vec![""] } else { v }
+    if v.is_empty() {
+        vec![""]
+    } else {
+        v
+    }
+}
+
+/// One line of text. Always `expansion=none`, so `%` and `{}` are plain characters. `x` is an expression.
+fn drawtext(line: &str, font: &str, size: f64, color: Rgb, x: &str, y: f64) -> String {
+    format!("drawtext=expansion=none:text={}{}:fontsize={}:fontcolor={}:x={x}:y={}", quote_value(line), font_opt(font), n(size), rgb(color), n(y.round()))
 }
 
 fn text_filters(t: &TextBlock, w: u32, h: u32, shift: f64) -> Vec<String> {
@@ -439,14 +243,7 @@ fn text_filters(t: &TextBlock, w: u32, h: u32, shift: f64) -> Vec<String> {
         .enumerate()
         .filter(|(_, l)| !l.is_empty())
         .map(|(i, line)| {
-            let mut f = format!(
-                "drawtext=expansion=none:text={}{}:fontsize={}:fontcolor={}:x={x}:y={}",
-                drawtext_quote(line),
-                font_opt(&t.font),
-                n(size),
-                rgb(t.color),
-                n((top + lh * i as f64).round()),
-            );
+            let mut f = drawtext(line, &t.font, size, t.color, &x, top + lh * i as f64);
             if t.outline > 0.01 {
                 f += &format!(":borderw={}:bordercolor={}", n((size * t.outline as f64 / 100.0).round().max(1.0)), rgb(t.outline_color));
             }
@@ -475,7 +272,7 @@ pub fn overlay_filters(fx: &VideoFx, w: u32, h: u32, shift: f64) -> Vec<String> 
 // ------------------------------------------------------------------ caption bars
 
 /// Height in pixels of one caption bar for a picture `w` pixels wide (0 when off).
-pub fn bar_height(c: &Caption, w: u32) -> u32 {
+pub(crate) fn bar_height(c: &Caption, w: u32) -> u32 {
     if !c.on {
         return 0;
     }
@@ -505,21 +302,12 @@ fn caption_text(c: &Caption, w: u32, y0: f64) -> Vec<String> {
         .iter()
         .enumerate()
         .filter(|(_, l)| !l.is_empty())
-        .map(|(i, line)| {
-            format!(
-                "drawtext=expansion=none:text={}{}:fontsize={}:fontcolor={}:x={x}:y={}",
-                drawtext_quote(line),
-                font_opt(&c.font),
-                n(size),
-                rgb(c.color),
-                n((y0 + size * 0.5 + lh * i as f64).round())
-            )
-        })
+        .map(|(i, line)| drawtext(line, &c.font, size, c.color, &x, y0 + size * 0.5 + lh * i as f64))
         .collect()
 }
 
 /// Caption bars around a picture of `w`×`h`: top bar first, then the bottom one.
-pub fn caption_filters(fx: &VideoFx, w: u32, h: u32) -> Vec<String> {
+pub(crate) fn caption_filters(fx: &VideoFx, w: u32, h: u32) -> Vec<String> {
     let (top, bottom) = bars(fx, w);
     let mut out = Vec::new();
     if top > 0 {
@@ -552,18 +340,7 @@ pub fn preview_chain(fx: &VideoFx, rot_deg: i64, flip_h: bool, flip_v: bool, w: 
     let mut f = pixel_filters(fx);
     let rotates = fx.has_overlay() || fx.has_captions();
     if rotates {
-        match rot_deg.rem_euclid(360) {
-            90 => f.push("transpose=1".into()),
-            180 => f.push("hflip,vflip".into()),
-            270 => f.push("transpose=2".into()),
-            _ => {}
-        }
-        if flip_h {
-            f.push("hflip".into());
-        }
-        if flip_v {
-            f.push("vflip".into());
-        }
+        f.extend(orient_filters(rot_deg, flip_h, flip_v));
         f.extend(overlay_filters(fx, w, h, 0.0));
         f.extend(caption_filters(fx, w, h));
     }
@@ -594,10 +371,7 @@ mod tests {
             VKind::Curves(Curves { master: vec![(0.0, 0.0), (0.5, 0.6), (1.0, 1.0)], ..Default::default() }),
             VKind::Deflicker(5),
         ]);
-        assert_eq!(
-            pixel_filters(&f),
-            ["hqdn3d=4:3:6:4.5", "eq=brightness=0.1:contrast=1.2", "curves=master='0/0 0.5/0.6 1/1'", "deflicker=size=5:mode=am"]
-        );
+        assert_eq!(pixel_filters(&f), ["hqdn3d=4:3:6:4.5", "eq=brightness=0.1:contrast=1.2", "curves=master='0/0 0.5/0.6 1/1'", "deflicker=size=5:mode=am"]);
     }
 
     #[test]
@@ -636,14 +410,23 @@ mod tests {
     }
 
     #[test]
+    fn text_block_filter_text_is_pinned() {
+        let t = TextBlock { text: "Hi".into(), font: "/f/a.ttf".into(), boxed: true, range: Some((1.0, 2.0)), ..Default::default() };
+        let v = overlay_filters(&fx(vec![VKind::Text(t)]), 1000, 500, 0.0);
+        assert_eq!(
+            v,
+            ["drawtext=expansion=none:text='Hi':fontfile='/f/a.ttf':fontsize=35:fontcolor=0xFFFFFF:x=500-text_w/2:y=408:borderw=3:bordercolor=0x000000:box=1:boxcolor=0x000000@0.65:boxborderw=7:enable='between(t,1,2)'"]
+        );
+    }
+
+    #[test]
     fn windows_font_path_is_escaped() {
         assert_eq!(font_opt(r"C:\Windows\Fonts\arial.ttf"), r":fontfile='C\:/Windows/Fonts/arial.ttf'");
     }
 
     #[test]
     fn captions_pad_and_write_text() {
-        let mut f = VideoFx::default();
-        f.top = Caption { on: true, text: "when you".into(), ..Default::default() };
+        let f = VideoFx { top: Caption { on: true, text: "when you".into(), ..Default::default() }, ..Default::default() };
         let (top, bottom) = bars(&f, 1000);
         assert!(top > 0 && top % 2 == 0 && bottom == 0);
         let v = caption_filters(&f, 1000, 500);

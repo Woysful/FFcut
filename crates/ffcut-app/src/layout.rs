@@ -76,7 +76,11 @@ pub fn render_title(template: &str, clip: Option<(&Path, &SourceInfo)>, sep: &st
     }
     out.push_str(rest);
     let s = out.trim_matches(|c: char| c.is_whitespace() || "—–-·|:/".contains(c)).to_string();
-    if s.is_empty() { "FFcut".into() } else { s }
+    if s.is_empty() {
+        "FFcut".into()
+    } else {
+        s
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -136,7 +140,12 @@ pub fn info_line(path: &Path, i: &SourceInfo, items: &[InfoItem], sep: &str) -> 
             "fps" if i.fps > 0.0 => format!("{:.2} fps", i.fps),
             "pix_fmt" => i.pix_fmt.clone(),
             "audio" => match i.audio.first() {
-                Some(a) => format!("{} {}ch{}", a.codec.to_uppercase(), a.channels, if i.audio.len() > 1 { format!(" ({} tracks)", i.audio.len()) } else { String::new() }),
+                Some(a) => format!(
+                    "{} {}ch{}",
+                    a.codec.to_uppercase(),
+                    a.channels,
+                    if i.audio.len() > 1 { format!(" ({} tracks)", i.audio.len()) } else { String::new() }
+                ),
                 None => "no audio".into(),
             },
             "bitrate" if i.bit_rate > 0 => format!("{:.2} Mbps", i.bit_rate as f64 / 1_000_000.0),
@@ -160,7 +169,16 @@ mod tests {
     use std::path::PathBuf;
 
     fn info() -> SourceInfo {
-        SourceInfo { duration: 125.0, width: 1920, height: 1080, video_codec: "hevc".into(), fps: 25.0, format: "MP4".into(), file_size: 1_048_576, ..Default::default() }
+        SourceInfo {
+            duration: 125.0,
+            width: 1920,
+            height: 1080,
+            video_codec: "hevc".into(),
+            fps: 25.0,
+            format: "MP4".into(),
+            file_size: 1_048_576,
+            ..Default::default()
+        }
     }
 
     #[test]

@@ -3,14 +3,16 @@ mod app;
 mod display;
 mod fx;
 mod hotkeys;
-mod layout;
 mod player;
 mod settings;
+mod state;
 mod theme;
 mod ui;
 mod undo;
-mod update;
 mod vfx;
+
+// compiled once, in the library (its integration tests use them too)
+use ffcut_app::{audiomix, layout, update};
 
 use eframe::egui;
 
@@ -49,11 +51,7 @@ fn main() -> eframe::Result {
 
     eframe::run_native(
         "FFcut",
-        eframe::NativeOptions {
-            viewport,
-            event_loop_builder: Some(Box::new(move |b| display::apply(b, backend))),
-            ..Default::default()
-        },
+        eframe::NativeOptions { viewport, event_loop_builder: Some(Box::new(move |b| display::apply(b, backend))), ..Default::default() },
         Box::new(move |cc| match app::App::new(cc, open, backend) {
             Ok(app) => Ok(Box::new(app)),
             Err(e) => Err(e.into()),

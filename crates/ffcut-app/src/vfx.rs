@@ -137,7 +137,7 @@ impl App {
             }
         };
         self.vfx.error = result.err().map(|e| format!("{e}"));
-        self.vfx.rotates = want.as_ref().map_or(false, |c| c.rotates);
+        self.vfx.rotates = want.as_ref().is_some_and(|c| c.rotates);
         self.vfx.bars = if self.vfx.rotates { videofx::bars(&self.s.vfx, fw) } else { (0, 0) };
         self.vfx.applied = Some(want);
         self.apply_preview_transform();

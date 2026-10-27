@@ -16,7 +16,6 @@ pub enum Action {
     ResetTrim,
     Crop,
     Loop,
-    LockTrim,
     Undo,
     Redo,
     Open,
@@ -26,7 +25,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 17] = [
+    pub const ALL: [Action; 16] = [
         Action::PlayPause,
         Action::StepBack,
         Action::StepForward,
@@ -36,7 +35,6 @@ impl Action {
         Action::TrimEnd,
         Action::ResetTrim,
         Action::Loop,
-        Action::LockTrim,
         Action::Crop,
         Action::Undo,
         Action::Redo,
@@ -59,7 +57,6 @@ impl Action {
             Action::ResetTrim => "reset_trim",
             Action::Crop => "crop",
             Action::Loop => "loop",
-            Action::LockTrim => "lock_trim",
             Action::Undo => "undo",
             Action::Redo => "redo",
             Action::Open => "open",
@@ -81,7 +78,6 @@ impl Action {
             Action::ResetTrim => "Reset trim",
             Action::Crop => "Toggle crop",
             Action::Loop => "Loop the selection",
-            Action::LockTrim => "Lock trim handles",
             Action::Undo => "Undo",
             Action::Redo => "Redo",
             Action::Open => "Open a file",
@@ -108,7 +104,6 @@ impl Action {
             Action::ResetTrim => &["R"],
             Action::Crop => &["C"],
             Action::Loop => &["A"],
-            Action::LockTrim => &["Shift+A"],
             Action::Undo => &["Ctrl+Z"],
             Action::Redo => &["Ctrl+Shift+Z", "Ctrl+Y"],
             Action::Open => &["Ctrl+O", "Ctrl+N"],
@@ -139,7 +134,7 @@ impl Chord {
     }
 
     /// The saved form: `Ctrl+Shift+Left`.
-    pub fn to_text(&self) -> String {
+    pub fn to_text(self) -> String {
         let mut s = String::new();
         if self.ctrl {
             s.push_str("Ctrl+");
@@ -218,7 +213,11 @@ pub fn hint(ov: &Overrides, a: Action) -> String {
 /// `"Play / pause  (Space)"`, or just the label when the action has no key.
 pub fn with_hint(ov: &Overrides, label: &str, a: Action) -> String {
     let h = hint(ov, a);
-    if h.is_empty() { label.to_string() } else { format!("{label}  ({h})") }
+    if h.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label}  ({h})")
+    }
 }
 
 /// Give `chord` to `a` as its `slot`-th key (None = remove that slot). A chord another action had is taken from it.
@@ -230,7 +229,7 @@ pub fn assign(ov: &mut Overrides, a: Action, slot: usize, chord: Option<Chord>) 
             let mut list = chords(ov, other);
             if let Some(p) = list.iter().position(|x| *x == c) {
                 list.remove(p);
-                ov.insert(other.id().to_string(), list.iter().map(Chord::to_text).collect());
+                ov.insert(other.id().to_string(), list.iter().map(|c| c.to_text()).collect());
                 taken = Some(other);
             }
         }
@@ -252,7 +251,7 @@ pub fn assign(ov: &mut Overrides, a: Action, slot: usize, chord: Option<Chord>) 
             }
         }
     }
-    let text: Vec<String> = mine.iter().map(Chord::to_text).collect();
+    let text: Vec<String> = mine.iter().map(|c| c.to_text()).collect();
     let defaults: Vec<String> = a.defaults().iter().map(|s| s.to_string()).collect();
     if text == defaults {
         ov.remove(a.id());

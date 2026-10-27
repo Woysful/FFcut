@@ -3,160 +3,184 @@
 //! Pure function, no I/O: that is what makes it trivially testable.
 //! `argv[0]` is the program name ("ffmpeg"); the runner swaps in the real path.
 
+use crate::audiofx::amix;
 use crate::model::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// A track showing less than this (seconds) of itself inside the exported range is left out.
+const MIN_VISIBLE: f64 = 0.01;
+
+fn secs(v: f64) -> String {
+    crate::fmtnum::num(v, 3)
+}
+
+fn path_arg(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
 
 pub fn build_args(src: &SourceInfo, s: &ExportSettings, input: &Path, output: &Path) -> Vec<String> {
-    let mut a: Vec<String> = vec!["ffmpeg".into(), "-hide_banner".into(), "-y".into()];
-
-    // ---- trim (input-side seek: fast; with stream copy it snaps to a keyframe) ----
-    if s.trim_start > 0.0 {
-        a.push("-ss".into());
-        a.push(secs(s.trim_start));
-    }
-    a.push("-i".into());
-    a.push(input.to_string_lossy().into_owned());
-
     // Audio: the track list decides what is heard (removed / muted / solo); `audio_mode` how it is packed.
     let tracks = resolved_tracks(src, s);
     let heard = audible(&tracks);
-
-    // Extra audio files used by timeline tracks become inputs 1, 2, ...
     let plan = AudioPlan::new(src, s, &heard);
-    if let Some(seek) = plan.orig_seek {
-        a.extend(["-ss".into(), secs(seek), "-i".into(), input.to_string_lossy().into_owned()]);
-    }
-    for path in &plan.external_paths {
-        a.push("-i".into());
-        a.push(path.clone());
-    }
-    let out_ext = output
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    let out_ext = output.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let no_video = src.audio_only || s.audio_only;
     // Several audible tracks into a container that holds one stream: one file per track (name_1.ext, name_2.ext…)
-    let separate = (src.audio_only || s.audio_only) && s.audio_mode == AudioMode::Separate && heard.len() > 1 && !multi_stream_container(&out_ext);
+    let separate = no_video && s.audio_mode == AudioMode::Separate && heard.len() > 1 && !multi_stream_container(&out_ext);
     // `-t` belongs to the output that follows it, so with several outputs every one needs its own
-    let mut length: Vec<String> = Vec::new();
-    if let Some(end) = s.trim_end {
-        let dur = end - s.trim_start;
-        if dur > 0.0 && (src.duration <= 0.0 || end < src.duration - 0.001) {
-            length = vec!["-t".into(), secs(dur)];
-        }
-    }
+    let length = trim_length(src, s);
+
+    let mut a: Vec<String> = vec!["ffmpeg".into(), "-hide_banner".into(), "-y".into()];
+    push_inputs(&mut a, s, input, &plan);
     if !separate {
         a.extend(length.iter().cloned());
     }
-
-    // ---- video ----
-    let no_video = src.audio_only || s.audio_only;
     if no_video {
         a.push("-vn".into());
     } else {
         push_video(&mut a, src, s);
     }
 
-    // ---- audio ----
-    let aenc = |a: &mut Vec<String>, force_encode: bool| {
-        let codec = match (&s.audio_codec, force_encode) {
-            (AudioCodec::Copy, false) if !no_video || copy_fits(src, &out_ext) => None,
-            (AudioCodec::Copy, _) => Some(default_audio_encoder(&out_ext).to_string()),
+    let target = AudioTarget { src, s, out_ext: &out_ext, no_video };
+    let audio = if plan.advanced { advanced_audio(&plan, s, separate, &target) } else { plain_audio(src, s, &tracks, &heard, separate, &target) };
+    a.extend(audio.shared);
+    match audio.per_track {
+        None => a.push(path_arg(output)),
+        Some(groups) => {
+            for (n, group) in groups.into_iter().enumerate() {
+                a.extend(group);
+                a.extend(length.iter().cloned());
+                a.push(path_arg(&numbered(output, n + 1)));
+            }
+        }
+    }
+    a
+}
+
+/// Input side: the file for video (seeked to the trim start; fast, and with stream copy it snaps to a
+/// keyframe), then the inputs the audio plan needs.
+fn push_inputs(a: &mut Vec<String>, s: &ExportSettings, input: &Path, plan: &AudioPlan) {
+    if s.trim_start > 0.0 {
+        a.extend(["-ss".into(), secs(s.trim_start)]);
+    }
+    a.extend(["-i".into(), path_arg(input)]);
+    if let Some(seek) = plan.orig_seek {
+        a.extend(["-ss".into(), secs(seek), "-i".into(), path_arg(input)]);
+    }
+    for path in &plan.external_paths {
+        a.extend(["-i".into(), path.clone()]);
+    }
+}
+
+/// `-t <length>` when the export stops before the end of the source.
+fn trim_length(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
+    if let Some(end) = s.trim_end {
+        let dur = end - s.trim_start;
+        if dur > 0.0 && (src.duration <= 0.0 || end < src.duration - TIME_EPS) {
+            return vec!["-t".into(), secs(dur)];
+        }
+    }
+    Vec::new()
+}
+
+/// The audio part of the command.
+struct AudioArgs {
+    /// Options before the first output.
+    shared: Vec<String>,
+    /// Per-track export: the options of each output file (`numbered`), in order. `None` = one output.
+    per_track: Option<Vec<Vec<String>>>,
+}
+
+impl AudioArgs {
+    fn single(shared: Vec<String>) -> Self {
+        AudioArgs { shared, per_track: None }
+    }
+}
+
+/// What the audio encoder choice depends on.
+struct AudioTarget<'a> {
+    src: &'a SourceInfo,
+    s: &'a ExportSettings,
+    out_ext: &'a str,
+    no_video: bool,
+}
+
+impl AudioTarget<'_> {
+    /// `-c:a ...` (and the bitrate for lossy codecs). `force_encode`: the audio went through filters,
+    /// so it cannot be stream-copied.
+    fn codec_args(&self, force_encode: bool) -> Vec<String> {
+        let codec = match (&self.s.audio_codec, force_encode) {
+            (AudioCodec::Copy, false) if !self.no_video || copy_fits(self.src, self.out_ext) => None,
+            (AudioCodec::Copy, _) => Some(audio_encoder_for(self.out_ext).to_string()),
             (AudioCodec::Encoder(e), _) => Some(e.clone()),
         };
         match codec {
-            None => {
-                a.push("-c:a".into());
-                a.push("copy".into());
-            }
+            None => vec!["-c:a".into(), "copy".into()],
             Some(c) => {
                 let lossless = c.starts_with("pcm") || c == "flac" || c == "alac";
-                a.push("-c:a".into());
-                a.push(c);
+                let mut v = vec!["-c:a".into(), c];
                 if !lossless {
-                    a.push("-b:a".into());
-                    a.push(format!("{}k", s.audio_bitrate_kbps));
+                    v.extend(["-b:a".into(), format!("{}k", self.s.audio_bitrate_kbps)]);
                 }
+                v
             }
         }
-    };
-
-    if plan.advanced {
-        if plan.chains.is_empty() {
-            a.push("-an".into());
-        } else {
-            let mix = s.audio_mode == AudioMode::Merge;
-            let mut graph = plan.chains.iter().map(|c| c.0.clone()).collect::<Vec<_>>();
-            let labels: Vec<&str> = plan.chains.iter().map(|c| c.1.as_str()).collect();
-            if mix && labels.len() > 1 {
-                let ins: String = labels.iter().map(|l| format!("[{l}]")).collect();
-                graph.push(format!("{ins}amix=inputs={}:duration=longest:normalize=0[aout]", labels.len()));
-                a.extend(["-filter_complex".into(), graph.join(";"), "-map".into(), "[aout]".into()]);
-            } else if separate {
-                a.extend(["-filter_complex".into(), graph.join(";")]);
-                for (n, l) in labels.iter().enumerate() {
-                    a.extend(["-map".into(), format!("[{l}]")]);
-                    aenc(&mut a, true);
-                    a.extend(length.iter().cloned());
-                    a.push(numbered(output, n + 1).to_string_lossy().into_owned());
-                }
-                return a;
-            } else {
-                a.extend(["-filter_complex".into(), graph.join(";")]);
-                for l in &labels {
-                    a.extend(["-map".into(), format!("[{l}]")]);
-                }
-            }
-            aenc(&mut a, true);
-        }
-        a.push(output.to_string_lossy().into_owned());
-        return a;
     }
+}
 
-    // Plain path: only untouched original streams, so no filters are needed (except to mix).
+/// Timeline edits: every track is a filter chain of `-filter_complex`.
+fn advanced_audio(plan: &AudioPlan, s: &ExportSettings, separate: bool, target: &AudioTarget) -> AudioArgs {
+    if plan.chains.is_empty() {
+        return AudioArgs::single(vec!["-an".into()]);
+    }
+    let mut graph: Vec<String> = plan.chains.iter().map(|c| c.0.clone()).collect();
+    let labels: Vec<&str> = plan.chains.iter().map(|c| c.1.as_str()).collect();
+    if s.audio_mode == AudioMode::Merge && labels.len() > 1 {
+        graph.push(amix(&labels, "aout"));
+        let mut v = vec!["-filter_complex".into(), graph.join(";"), "-map".into(), "[aout]".into()];
+        v.extend(target.codec_args(true));
+        return AudioArgs::single(v);
+    }
+    let shared = vec!["-filter_complex".into(), graph.join(";")];
+    let map = |l: &&str| -> Vec<String> { vec!["-map".into(), format!("[{l}]")] };
+    if separate {
+        let groups = labels.iter().map(|l| [map(l), target.codec_args(true)].concat()).collect();
+        return AudioArgs { shared, per_track: Some(groups) };
+    }
+    let mut v = shared;
+    v.extend(labels.iter().flat_map(map));
+    v.extend(target.codec_args(true));
+    AudioArgs::single(v)
+}
+
+/// Only untouched original streams: no filters are needed (except to mix).
+fn plain_audio(src: &SourceInfo, s: &ExportSettings, tracks: &[TrackEdit], heard: &[&TrackEdit], separate: bool, target: &AudioTarget) -> AudioArgs {
     if s.audio_mode == AudioMode::None {
-        a.push("-an".into());
-    } else if heard.is_empty() {
-        if !tracks.is_empty() {
-            a.push("-an".into()); // there was audio, but nothing is left to hear
+        return AudioArgs::single(vec!["-an".into()]);
+    }
+    if heard.is_empty() {
+        // there was audio, but nothing is left to hear
+        return AudioArgs::single(if tracks.is_empty() { vec![] } else { vec!["-an".into()] });
+    }
+    let idx: Vec<usize> = heard.iter().filter_map(|t| if let TrackSource::Original(i) = t.source { Some(i) } else { None }).collect();
+    let map = |i: &usize| -> Vec<String> { vec!["-map".into(), format!("0:a:{i}")] };
+    match s.audio_mode {
+        AudioMode::Merge if idx.len() > 1 => {
+            let mut v = vec!["-filter_complex".into(), amix(idx.iter().map(|i| format!("0:a:{i}")), "aout"), "-map".into(), "[aout]".into()];
+            v.extend(target.codec_args(true)); // mixing always needs an encoder
+            AudioArgs::single(v)
         }
-    } else {
-        let idx: Vec<usize> = heard.iter().filter_map(|t| if let TrackSource::Original(i) = t.source { Some(i) } else { None }).collect();
-        match s.audio_mode {
-            AudioMode::Merge if idx.len() > 1 => {
-                let ins: String = idx.iter().map(|i| format!("[0:a:{i}]")).collect();
-                a.extend([
-                    "-filter_complex".into(),
-                    format!("{ins}amix=inputs={}:duration=longest:normalize=0[aout]", idx.len()),
-                    "-map".into(),
-                    "[aout]".into(),
-                ]);
-                aenc(&mut a, true); // mixing always needs an encoder
-            }
-            _ if separate => {
-                for (n, i) in idx.iter().enumerate() {
-                    a.extend(["-map".into(), format!("0:a:{i}")]);
-                    aenc(&mut a, false);
-                    a.extend(length.iter().cloned());
-                    a.push(numbered(output, n + 1).to_string_lossy().into_owned());
-                }
-                return a;
-            }
-            _ => {
-                if idx.len() == src.audio.len() && idx.iter().enumerate().all(|(n, i)| n == *i) {
-                    a.extend(["-map".into(), "0:a".into()]);
-                } else {
-                    for i in &idx {
-                        a.extend(["-map".into(), format!("0:a:{i}")]);
-                    }
-                }
-                aenc(&mut a, false);
-            }
+        _ if separate => AudioArgs { shared: vec![], per_track: Some(idx.iter().map(|i| [map(i), target.codec_args(false)].concat()).collect()) },
+        _ => {
+            let mut v = if idx.len() == src.audio.len() && idx.iter().enumerate().all(|(n, i)| n == *i) {
+                vec!["-map".into(), "0:a".into()]
+            } else {
+                idx.iter().flat_map(map).collect()
+            };
+            v.extend(target.codec_args(false));
+            AudioArgs::single(v)
         }
     }
-
-    a.push(output.to_string_lossy().into_owned());
-    a
 }
 
 /// The track list, or (when the UI never filled it) every audio stream of the file, untouched.
@@ -210,18 +234,14 @@ impl AudioPlan {
             }
             let (a, b) = t.placed();
             let (vis_a, vis_b) = (a.max(t0), b.min(t1));
-            if vis_b - vis_a < 0.01 {
+            if vis_b - vis_a < MIN_VISIBLE {
                 continue; // nothing of this track falls inside the exported range
             }
             items.push(Item { t, vis_a, vis_b, ext_index });
         }
 
         // earliest source time any original track needs
-        let orig_seek = items
-            .iter()
-            .filter(|i| i.ext_index.is_none())
-            .map(|i| (i.vis_a - i.t.shift).max(0.0))
-            .fold(None, |m: Option<f64>, v| Some(m.map_or(v, |m| m.min(v))));
+        let orig_seek = items.iter().filter(|i| i.ext_index.is_none()).map(|i| (i.vis_a - i.t.shift).max(0.0)).reduce(f64::min);
         let ext_base = if orig_seek.is_some() { 2 } else { 1 };
 
         let mut chains = Vec::new();
@@ -243,30 +263,12 @@ impl AudioPlan {
     }
 }
 
-fn secs(v: f64) -> String {
-    let s = format!("{v:.3}");
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s.is_empty() { "0".into() } else { s.to_string() }
-}
-
 fn video_filters(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
     use crate::videofx as vfx;
-    let mut f = Vec::new();
     // colour / restoration work on the decoded picture, before it is turned
-    f.extend(vfx::pixel_filters(&s.vfx));
-    match s.rotation {
-        Rotation::None => {}
-        Rotation::Cw90 => f.push("transpose=1".into()),
-        Rotation::R180 => f.push("hflip,vflip".into()),
-        Rotation::Ccw90 => f.push("transpose=2".into()),
-    }
+    let mut f = vfx::pixel_filters(&s.vfx);
     // Crop comes after rotate+flip: its coordinates are exactly what the preview shows.
-    if s.flip_h {
-        f.push("hflip".into());
-    }
-    if s.flip_v {
-        f.push("vflip".into());
-    }
+    f.extend(vfx::orient_filters(s.rotation.degrees(), s.flip_h, s.flip_v));
     let (fw, fh) = match s.rotation {
         Rotation::Cw90 | Rotation::Ccw90 => (src.height, src.width),
         _ => (src.width, src.height),
@@ -308,37 +310,27 @@ pub fn auto_encoder(source_codec: &str) -> &'static str {
 
 fn push_video(a: &mut Vec<String>, src: &SourceInfo, s: &ExportSettings) {
     let filters = video_filters(src, s);
-    a.push("-map".into());
-    a.push("0:v:0".into());
+    a.extend(["-map".into(), "0:v:0".into()]);
     // Stream copy cannot apply filters: fall back to a same-family re-encode.
     let vcodec = match &s.video_codec {
         VideoCodec::Copy if filters.is_empty() => None,
         VideoCodec::Copy | VideoCodec::Auto => Some(auto_encoder(&src.video_codec).to_string()),
         VideoCodec::Encoder(e) => Some(e.clone()),
     };
-
-    match vcodec {
-        None => {
-            a.push("-c:v".into());
-            a.push("copy".into());
-        }
-        Some(enc) => {
-            if !filters.is_empty() {
-                a.push("-vf".into());
-                a.push(filters.join(","));
-            }
-            a.push("-c:v".into());
-            a.push(enc.clone());
-            push_quality(a, &enc, s.quality);
-            if matches!(enc.as_str(), "libx264" | "libx265") && !s.preset.is_empty() {
-                a.push("-preset".into());
-                a.push(s.preset.clone());
-            }
-            if let Some(pf) = pick_pix_fmt(&enc, s.pix_fmt.as_deref(), &src.pix_fmt) {
-                a.push("-pix_fmt".into());
-                a.push(pf);
-            }
-        }
+    let Some(enc) = vcodec else {
+        a.extend(["-c:v".into(), "copy".into()]);
+        return;
+    };
+    if !filters.is_empty() {
+        a.extend(["-vf".into(), filters.join(",")]);
+    }
+    a.extend(["-c:v".into(), enc.clone()]);
+    push_quality(a, &enc, s.quality);
+    if matches!(enc.as_str(), "libx264" | "libx265") && !s.preset.is_empty() {
+        a.extend(["-preset".into(), s.preset.clone()]);
+    }
+    if let Some(pf) = pick_pix_fmt(&enc, s.pix_fmt.as_deref(), &src.pix_fmt) {
+        a.extend(["-pix_fmt".into(), pf]);
     }
 }
 
@@ -348,7 +340,7 @@ pub fn multi_stream_container(ext: &str) -> bool {
 }
 
 /// `dir/name.ext` → `dir/name_N.ext`: the files of a per-track audio export.
-pub fn numbered(output: &Path, n: usize) -> std::path::PathBuf {
+pub fn numbered(output: &Path, n: usize) -> PathBuf {
     let stem = output.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
     let name = match output.extension() {
         Some(e) => format!("{stem}_{n}.{}", e.to_string_lossy()),
@@ -358,7 +350,7 @@ pub fn numbered(output: &Path, n: usize) -> std::path::PathBuf {
 }
 
 /// The encoder an audio container normally carries (used when the stream cannot just be copied).
-pub fn audio_encoder_for(out_ext: &str) -> &'static str {
+pub(crate) fn audio_encoder_for(out_ext: &str) -> &'static str {
     match out_ext {
         "webm" | "opus" => "libopus",
         "ogg" | "oga" => "libvorbis",
@@ -368,11 +360,6 @@ pub fn audio_encoder_for(out_ext: &str) -> &'static str {
         _ => "aac",
     }
 }
-
-fn default_audio_encoder(out_ext: &str) -> &'static str {
-    audio_encoder_for(out_ext)
-}
-
 /// Can the first audio stream of an audio file be copied into this container as it is?
 fn copy_fits(src: &SourceInfo, out_ext: &str) -> bool {
     let Some(c) = src.audio.first().map(|a| a.codec.as_str()) else { return true };
@@ -489,7 +476,12 @@ mod tests {
 
     #[test]
     fn audio_file_export_has_no_video() {
-        let src = SourceInfo { duration: 30.0, audio_only: true, audio: vec![AudioStream { index: 0, codec: "mp3".into(), channels: 2, language: None, title: None }], ..Default::default() };
+        let src = SourceInfo {
+            duration: 30.0,
+            audio_only: true,
+            audio: vec![AudioStream { index: 0, codec: "mp3".into(), channels: 2, language: None, title: None }],
+            ..Default::default()
+        };
         let s = ExportSettings { trim_start: 2.0, trim_end: Some(10.0), ..Default::default() };
         let go = |out: &str| crate::cmdline::to_text(&build_args(&src, &s, &PathBuf::from("in.mp3"), &PathBuf::from(out)));
         let c = go("out.mp3");
@@ -603,7 +595,7 @@ mod tests {
         let mut t = tracks(1);
         t[0].trim_start = 2.0;
         t[0].trim_end = 12.0;
-        t[0].shift = 3.0;     // clip placed at 5..15 on the timeline
+        t[0].shift = 3.0; // clip placed at 5..15 on the timeline
         t[0].volume = 0.5;
         // export 0..60 -> delay 5 s; the audio input is seeked to 2 s, so local 0..10 = source 2..12
         let c = build(&ExportSettings { tracks: t, ..Default::default() });

@@ -15,10 +15,14 @@
 //! The argv is the single source of truth at export time. Nothing is
 //! re-interpreted or filtered after the user edits it.
 
+pub mod analysis;
 pub mod audiofx;
 pub mod builder;
 pub mod cmdline;
+mod error;
+mod fmtnum;
 pub mod fonts;
+mod hash;
 pub mod model;
 pub mod presets;
 pub mod preview;
@@ -29,4 +33,5 @@ pub mod videofx;
 pub mod waveform;
 
 pub use builder::build_args;
+pub use error::Error;
 pub use model::*;

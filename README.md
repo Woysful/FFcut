@@ -103,10 +103,16 @@ build-windows.bat
 | R            | Reset Trim                          |
 | C            | Toggle crop                         |
 | A            | Toggle loop                         |
+|              |                                     |
+| Ctrl+Z       | Undo                                |
+| Ctrl+Shift+Z / Ctrl+Y | Redo                       |
+
+All shortcuts can be changed in *File → Settings → Hotkeys*; *Help* lists the current ones.
 
 ## Development
-- `crates/ffcut-core` — all logic without UI: `model` (export settings), `builder` (settings → ffmpeg argv), `cmdline` (argv ⇄ editable text), `probe` (ffprobe), `run` (runs exactly the argv you see: progress, cancel, cleanup). Tested, including against real ffmpeg.
-- `crates/ffcut-app` — the UI (egui + libmpv): `player`, `app`, `update`, `ui/`.
+- `crates/ffcut-core` — all logic without UI: `model/` (export settings: source, video, audio, export), `builder` (settings → ffmpeg argv), `cmdline` (argv ⇄ editable text), `probe` (ffprobe), `run` (background jobs; runs exactly the argv you see: progress, cancel, cleanup), `presets`, `audiofx` / `videofx` (effects → filters), `analysis` (loudness measuring), `waveform`. Tested, including against real ffmpeg.
+- `crates/ffcut-app` — the UI (egui + libmpv): `player`, `app` (state and actions), `state` (dialogs, presets, crop…), `theme` (colours, sizes, the egui style), `ui/` (one file per area; `ui/widgets.rs` holds the shared building blocks: form rows, value fields, cards, effect stacks, drag handles).
+- Changes per version: [CHANGELOG.md](CHANGELOG.md).
 - Tests: `cargo test --workspace` (needs `ffmpeg` in `PATH`).
 - The version lives in one place: `[workspace.package]` in the root `Cargo.toml`. Release = bump it, build, publish a GitHub Release tagged `v<version>`.
 - Debug env: `FFCUT_DEBUG=1`, `FFCUT_MPV_LOG=file`, `FFCUT_NO_AUDIO=1`, `FFCUT_MPV_DR=auto|yes`, `FFCUT_DISPLAY=x11|wayland`, `FFCUT_UPDATE_URL=<url>`, `FFCUT_NO_UPDATE=1`.

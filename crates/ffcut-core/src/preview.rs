@@ -13,16 +13,11 @@ pub fn lavfi_mix(parts: &[(i64, f32)]) -> Option<String> {
     // Every branch is brought to the same rate / layout first: amix wants uniform inputs, and tracks
     // from different files rarely agree (44.1 kHz music vs 48 kHz opus, mono vs 5.1 ...).
     let norm = "aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo";
-    let mut chains: Vec<String> = parts
-        .iter()
-        .enumerate()
-        .map(|(n, (aid, vol))| format!("[aid{aid}]{norm},volume={:.3}[p{n}]", vol.max(0.0)))
-        .collect();
+    let mut chains: Vec<String> = parts.iter().enumerate().map(|(n, (aid, vol))| format!("[aid{aid}]{norm},volume={:.3}[p{n}]", vol.max(0.0))).collect();
     if parts.len() == 1 {
         chains.push("[p0]anull[ao]".into());
     } else {
-        let ins: String = (0..parts.len()).map(|n| format!("[p{n}]")).collect();
-        chains.push(format!("{ins}amix=inputs={}:duration=longest:normalize=0[ao]", parts.len()));
+        chains.push(crate::audiofx::amix((0..parts.len()).map(|n| format!("p{n}")), "ao"));
     }
     Some(chains.join(";"))
 }

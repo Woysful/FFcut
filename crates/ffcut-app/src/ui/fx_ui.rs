@@ -1,5 +1,7 @@
-//! The audio effects window of one track: fades and volume keyframes, equalizer, compressor, normalization.
+//! The audio effects of one track (fades, equalizer, compressor, de-esser, noise reduction, normalization),
+//! shown in the sidebar and in the audio presets editor.
 
+use super::widgets::{self, StackAct, StackEntry};
 use super::{field, grid};
 use crate::app::App;
 use crate::theme;
@@ -116,7 +118,7 @@ fn eq_plot(ui: &mut egui::Ui, bands: &mut Vec<EqBand>, sel: &mut Option<usize>) 
             ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
     }
-    if sel.map_or(false, |k| k >= bands.len()) {
+    if sel.is_some_and(|k| k >= bands.len()) {
         *sel = None;
     }
 
@@ -124,12 +126,18 @@ fn eq_plot(ui: &mut egui::Ui, bands: &mut Vec<EqBand>, sel: &mut Option<usize>) 
     let p = ui.painter_at(rect);
     p.rect_filled(rect, 6.0, theme::BG);
     for db in [-12.0f32, -6.0, 0.0, 6.0, 12.0] {
-        let col = if db == 0.0 { Color32::from_gray(80) } else { Color32::from_gray(44) };
+        let col = if db == 0.0 { theme::BAND } else { theme::LINE_FAINT };
         p.line_segment([pos2(rect.left(), y_of(db)), pos2(rect.right(), y_of(db))], Stroke::new(1.0, col));
     }
     for f in [100.0f32, 1000.0, 10000.0] {
-        p.line_segment([pos2(x_of(f), rect.top()), pos2(x_of(f), rect.bottom())], Stroke::new(1.0, Color32::from_gray(44)));
-        p.text(pos2(x_of(f) + 3.0, rect.bottom() - 2.0), egui::Align2::LEFT_BOTTOM, if f >= 1000.0 { format!("{}k", f / 1000.0) } else { format!("{f}") }, egui::FontId::proportional(10.0), Color32::from_gray(110));
+        p.line_segment([pos2(x_of(f), rect.top()), pos2(x_of(f), rect.bottom())], Stroke::new(1.0, theme::LINE_FAINT));
+        p.text(
+            pos2(x_of(f) + 3.0, rect.bottom() - 2.0),
+            egui::Align2::LEFT_BOTTOM,
+            if f >= 1000.0 { format!("{}k", f / 1000.0) } else { format!("{f}") },
+            egui::FontId::proportional(10.0),
+            theme::TEXT_OFF,
+        );
     }
     let n = 240;
     let pts: Vec<Pos2> = (0..=n)
@@ -145,7 +153,7 @@ fn eq_plot(ui: &mut egui::Ui, bands: &mut Vec<EqBand>, sel: &mut Option<usize>) 
         p.circle(point(b), if selected { 6.0 } else { 4.5 }, if selected { theme::ACCENT } else { Color32::WHITE }, Stroke::new(1.5, Color32::BLACK));
     }
     if bands.is_empty() {
-        p.text(rect.center(), egui::Align2::CENTER_CENTER, "double-click to add a band", egui::FontId::proportional(11.5), Color32::from_gray(110));
+        p.text(rect.center(), egui::Align2::CENTER_CENTER, "double-click to add a band", egui::FontId::proportional(11.5), theme::TEXT_OFF);
     }
 }
 
@@ -163,13 +171,6 @@ fn db_fmt(v: f64) -> String {
     format!("{v:.1}")
 }
 
-/// What the stack's remove / move buttons asked for.
-enum StackAct {
-    Remove(usize),
-    Up(usize),
-    Down(usize),
-}
-
 /// Everything the effects body needs besides the track itself.
 struct FxCtx {
     rendering: bool,
@@ -181,233 +182,230 @@ struct FxCtx {
     fades: bool,
 }
 
-/// The effects stack of one track (fades, effects, add menu): shared by the window and the audio-file sidebar.
+/// The effects stack of one track (fades, effects, add menu): shared by the sidebar and the presets editor.
 fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
     let FxCtx { rendering, render_err, meas, sel, fades } = c;
     let (rendering, render_err) = (*rendering, render_err.clone());
     let len = (t.trim_end - t.trim_start).max(0.1);
-        ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+    ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
 
-        if *fades {
-            field(ui, "Fade in", |ui| {
-                super::num(ui, egui::DragValue::new(&mut t.fade_in).range(0.0..=(len - t.fade_out).max(0.0)).speed(0.05).suffix(" s").fixed_decimals(2)).on_hover_text("Also adjustable on the waveform / track: drag the white dots at the top corners. Volume keyframes: right-click.");
-            });
-            field(ui, "Fade out", |ui| {
-                super::num(ui, egui::DragValue::new(&mut t.fade_out).range(0.0..=(len - t.fade_in).max(0.0)).speed(0.05).suffix(" s").fixed_decimals(2));
-            });
-            ui.add_space(4.0);
-        }
+    if *fades {
+        let tip = "Also adjustable on the waveform / track: drag the white dots at the top corners.";
+        field(ui, "Fade in/out", |ui| {
+            let max_in = (len - t.fade_out).max(0.0);
+            let r = super::num(ui, egui::DragValue::new(&mut t.fade_in).range(0.0..=max_in).speed(0.05).suffix(" s").fixed_decimals(2));
+            widgets::resettable(r, &mut t.fade_in, 0.0).on_hover_text(format!("Fade in. {tip}"));
+            let max_out = (len - t.fade_in).max(0.0);
+            let r = super::num(ui, egui::DragValue::new(&mut t.fade_out).range(0.0..=max_out).speed(0.05).suffix(" s").fixed_decimals(2));
+            widgets::resettable(r, &mut t.fade_out, 0.0).on_hover_text(format!("Fade out. {tip}"));
+        });
+        ui.add_space(4.0);
+    }
 
-        ui.label(RichText::new("EFFECTS").size(11.0).strong().color(Color32::from_gray(150))).on_hover_text("Applied from top to bottom. Change the order with the arrows, bypass with the checkbox.\nWhat you hear is the track rendered with these effects by ffmpeg, the same filters the export uses; the preview refreshes a moment after you stop editing.");
-        let mut act: Option<StackAct> = None;
-        let count = t.effects.len();
-        for (k, e) in t.effects.iter_mut().enumerate() {
-            egui::Frame::NONE
-                .fill(Color32::from_rgb(40, 42, 48))
-                .stroke(Stroke::new(1.0, Color32::from_gray(54)))
-                .corner_radius(8)
-                .inner_margin(egui::Margin::same(10))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    super::fit_sliders(ui);
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut e.on, "").on_hover_text("Bypass: keep the effect in the list but do not apply it");
-                        ui.label(RichText::new(e.name()).size(13.0).strong().color(if e.on { Color32::from_gray(235) } else { Color32::from_gray(120) })).on_hover_text(fx_tip(&e.kind));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("✕").on_hover_text("Remove this effect").clicked() {
-                                act = Some(StackAct::Remove(k));
-                            }
-                            if ui.add_enabled(k + 1 < count, egui::Button::new("▼").small()).on_hover_text("Apply later").clicked() {
-                                act = Some(StackAct::Down(k));
-                            }
-                            if ui.add_enabled(k > 0, egui::Button::new("▲").small()).on_hover_text("Apply earlier").clicked() {
-                                act = Some(StackAct::Up(k));
-                            }
-                        });
-                    });
-                    ui.add_space(4.0);
-                    ui.add_enabled_ui(e.on, |ui| match &mut e.kind {
-                        EffectKind::Eq(bands) => {
-                            let mut band_sel = (*sel).filter(|s| s.0 == k).map(|s| s.1);
-                            eq_plot(ui, bands, &mut band_sel);
-                            if band_sel.is_some() {
-                                *sel = Some((k, band_sel.unwrap()));
-                            } else if (*sel).map_or(false, |s| s.0 == k) {
-                                *sel = None;
-                            }
-                            ui.add_space(4.0);
-                            let mut remove = None;
-                            for (b_i, b) in bands.iter_mut().enumerate() {
-                                ui.horizontal(|ui| {
-                                    ui.checkbox(&mut b.on, "");
-                                    let w = ui.available_width() - 72.0;
-                                    egui::ComboBox::from_id_salt(("eqkind", k, b_i)).selected_text(kind_name(b.kind)).width(w).show_ui(ui, |ui| {
-                                        for kd in [EqKind::Peak, EqKind::LowShelf, EqKind::HighShelf, EqKind::HighPass, EqKind::LowPass] {
-                                            ui.selectable_value(&mut b.kind, kd, kind_name(kd));
-                                        }
-                                    });
-                                    if ui.small_button("✕").on_hover_text("Remove this band").clicked() {
-                                        remove = Some(b_i);
-                                    }
-                                });
-                                ui.horizontal(|ui| {
-                                    let w = super::NUM_W - 6.0;
-                                    let h = ui.spacing().interact_size.y;
-                                    ui.add_sized([w, h], egui::DragValue::new(&mut b.freq).range(20.0..=20000.0).speed(5.0).suffix(" Hz").fixed_decimals(0)).on_hover_text("Frequency");
-                                    let gains = matches!(b.kind, EqKind::Peak | EqKind::LowShelf | EqKind::HighShelf);
-                                    ui.add_enabled_ui(gains, |ui| ui.add_sized([w, h], egui::DragValue::new(&mut b.gain).range(-18.0..=18.0).speed(0.1).suffix(" dB").fixed_decimals(1))).response.on_hover_text("Gain");
-                                    ui.add_sized([w, h], egui::DragValue::new(&mut b.q).range(0.1..=10.0).speed(0.02).prefix("Q ").fixed_decimals(2)).on_hover_text("Width (higher = narrower)");
-                                });
-                                ui.add_space(2.0);
-                            }
-                            if let Some(b_i) = remove {
-                                bands.remove(b_i);
-                                *sel = None;
-                            }
-                            ui.horizontal(|ui| {
-                                if ui.add_enabled(bands.len() < MAX_BANDS, egui::Button::new("+ Band")).clicked() {
-                                    bands.push(EqBand { kind: EqKind::Peak, freq: 1000.0, gain: 0.0, q: 1.0, on: true });
-                                }
-                                if ui.add_enabled(bands.len() < MAX_BANDS, egui::Button::new("+ High-pass 80 Hz")).on_hover_text("Cuts rumble below the voice").clicked() {
-                                    bands.push(EqBand { kind: EqKind::HighPass, freq: 80.0, gain: 0.0, q: 0.71, on: true });
-                                }
-                            });
-                        }
-                        EffectKind::Comp(c) => {
-                            grid(("comp", k)).show(ui, |ui| {
-                                ui.label("Threshold");
-                                ui.add(egui::Slider::new(&mut c.threshold_db, -60.0..=0.0).suffix(" dB"));
-                                ui.end_row();
-                                ui.label("Ratio");
-                                ui.add(egui::Slider::new(&mut c.ratio, 1.0..=20.0).suffix(" : 1"));
-                                ui.end_row();
-                                ui.label("Attack");
-                                ui.add(egui::Slider::new(&mut c.attack_ms, 1.0..=200.0).logarithmic(true).suffix(" ms"));
-                                ui.end_row();
-                                ui.label("Release");
-                                ui.add(egui::Slider::new(&mut c.release_ms, 10.0..=2000.0).logarithmic(true).suffix(" ms"));
-                                ui.end_row();
-                                ui.label("Make-up gain");
-                                ui.add(egui::Slider::new(&mut c.makeup_db, 0.0..=24.0).suffix(" dB"));
-                                ui.end_row();
-                            });
-                        }
-                        EffectKind::DeEss(d) => {
-                        grid(("deess", k)).show(ui, |ui| {
-                            ui.label("Intensity");
-                            ui.add(egui::Slider::new(&mut d.intensity, 0.0..=1.0).fixed_decimals(2)).on_hover_text("How strongly sibilance is reduced");
-                            ui.end_row();
-                            ui.label("Max reduction");
-                            ui.add(egui::Slider::new(&mut d.max, 0.0..=1.0).fixed_decimals(2)).on_hover_text("Upper limit of the reduction");
-                            ui.end_row();
-                            ui.label("Frequency");
-                            ui.add(egui::Slider::new(&mut d.freq, 0.0..=1.0).fixed_decimals(2)).on_hover_text("Where the “s” sits: low = deeper voices, high = brighter ones");
-                            ui.end_row();
-                        });
-                    }
-                    EffectKind::Denoise(d) => {
-                        grid(("denoise", k)).show(ui, |ui| {
-                            ui.label("Reduction");
-                            ui.add(egui::Slider::new(&mut d.reduction_db, 1.0..=40.0).suffix(" dB")).on_hover_text("How much noise is removed. Too much makes the voice “watery”");
-                            ui.end_row();
-                            ui.label("Noise floor");
-                            ui.add(egui::Slider::new(&mut d.floor_db, -80.0..=-20.0).suffix(" dB")).on_hover_text("Roughly how loud the noise is");
-                            ui.end_row();
-                        });
-                    }
-                        EffectKind::Norm(n) => {
-                            field(ui, "Mode", |ui| {
-                                let cur = if n.mode == NormMode::Peak { "Peak level" } else { "Loudness (LUFS)" };
-                                egui::ComboBox::from_id_salt(("normmode", k)).selected_text(cur).width(ui.available_width()).show_ui(ui, |ui| {
-                                    if ui.selectable_label(n.mode == NormMode::Peak, "Peak level").clicked() && n.mode != NormMode::Peak {
-                                        *n = Normalize::new(NormMode::Peak);
-                                    }
-                                    if ui.selectable_label(n.mode == NormMode::Loudness, "Loudness (LUFS)").clicked() && n.mode != NormMode::Loudness {
-                                        *n = Normalize::new(NormMode::Loudness);
-                                    }
-                                });
-                            });
-                            field(ui, "Target", |ui| {
-                                let (range, unit) = if n.mode == NormMode::Peak { (-24.0..=0.0, " dB") } else { (-40.0..=-5.0, " LUFS") };
-                                ui.add(egui::DragValue::new(&mut n.target).range(range).speed(0.1).suffix(unit).fixed_decimals(1)).on_hover_text(if n.mode == NormMode::Peak { "The loudest peak of the clip will reach this level" } else { "Target integrated loudness: -16 for the web / YouTube, -23 for broadcast" });
-                            });
-                            let (err, busy) = &meas[k];
-                            if let Some(e) = err {
-                                ui.colored_label(theme::ERR, format!("Could not measure: {e}"));
-                            } else if *busy {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label(RichText::new("Measuring the track…").color(Color32::from_gray(150)));
-                                });
-                            } else if let Some(m) = &n.measured {
-                                ui.label(RichText::new(format!("Measured: {} LUFS, peak {} dB", db_fmt(m.i), db_fmt(m.tp))).size(12.0).color(theme::OK));
-                            }
-                        }
-                    });
-                });
-        }
-        match act {
-            Some(StackAct::Remove(k)) => {
-                t.effects.remove(k);
-                *sel = None;
-            }
-            Some(StackAct::Up(k)) => {
-                t.effects.swap(k, k - 1);
-                *sel = None;
-            }
-            Some(StackAct::Down(k)) => {
-                t.effects.swap(k, k + 1);
-                *sel = None;
-            }
-            None => {}
-        }
-        if t.effects.is_empty() {
-            ui.label(RichText::new("No effects yet.").color(Color32::from_gray(130)));
-        }
+    widgets::caption(ui, "Effects").on_hover_text("Applied from top to bottom. Change the order with the arrows, bypass with the checkbox.\nWhat you hear is the track rendered with these effects by ffmpeg, the same filters the export uses; the preview refreshes a moment after you stop editing.");
+    let mut act: Option<StackAct> = None;
+    let count = t.effects.len();
+    for (k, e) in t.effects.iter_mut().enumerate() {
+        let entry = StackEntry { k, count, name: e.name(), tip: Some(fx_tip(&e.kind)), highlight: false };
+        let mut on = e.on;
+        widgets::stack_card(ui, entry, &mut on, &mut act, |ui| effect_body(ui, k, &mut e.kind, sel, meas));
+        e.on = on;
+    }
+    if let Some(a) = act {
+        a.apply(&mut t.effects);
+        *sel = None;
+    }
+    if t.effects.is_empty() {
+        widgets::hint(ui, "No effects yet.");
+    }
 
-        ui.horizontal(|ui| {
-            ui.menu_button("+ Add effect", |ui| {
-                if ui.button("Equalizer").clicked() {
-                    t.effects.push(Effect::new(EffectKind::Eq(vec![EqBand { kind: EqKind::Peak, freq: 1000.0, gain: 0.0, q: 1.0, on: true }])));
-                    ui.close();
-                }
-                if ui.button("Compressor").clicked() {
-                    t.effects.push(Effect::new(EffectKind::Comp(Compressor::default())));
-                    ui.close();
-                }
-                if ui.button("De-esser").clicked() {
-                    t.effects.push(Effect::new(EffectKind::DeEss(DeEsser::default())));
-                    ui.close();
-                }
-                if ui.button("Noise reduction").clicked() {
-                    t.effects.push(Effect::new(EffectKind::Denoise(Denoise::default())));
-                    ui.close();
-                }
-                if ui.button("Normalize — loudness (LUFS)").clicked() {
-                    t.effects.push(Effect::new(EffectKind::Norm(Normalize::new(NormMode::Loudness))));
-                    ui.close();
-                }
-                if ui.button("Normalize — peak level").clicked() {
-                    t.effects.push(Effect::new(EffectKind::Norm(Normalize::new(NormMode::Peak))));
-                    ui.close();
-                }
-            });
-            if ui.add_enabled(t.has_fx() || !t.effects.is_empty(), egui::Button::new("Reset all")).on_hover_text("Remove every effect, fade and keyframe of this track").clicked() {
-                t.fade_in = 0.0;
-                t.fade_out = 0.0;
-                t.envelope.clear();
-                t.effects.clear();
-                *sel = None;
+    ui.horizontal(|ui| {
+        widgets::menu_button(ui, "+ Add effect", |ui| {
+            if ui.button("Equalizer").clicked() {
+                t.effects.push(Effect::new(EffectKind::Eq(vec![EqBand { kind: EqKind::Peak, freq: 1000.0, gain: 0.0, q: 1.0, on: true }])));
+                ui.close();
+            }
+            if ui.button("Compressor").clicked() {
+                t.effects.push(Effect::new(EffectKind::Comp(Compressor::default())));
+                ui.close();
+            }
+            if ui.button("De-esser").clicked() {
+                t.effects.push(Effect::new(EffectKind::DeEss(DeEsser::default())));
+                ui.close();
+            }
+            if ui.button("Noise reduction").clicked() {
+                t.effects.push(Effect::new(EffectKind::Denoise(Denoise::default())));
+                ui.close();
+            }
+            if ui.button("Normalize — loudness (LUFS)").clicked() {
+                t.effects.push(Effect::new(EffectKind::Norm(Normalize::new(NormMode::Loudness))));
+                ui.close();
+            }
+            if ui.button("Normalize — peak level").clicked() {
+                t.effects.push(Effect::new(EffectKind::Norm(Normalize::new(NormMode::Peak))));
+                ui.close();
             }
         });
-        if rendering {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label(RichText::new("Preparing the preview…").size(12.0).color(Color32::from_gray(150)));
-            });
-        } else if let Some(e) = &render_err {
-            ui.add(egui::Label::new(egui::RichText::new(format!("Preview failed: {e}")).color(theme::ERR)).wrap());
+        if ui
+            .add_enabled(t.has_fx() || !t.effects.is_empty(), egui::Button::new("Reset all"))
+            .on_hover_text("Remove every effect, fade and keyframe of this track")
+            .clicked()
+        {
+            t.fade_in = 0.0;
+            t.fade_out = 0.0;
+            t.envelope.clear();
+            t.effects.clear();
+            *sel = None;
         }
+    });
+    if rendering {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label(RichText::new("Preparing the preview…").size(theme::size::HINT).color(theme::TEXT_LABEL));
+        });
+    } else if let Some(e) = &render_err {
+        widgets::error(ui, format!("Preview failed: {e}"));
+    }
+}
+
+/// The settings of one effect of the stack.
+fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Option<(usize, usize)>, meas: &[(Option<String>, bool)]) {
+    match kind {
+        EffectKind::Eq(bands) => {
+            let mut band_sel = (*sel).filter(|s| s.0 == k).map(|s| s.1);
+            eq_plot(ui, bands, &mut band_sel);
+            if let Some(b) = band_sel {
+                *sel = Some((k, b));
+            } else if (*sel).is_some_and(|s| s.0 == k) {
+                *sel = None;
+            }
+            ui.add_space(4.0);
+            let mut remove = None;
+            for (b_i, b) in bands.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut b.on, "");
+                    let w = ui.available_width() - 72.0;
+                    egui::ComboBox::from_id_salt(("eqkind", k, b_i)).selected_text(kind_name(b.kind)).width(w).show_ui(ui, |ui| {
+                        for kd in [EqKind::Peak, EqKind::LowShelf, EqKind::HighShelf, EqKind::HighPass, EqKind::LowPass] {
+                            ui.selectable_value(&mut b.kind, kd, kind_name(kd));
+                        }
+                    });
+                    if ui.small_button("✕").on_hover_text("Remove this band").clicked() {
+                        remove = Some(b_i);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    let w = super::widgets::NUM_W - 6.0;
+                    let h = ui.spacing().interact_size.y;
+                    super::widgets::value_sized(ui, [w, h], egui::DragValue::new(&mut b.freq).range(20.0..=20000.0).speed(5.0).suffix(" Hz").fixed_decimals(0))
+                        .on_hover_text("Frequency");
+                    let gains = matches!(b.kind, EqKind::Peak | EqKind::LowShelf | EqKind::HighShelf);
+                    ui.add_enabled_ui(gains, |ui| {
+                        super::widgets::value_sized(
+                            ui,
+                            [w, h],
+                            egui::DragValue::new(&mut b.gain).range(-18.0..=18.0).speed(0.1).suffix(" dB").fixed_decimals(1),
+                        )
+                    })
+                    .response
+                    .on_hover_text("Gain");
+                    super::widgets::value_sized(ui, [w, h], egui::DragValue::new(&mut b.q).range(0.1..=10.0).speed(0.02).prefix("Q ").fixed_decimals(2))
+                        .on_hover_text("Width (higher = narrower)");
+                });
+                ui.add_space(2.0);
+            }
+            if let Some(b_i) = remove {
+                bands.remove(b_i);
+                *sel = None;
+            }
+            ui.horizontal(|ui| {
+                if ui.add_enabled(bands.len() < MAX_BANDS, egui::Button::new("+ Band")).clicked() {
+                    bands.push(EqBand { kind: EqKind::Peak, freq: 1000.0, gain: 0.0, q: 1.0, on: true });
+                }
+                if ui.add_enabled(bands.len() < MAX_BANDS, egui::Button::new("+ High-pass 80 Hz")).on_hover_text("Cuts rumble below the voice").clicked() {
+                    bands.push(EqBand { kind: EqKind::HighPass, freq: 80.0, gain: 0.0, q: 0.71, on: true });
+                }
+            });
+        }
+        EffectKind::Comp(c) => {
+            grid(("comp", k)).show(ui, |ui| {
+                ui.label("Threshold");
+                super::widgets::value(ui, egui::Slider::new(&mut c.threshold_db, -60.0..=0.0).suffix(" dB"));
+                ui.end_row();
+                ui.label("Ratio");
+                super::widgets::value(ui, egui::Slider::new(&mut c.ratio, 1.0..=20.0).suffix(" : 1"));
+                ui.end_row();
+                ui.label("Attack");
+                super::widgets::value(ui, egui::Slider::new(&mut c.attack_ms, 1.0..=200.0).logarithmic(true).suffix(" ms"));
+                ui.end_row();
+                ui.label("Release");
+                super::widgets::value(ui, egui::Slider::new(&mut c.release_ms, 10.0..=2000.0).logarithmic(true).suffix(" ms"));
+                ui.end_row();
+                ui.label("Make-up gain");
+                super::widgets::value(ui, egui::Slider::new(&mut c.makeup_db, 0.0..=24.0).suffix(" dB"));
+                ui.end_row();
+            });
+        }
+        EffectKind::DeEss(d) => {
+            grid(("deess", k)).show(ui, |ui| {
+                ui.label("Intensity");
+                super::widgets::value(ui, egui::Slider::new(&mut d.intensity, 0.0..=1.0).fixed_decimals(2)).on_hover_text("How strongly sibilance is reduced");
+                ui.end_row();
+                ui.label("Max reduction");
+                super::widgets::value(ui, egui::Slider::new(&mut d.max, 0.0..=1.0).fixed_decimals(2)).on_hover_text("Upper limit of the reduction");
+                ui.end_row();
+                ui.label("Frequency");
+                super::widgets::value(ui, egui::Slider::new(&mut d.freq, 0.0..=1.0).fixed_decimals(2))
+                    .on_hover_text("Where the “s” sits: low = deeper voices, high = brighter ones");
+                ui.end_row();
+            });
+        }
+        EffectKind::Denoise(d) => {
+            grid(("denoise", k)).show(ui, |ui| {
+                ui.label("Reduction");
+                super::widgets::value(ui, egui::Slider::new(&mut d.reduction_db, 1.0..=40.0).suffix(" dB"))
+                    .on_hover_text("How much noise is removed. Too much makes the voice “watery”");
+                ui.end_row();
+                ui.label("Noise floor");
+                super::widgets::value(ui, egui::Slider::new(&mut d.floor_db, -80.0..=-20.0).suffix(" dB")).on_hover_text("Roughly how loud the noise is");
+                ui.end_row();
+            });
+        }
+        EffectKind::Norm(n) => {
+            field(ui, "Mode", |ui| {
+                let cur = if n.mode == NormMode::Peak { "Peak level" } else { "Loudness (LUFS)" };
+                egui::ComboBox::from_id_salt(("normmode", k)).selected_text(cur).width(ui.available_width()).show_ui(ui, |ui| {
+                    if ui.selectable_label(n.mode == NormMode::Peak, "Peak level").clicked() && n.mode != NormMode::Peak {
+                        *n = Normalize::new(NormMode::Peak);
+                    }
+                    if ui.selectable_label(n.mode == NormMode::Loudness, "Loudness (LUFS)").clicked() && n.mode != NormMode::Loudness {
+                        *n = Normalize::new(NormMode::Loudness);
+                    }
+                });
+            });
+            field(ui, "Target", |ui| {
+                let (range, unit) = if n.mode == NormMode::Peak { (-24.0..=0.0, " dB") } else { (-40.0..=-5.0, " LUFS") };
+                super::widgets::value(ui, egui::DragValue::new(&mut n.target).range(range).speed(0.1).suffix(unit).fixed_decimals(1)).on_hover_text(
+                    if n.mode == NormMode::Peak {
+                        "The loudest peak of the clip will reach this level"
+                    } else {
+                        "Target integrated loudness: -16 for the web / YouTube, -23 for broadcast"
+                    },
+                );
+            });
+            let (err, busy) = &meas[k];
+            if let Some(e) = err {
+                widgets::error(ui, format!("Could not measure: {e}"));
+            } else if *busy {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Measuring the track…").color(theme::TEXT_LABEL));
+                });
+            } else if let Some(m) = &n.measured {
+                ui.label(RichText::new(format!("Measured: {} LUFS, peak {} dB", db_fmt(m.i), db_fmt(m.tp))).size(12.0).color(theme::OK));
+            }
+        }
+    }
 }
 
 impl App {
@@ -423,7 +421,7 @@ impl App {
         FxCtx { rendering: self.preview_rendering(t0), render_err: self.preview_error(t0), meas, sel, fades: true }
     }
 
-    /// The same stack inside the sidebar (audio-file mode: one track, so no window is needed).
+    /// The effects of track `i` in the sidebar.
     pub fn fx_sidebar(&mut self, ui: &mut egui::Ui, i: usize) {
         let Some(t0) = self.s.tracks.get(i).cloned() else { return };
         let mut c = self.fx_ctx(&t0);

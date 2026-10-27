@@ -1,9 +1,9 @@
 //! Audio-file mode: a big zoomable waveform instead of the picture. Volume keyframes, fades and the
 //! trim range are edited right on it (one track, trimmed like the file, so what you see is what is exported).
 
+use super::tracks::peak_in;
 use crate::app::{fmt_time, App, TrkDrag};
 use crate::theme;
-use super::tracks::peak_in;
 use eframe::egui::{self, pos2, vec2, Align2, Color32, DragValue, FontId, Pos2, Rect, RichText, Sense, Stroke};
 use ffcut_core::{EnvPoint, TrackSource};
 
@@ -73,8 +73,12 @@ impl App {
                 self.zoom_to(a - (b - a) * 0.05, (b - a) * 1.1);
             }
             ui.add_space(8.0);
-            let hint = format!("{}: zoom · {} or middle-drag: scroll · Double-click or Alt+click: add a volume keyframe · Right-click: menu", self.settings.zoom_key().label(), self.settings.scroll_key().label());
-            ui.add(egui::Label::new(RichText::new(hint).size(11.5).color(Color32::from_gray(125))).truncate());
+            let hint = format!(
+                "{}: zoom · {} or middle-drag: scroll · Double-click or Alt+click: add a volume keyframe · Right-click: menu",
+                self.settings.zoom_key().label(),
+                self.settings.scroll_key().label()
+            );
+            ui.add(egui::Label::new(RichText::new(hint).size(11.5).color(theme::TEXT_OFF)).truncate());
         });
 
         // ---- layout
@@ -135,7 +139,11 @@ impl App {
         let y_of_db = |db: f32| wave_r.top() + (ENV_MAX - db.clamp(ENV_MIN, ENV_MAX)) / (ENV_MAX - ENV_MIN) * wave_r.height();
         let db_of_y = |y: f32| {
             let v = ENV_MAX - ((y - wave_r.top()) / wave_r.height()).clamp(0.0, 1.0) * (ENV_MAX - ENV_MIN);
-            if v.abs() < 1.0 { 0.0 } else { v }
+            if v.abs() < 1.0 {
+                0.0
+            } else {
+                v
+            }
         };
         let env_xy = |pt: &EnvPoint| pos2(x_of(pt.t, t0, span), y_of_db(pt.db));
         let near_env = |p: Pos2, r: f32| t.envelope.iter().position(|pt| env_xy(pt).distance(p) <= r);
@@ -146,16 +154,15 @@ impl App {
         // ---- interaction
         if resp.drag_started_by(egui::PointerButton::Primary) {
             if let Some(p) = ui.input(|i| i.pointer.press_origin()) {
-                let locked = self.lock_trim;
                 let mode = if let Some(k) = near_env(p, 9.0) {
                     TrkDrag::EnvPt(k)
                 } else if near_top(p) && (p.x - fi_x).abs() <= 9.0 && (p.x - fi_x).abs() <= (p.x - fo_x).abs() {
                     TrkDrag::FadeIn
                 } else if near_top(p) && (p.x - fo_x).abs() <= 9.0 {
                     TrkDrag::FadeOut
-                } else if !locked && (p.x - xs).abs() <= EDGE && (p.x - xs).abs() <= (p.x - xe).abs() {
+                } else if (p.x - xs).abs() <= EDGE && (p.x - xs).abs() <= (p.x - xe).abs() {
                     TrkDrag::TrimStart
-                } else if !locked && (p.x - xe).abs() <= EDGE {
+                } else if (p.x - xe).abs() <= EDGE {
                     TrkDrag::TrimEnd
                 } else {
                     TrkDrag::Seek
@@ -212,9 +219,7 @@ impl App {
                 Some(egui::CursorIcon::Grab)
             } else if alt {
                 Some(egui::CursorIcon::Crosshair)
-            } else if near_top(p) && ((p.x - fi_x).abs() <= 9.0 || (p.x - fo_x).abs() <= 9.0) {
-                Some(egui::CursorIcon::ResizeHorizontal)
-            } else if !self.lock_trim && ((p.x - xs).abs() <= EDGE || (p.x - xe).abs() <= EDGE) {
+            } else if (near_top(p) && ((p.x - fi_x).abs() <= 9.0 || (p.x - fo_x).abs() <= 9.0)) || (p.x - xs).abs() <= EDGE || (p.x - xe).abs() <= EDGE {
                 Some(egui::CursorIcon::ResizeHorizontal)
             } else {
                 None
@@ -261,8 +266,8 @@ impl App {
             let tt = k * step;
             let x = x_of(tt, t0, span);
             if x >= wave_r.left() - 0.5 && x <= wave_r.right() + 0.5 {
-                p.line_segment([pos2(x, ruler.bottom() - 6.0), pos2(x, ruler.bottom())], Stroke::new(1.0, Color32::from_gray(110)));
-                p.text(pos2(x + 3.0, ruler.center().y - 2.0), Align2::LEFT_CENTER, short_time(tt, step), FontId::monospace(10.5), Color32::from_gray(140));
+                p.line_segment([pos2(x, ruler.bottom() - 6.0), pos2(x, ruler.bottom())], Stroke::new(1.0, theme::TEXT_OFF));
+                p.text(pos2(x + 3.0, ruler.center().y - 2.0), Align2::LEFT_CENTER, short_time(tt, step), FontId::monospace(10.5), theme::TEXT_DIM);
                 p.line_segment([pos2(x, wave_r.top()), pos2(x, wave_r.bottom())], Stroke::new(1.0, Color32::from_white_alpha(10)));
             }
             k += 1.0;
@@ -285,7 +290,7 @@ impl App {
         }
         let baked_key = baked_src.as_ref().map(|b| self.wave_key(b));
         let src_key = self.wave_key(&src);
-        let baked_ready = baked_key.as_ref().map_or(false, |k| matches!(self.waves.lock().unwrap().get(k), Some(crate::app::Wave::Ready(_))));
+        let baked_ready = baked_key.as_ref().is_some_and(|k| matches!(self.waves.lock().unwrap().get(k), Some(crate::app::Wave::Ready(_))));
         let (hi_key, hi_file, hi_ord) = match (&baked_src, baked_ready) {
             (Some(TrackSource::External { path, .. }), true) => (baked_key.clone().unwrap(), std::path::PathBuf::from(path), 0),
             _ => match &src {
@@ -326,12 +331,21 @@ impl App {
                         };
                         let a = raw * (t.volume * gain).clamp(0.02, 3.0).sqrt();
                         let h = (a * half).clamp(0.5, half);
-                        p.line_segment([pos2(x + 0.5, mid - h), pos2(x + 0.5, mid + h)], Stroke::new(1.0, if inside { theme::OK } else { Color32::from_gray(80) }));
+                        p.line_segment(
+                            [pos2(x + 0.5, mid - h), pos2(x + 0.5, mid + h)],
+                            Stroke::new(1.0, if inside { theme::OK } else { Color32::from_gray(80) }),
+                        );
                     }
                 }
                 None => {
                     let failed = matches!(wave.get(&src_key), Some(crate::app::Wave::Failed));
-                    p.text(wave_r.center(), Align2::CENTER_CENTER, if failed { "no waveform" } else { "reading waveform…" }, FontId::proportional(13.0), Color32::from_gray(130));
+                    p.text(
+                        wave_r.center(),
+                        Align2::CENTER_CENTER,
+                        if failed { "no waveform" } else { "reading waveform…" },
+                        FontId::proportional(13.0),
+                        theme::TEXT_DIM,
+                    );
                 }
             }
         }
@@ -372,7 +386,12 @@ impl App {
         }
         for (x, on) in [(fi_x, t.fade_in > 0.001), (fo_x, t.fade_out > 0.001)] {
             if x >= wave_r.left() - 1.0 && x <= wave_r.right() + 1.0 {
-                p.circle(pos2(x, top + 9.0), 4.0, if on { Color32::WHITE } else { Color32::from_white_alpha(70) }, Stroke::new(1.0, Color32::from_black_alpha(160)));
+                p.circle(
+                    pos2(x, top + 9.0),
+                    4.0,
+                    if on { Color32::WHITE } else { Color32::from_white_alpha(70) },
+                    Stroke::new(1.0, Color32::from_black_alpha(160)),
+                );
             }
         }
 
@@ -392,8 +411,14 @@ impl App {
                 let q = env_xy(pt);
                 if q.x >= wave_r.left() - 6.0 && q.x <= wave_r.right() + 6.0 {
                     p.circle(q, 4.5, theme::WARN, Stroke::new(1.0, Color32::BLACK));
-                    if resp.hover_pos().map_or(false, |h| h.distance(q) <= 10.0) || matches!(self.trk_drag, Some((_, TrkDrag::EnvPt(d))) if d == k) {
-                        p.text(q + vec2(8.0, -8.0), Align2::LEFT_BOTTOM, format!("{:+.1} dB · {}", pt.db, fmt_time(pt.t)), FontId::proportional(11.0), Color32::WHITE);
+                    if resp.hover_pos().is_some_and(|h| h.distance(q) <= 10.0) || matches!(self.trk_drag, Some((_, TrkDrag::EnvPt(d))) if d == k) {
+                        p.text(
+                            q + vec2(8.0, -8.0),
+                            Align2::LEFT_BOTTOM,
+                            format!("{:+.1} dB · {}", pt.db, fmt_time(pt.t)),
+                            FontId::proportional(11.0),
+                            Color32::WHITE,
+                        );
                     }
                 }
             }
@@ -409,7 +434,12 @@ impl App {
         p.rect_filled(ovw, 4.0, Color32::from_gray(38));
         let ox = |t: f64| ovw.left() + (t / dur) as f32 * ovw.width();
         p.rect_filled(Rect::from_min_max(pos2(ox(self.trim_start), ovw.top()), pos2(ox(self.trim_end), ovw.bottom())), 4.0, theme::ACCENT.gamma_multiply(0.35));
-        p.rect_stroke(Rect::from_min_max(pos2(ox(t0), ovw.top()), pos2(ox(t0 + span).max(ox(t0) + 6.0), ovw.bottom())), 4.0, Stroke::new(1.5, Color32::from_gray(200)), egui::StrokeKind::Inside);
+        p.rect_stroke(
+            Rect::from_min_max(pos2(ox(t0), ovw.top()), pos2(ox(t0 + span).max(ox(t0) + 6.0), ovw.bottom())),
+            4.0,
+            Stroke::new(1.5, theme::TEXT),
+            egui::StrokeKind::Inside,
+        );
         p.line_segment([pos2(ox(self.player.time()), ovw.top()), pos2(ox(self.player.time()), ovw.bottom())], Stroke::new(1.5, Color32::WHITE));
     }
 
@@ -422,11 +452,14 @@ impl App {
     fn audio_menu(&mut self, ui: &mut egui::Ui) {
         let Some(t) = self.s.tracks.get_mut(0) else { return };
         if let Some(k) = self.fx.ctx_point.filter(|k| *k < t.envelope.len()) {
-            ui.label(RichText::new("Volume keyframe").strong());
-            ui.horizontal(|ui| {
+            super::widgets::menu_indent(ui, |ui| ui.label(RichText::new("Volume keyframe").strong()));
+            super::widgets::menu_indent(ui, |ui| {
                 ui.label("Level");
                 let mut db = t.envelope[k].db;
-                if ui.add(DragValue::new(&mut db).range(-60.0..=12.0).speed(0.2).suffix(" dB").fixed_decimals(1)).on_hover_text("Drag, or click and type a value").changed() {
+                if super::widgets::value(ui, DragValue::new(&mut db).range(-60.0..=12.0).speed(0.2).suffix(" dB").fixed_decimals(1))
+                    .on_hover_text("Drag, or click and type a value")
+                    .changed()
+                {
                     t.envelope[k].db = db;
                 }
             });

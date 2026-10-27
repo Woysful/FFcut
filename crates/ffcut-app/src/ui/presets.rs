@@ -1,347 +1,253 @@
-//! "Edit presets" window: rename, edit every field, apply, export one / all, import, delete.
+//! The presets window: export presets and audio effect presets. Rename, edit, apply, export, import, delete.
 
-use super::codecs;
+use super::side::{audio_mode_label, quality_fields, size_fields, PIX_FMTS, SPEEDS};
+use super::{codecs, widgets};
 use crate::app::{App, CONTAINERS};
-use crate::theme;
-use eframe::egui::{self, Color32, DragValue, RichText};
+use crate::state::PresetsTab;
+use crate::theme::{self, radius, size};
+use eframe::egui::{self, DragValue, RichText};
 use ffcut_core::presets::{self, Part, Preset};
-use ffcut_core::{AudioCodec, AudioMode, Quality, Scale, VideoCodec};
+use ffcut_core::{AudioCodec, AudioMode, Quality, VideoCodec};
+use std::collections::BTreeMap;
 
-fn audio_mode_label(m: AudioMode) -> &'static str {
-    match m {
-        AudioMode::None => "No audio",
-        AudioMode::Merge => "Merge into one track",
-        AudioMode::Separate => "Keep tracks separate",
-    }
+/// What a button on a preset card asked for.
+enum CardAct {
+    Apply,
+    Export,
+    Delete,
+    StartRename,
+    Rename(String),
+    CancelRename,
 }
 
-const SPEEDS: [&str; 9] = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
-const PIX_FMTS: [&str; 7] = ["yuv420p", "yuv422p", "yuv444p", "yuv420p10le", "yuv422p10le", "nv12", "p010le"];
-
-fn summary(p: &Preset) -> String {
-    let mut v: Vec<String> = Vec::new();
-    if let Some(c) = &p.container {
-        v.push(format!(".{c}"));
-    }
-    match (&p.video_codec, p.quality) {
-        (Some(VideoCodec::Copy), _) => v.push("video copy".into()),
-        (vc, q) => {
-            let name = match vc {
-                Some(VideoCodec::Auto) => Some("auto".to_string()),
-                Some(VideoCodec::Encoder(e)) => Some(e.clone()),
-                _ => None,
-            };
-            let q = q.map(|q| match q {
-                Quality::Crf(c) => format!("CRF {c}"),
-                Quality::Bitrate(k) => format!("{k} kbps"),
-            });
-            match (name, q) {
-                (Some(n), Some(q)) => v.push(format!("{n} ({q})")),
-                (Some(n), None) => v.push(n),
-                (None, Some(q)) => v.push(q),
-                _ => {}
+/// One preset in the list: its name (or the rename field), the buttons, a one-line summary, and the editor.
+fn preset_card(
+    ui: &mut egui::Ui,
+    name: &str,
+    rename: Option<&mut String>,
+    summary: &str,
+    apply: (&str, Option<String>),
+    exportable: bool,
+    edit: impl FnOnce(&mut egui::Ui),
+) -> Option<CardAct> {
+    let mut act = None;
+    widgets::box_frame().corner_radius(radius::PANEL).inner_margin(egui::Margin::same(14)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            match rename {
+                Some(new) => {
+                    let r = ui.add(egui::TextEdit::singleline(new).desired_width(200.0));
+                    r.request_focus();
+                    if ui.small_button("OK").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+                        act = Some(CardAct::Rename(new.trim().to_string()));
+                    }
+                    if ui.small_button("Cancel").clicked() {
+                        act = Some(CardAct::CancelRename);
+                    }
+                }
+                None => {
+                    ui.label(RichText::new(name).strong().size(size::HEADING - 2.0).color(theme::TEXT_STRONG));
+                }
             }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.small_button("Delete").clicked() {
+                    act = Some(CardAct::Delete);
+                }
+                if exportable && ui.small_button("Export").on_hover_text("Save this preset to a file").clicked() {
+                    act = Some(CardAct::Export);
+                }
+                if ui.small_button("Rename").clicked() {
+                    act = Some(CardAct::StartRename);
+                }
+                let (label, tip) = apply;
+                let b = ui.add_enabled(tip.is_some(), widgets::primary_button(label).small());
+                if b.on_hover_text(tip.unwrap_or_default()).on_disabled_hover_text("Open a file first").clicked() {
+                    act = Some(CardAct::Apply);
+                }
+            });
+        });
+        ui.add(egui::Label::new(RichText::new(summary).size(size::HINT).color(theme::TEXT_DIM)).truncate());
+        egui::CollapsingHeader::new(RichText::new("Edit").size(size::BODY)).id_salt(("edit", name)).show(ui, edit);
+    });
+    ui.add_space(8.0);
+    act
+}
+
+/// Renames `old` to `new` in `map`, refusing an empty name or one that is taken.
+fn rename_in<T>(map: &mut BTreeMap<String, T>, old: &str, new: String) -> Result<(), String> {
+    if new.is_empty() {
+        return Err("A preset needs a name.".into());
+    }
+    if new != old && map.contains_key(&new) {
+        return Err(format!("A preset named “{new}” already exists."));
+    }
+    if let Some(p) = map.remove(old) {
+        map.insert(new, p);
+    }
+    Ok(())
+}
+
+/// The controls for one part of an export preset. True when something changed.
+fn part_editor(
+    ui: &mut egui::Ui,
+    id: &str,
+    part: Part,
+    p: &mut Preset,
+    enc: &Option<ffcut_core::probe::Encoders>,
+    cur: (&str, &ffcut_core::ExportSettings),
+) -> bool {
+    let mut changed = false;
+    match part {
+        Part::Container => {
+            let c = p.container.get_or_insert_with(|| "mp4".into());
+            egui::ComboBox::from_id_salt(("pc", id)).selected_text(format!(".{c}")).show_ui(ui, |ui| {
+                for k in CONTAINERS {
+                    changed |= ui.selectable_value(c, k.to_string(), format!(".{k}")).changed();
+                }
+            });
+        }
+        Part::VideoCodec => {
+            let v = p.video_codec.get_or_insert(VideoCodec::Auto);
+            let before = v.clone();
+            codecs::video_codec_combo(ui, ("pv", id), v, enc, 230.0);
+            changed |= before != *v;
+        }
+        Part::Quality => {
+            let q = p.quality.get_or_insert(Quality::Crf(23));
+            ui.horizontal(|ui| {
+                changed |= quality_fields(ui, q);
+                match q {
+                    Quality::Crf(v) => changed |= widgets::num(ui, DragValue::new(v).range(0..=51)).changed(),
+                    Quality::Bitrate(k) => changed |= widgets::num(ui, DragValue::new(k).range(100..=400_000).speed(50.0).suffix(" kbps")).changed(),
+                }
+            });
+        }
+        Part::Speed => {
+            let sp = p.preset.get_or_insert_with(|| "medium".into());
+            egui::ComboBox::from_id_salt(("ps", id)).selected_text(sp.clone()).show_ui(ui, |ui| {
+                for k in SPEEDS {
+                    changed |= ui.selectable_value(sp, k.to_string(), k).changed();
+                }
+            });
+        }
+        Part::PixFmt => {
+            let pf = p.pix_fmt.get_or_insert_with(|| "auto".into());
+            egui::ComboBox::from_id_salt(("pp", id)).selected_text(pf.clone()).show_ui(ui, |ui| {
+                for k in std::iter::once("auto").chain(PIX_FMTS) {
+                    changed |= ui.selectable_value(pf, k.to_string(), k).changed();
+                }
+            });
+        }
+        Part::Resize => {
+            let sc = p.scale.get_or_insert_with(Default::default);
+            ui.horizontal(|ui| changed |= size_fields(ui, sc));
+        }
+        Part::AudioCodec => {
+            let a = p.audio_codec.get_or_insert_with(|| AudioCodec::Encoder("aac".into()));
+            let before = a.clone();
+            codecs::audio_codec_combo(ui, ("pa", id), a, enc, 230.0);
+            changed |= before != *a;
+        }
+        Part::AudioBitrate => {
+            changed |= widgets::num(ui, DragValue::new(p.audio_bitrate_kbps.get_or_insert(192)).range(32..=1536).speed(2.0).suffix(" kbps")).changed();
+        }
+        Part::AudioMode => {
+            let m = p.audio_mode.get_or_insert(AudioMode::Separate);
+            egui::ComboBox::from_id_salt(("pm", id)).selected_text(audio_mode_label(*m)).show_ui(ui, |ui| {
+                for k in [AudioMode::Separate, AudioMode::Merge, AudioMode::None] {
+                    changed |= ui.selectable_value(m, k, audio_mode_label(k)).changed();
+                }
+            });
+        }
+        Part::VideoEffects | Part::Captions => {
+            let text = match (part, &p.video_effects, &p.captions) {
+                (Part::VideoEffects, Some(fx), _) => {
+                    let names: Vec<&str> = fx.iter().map(|e| e.name()).collect();
+                    if names.is_empty() {
+                        "none".to_string()
+                    } else {
+                        names.join(", ")
+                    }
+                }
+                (_, _, Some((t, b))) => format!("top {} · bottom {}", if t.on { "on" } else { "off" }, if b.on { "on" } else { "off" }),
+                _ => String::new(),
+            };
+            ui.horizontal(|ui| {
+                ui.add(egui::Label::new(RichText::new(text).size(size::HINT).color(theme::TEXT_LABEL)).truncate());
+                if ui.small_button("Update from current").on_hover_text("Replace with what is set up in the editor now").clicked() {
+                    p.fill(part, cur.0, cur.1);
+                    changed = true;
+                }
+            });
         }
     }
-    match &p.audio_codec {
-        Some(AudioCodec::Copy) => v.push("audio copy".into()),
-        Some(AudioCodec::Encoder(e)) => v.push(format!("audio {e}")),
-        None => {}
-    }
-    if let Some(sc) = p.scale {
-        if sc.w.is_some() || sc.h.is_some() {
-            v.push(format!("{}×{}", sc.w.map_or("auto".into(), |x| x.to_string()), sc.h.map_or("auto".into(), |x| x.to_string())));
-        }
-    }
-    if let Some(fx) = &p.video_effects {
-        v.push(format!("{} video effect(s)", fx.len()));
-    }
-    if let Some((t, b)) = &p.captions {
-        v.push(format!("captions{}", if t.on || b.on { "" } else { " (off)" }));
-    }
-    if v.is_empty() { "empty: applying changes nothing".into() } else { v.join(" · ") }
+    changed
 }
 
 impl App {
     fn save_presets(&mut self) {
-        if let Err(e) = presets::save(&self.presets_path, &self.presets) {
-            self.preset_msg = Some(format!("Cannot save presets: {e}"));
+        if let Err(e) = self.presets.save_export() {
+            self.presets_ui.msg = Some(e);
         }
     }
 
+    /// Writes the audio presets to disk.
+    pub fn save_fx_presets(&mut self) {
+        if let Err(e) = self.presets.save_fx() {
+            self.presets_ui.msg = Some(e.clone());
+            self.status = Some(crate::app::Status::Error(e));
+        }
+    }
+
+    fn set_presets_tab(&mut self, tab: PresetsTab) {
+        self.presets_ui.tab = tab;
+        self.presets_ui.rename = None;
+        self.presets_ui.msg = None;
+    }
+
     pub fn presets_window(&mut self, ctx: &egui::Context) {
-        if !self.show_presets {
+        if !self.dialogs.presets {
             return;
         }
-        let enc = self.encoders.lock().unwrap().clone();
-        let (cur_container, cur) = (self.container.clone(), self.s.clone());
-        let open;
-        let mut apply: Option<String> = None;
-        let mut delete: Option<String> = None;
-        let mut export_one: Option<String> = None;
-        let mut rename: Option<(String, String)> = None;
-        let mut changed = false;
         let (mut export_all, mut import) = (false, false);
-
-        open = super::os_window_raw(ctx, "presets", "Presets", [700.0, 600.0], |ui| {
+        let open = super::os_window_raw(ctx, "presets", "Presets", [700.0, 600.0], |ui| {
             egui::Panel::top("presets_head").frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(18, 12))).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Presets").size(18.0).strong());
+                    ui.label(RichText::new("Presets").size(size::PAGE).strong());
                     ui.add_space(8.0);
-                    for (tab, label, n) in [(0u8, "Export", self.presets.len()), (1, "Audio effects", self.fx_presets.len())] {
-                        if ui.selectable_label(self.presets_tab == tab, format!("{label}  {n}")).clicked() {
-                            self.presets_tab = tab;
-                            self.preset_rename = None;
-                            self.fx_rename = None;
-                            self.preset_msg = None;
+                    for (tab, label, n) in
+                        [(PresetsTab::Export, "Export", self.presets.export.len()), (PresetsTab::Audio, "Audio effects", self.presets.fx.len())]
+                    {
+                        if ui.selectable_label(self.presets_ui.tab == tab, format!("{label}  {n}")).clicked() {
+                            self.set_presets_tab(tab);
                         }
                     }
-                    if self.presets_tab == 0 {
+                    if self.presets_ui.tab == PresetsTab::Export {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.add_enabled(!self.presets.is_empty(), egui::Button::new("Export all…")).clicked() {
-                                export_all = true;
-                            }
-                            if ui.button("Import…").on_hover_text("Add presets from a .json file (also reads presets exported from the old FFcut)").clicked() {
-                                import = true;
-                            }
+                            export_all = ui.add_enabled(!self.presets.export.is_empty(), egui::Button::new("Export all…")).clicked();
+                            import =
+                                ui.button("Import…").on_hover_text("Add presets from a .json file (also reads presets exported from the old FFcut)").clicked();
                         });
                     }
                 });
             });
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin::symmetric(18, 14))).show(ui, |ui| {
-            if let Some(m) = &self.preset_msg {
-                ui.add(egui::Label::new(RichText::new(m).size(12.5).color(theme::WARN)).wrap());
-                ui.add_space(6.0);
-            }
-
-            if self.presets_tab == 1 {
-                self.fx_presets_tab(ui);
-                return;
-            }
-            if self.presets.is_empty() {
-                ui.add_space(30.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("No presets yet").size(15.0).color(Color32::from_gray(190)));
-                    ui.add_space(4.0);
-                    ui.weak("Set up codec, quality and audio in the sidebar, then Presets → Save preset…");
-                });
-                return;
-            }
-
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                let names: Vec<String> = self.presets.keys().cloned().collect();
-                for name in names {
-                    egui::Frame::NONE.fill(Color32::from_rgb(40, 42, 48)).stroke(egui::Stroke::new(1.0, Color32::from_gray(54))).corner_radius(10).inner_margin(egui::Margin::same(14)).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        let renaming = self.preset_rename.as_ref().map_or(false, |(old, _)| *old == name);
-                        ui.horizontal(|ui| {
-                            if renaming {
-                                let new = &mut self.preset_rename.as_mut().unwrap().1;
-                                let r = ui.add(egui::TextEdit::singleline(new).desired_width(200.0));
-                                r.request_focus();
-                                let ok = ui.small_button("OK").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-                                if ok {
-                                    rename = Some((name.clone(), new.trim().to_string()));
-                                }
-                                if ui.small_button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                    self.preset_rename = None;
-                                }
-                            } else {
-                                ui.label(RichText::new(&name).strong().size(14.0));
-                            }
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.small_button("Delete").on_hover_text("Delete").clicked() {
-                                    delete = Some(name.clone());
-                                }
-                                if ui.small_button("Export").on_hover_text("Save this preset to a file").clicked() {
-                                    export_one = Some(name.clone());
-                                }
-                                if ui.small_button("Rename").clicked() {
-                                    self.preset_rename = Some((name.clone(), name.clone()));
-                                }
-                                if ui.add_enabled(self.clip.is_some(), egui::Button::new(RichText::new("Apply").color(Color32::BLACK)).fill(theme::ACCENT).small()).on_hover_text("Use this preset for the open video").clicked() {
-                                    apply = Some(name.clone());
-                                }
-                            });
-                        });
-                        ui.add(egui::Label::new(RichText::new(summary(&self.presets[&name])).size(12.0).color(Color32::from_gray(140))).truncate());
-
-                        egui::CollapsingHeader::new(RichText::new("Edit").size(12.5)).id_salt(("edit", &name)).show(ui, |ui| {
-                            let p = self.presets.get_mut(&name).unwrap();
-                            ui.add(egui::Label::new(RichText::new("Tick what the preset should set (audio effects have their own presets in the sidebar). Anything unticked is left as it is when the preset is applied.").size(11.5).color(Color32::from_gray(130))).wrap());
-                            ui.add_space(4.0);
-                            egui::Grid::new(("grid", &name)).num_columns(3).spacing([10.0, 6.0]).show(ui, |ui| {
-                                for part in Part::ALL {
-                                    let mut on = p.has(part);
-                                    if ui.checkbox(&mut on, "").changed() {
-                                        if on {
-                                            p.fill(part, &cur_container, &cur);
-                                        } else {
-                                            p.remove(part);
-                                        }
-                                        changed = true;
-                                    }
-                                    ui.label(part.label());
-                                    if !on {
-                                        ui.weak("not included");
-                                        ui.end_row();
-                                        continue;
-                                    }
-                                    match part {
-                                        Part::Container => {
-                                            let c = p.container.as_mut().unwrap();
-                                            egui::ComboBox::from_id_salt(("pc", &name)).selected_text(format!(".{c}")).show_ui(ui, |ui| {
-                                                for k in CONTAINERS {
-                                                    changed |= ui.selectable_value(c, k.to_string(), format!(".{k}")).changed();
-                                                }
-                                            });
-                                        }
-                                        Part::VideoCodec => {
-                                            let v = p.video_codec.as_mut().unwrap();
-                                            let before = v.clone();
-                                            codecs::video_codec_combo(ui, ("pv", &name), v, &enc, 230.0);
-                                            changed |= before != *v;
-                                        }
-                                        Part::Quality => {
-                                            let q = p.quality.as_mut().unwrap();
-                                            ui.horizontal(|ui| {
-                                                let mut crf = matches!(q, Quality::Crf(_));
-                                                if ui.radio_value(&mut crf, true, "CRF").clicked() && !matches!(q, Quality::Crf(_)) {
-                                                    *q = Quality::Crf(23);
-                                                    changed = true;
-                                                }
-                                                if ui.radio_value(&mut crf, false, "Bitrate").clicked() && !matches!(q, Quality::Bitrate(_)) {
-                                                    *q = Quality::Bitrate(8000);
-                                                    changed = true;
-                                                }
-                                                match q {
-                                                    Quality::Crf(v) => changed |= ui.add(DragValue::new(v).range(0..=51)).changed(),
-                                                    Quality::Bitrate(k) => changed |= ui.add(DragValue::new(k).range(100..=400_000).speed(50.0).suffix(" kbps")).changed(),
-                                                }
-                                            });
-                                        }
-                                        Part::Speed => {
-                                            let sp = p.preset.as_mut().unwrap();
-                                            egui::ComboBox::from_id_salt(("ps", &name)).selected_text(sp.clone()).show_ui(ui, |ui| {
-                                                for k in SPEEDS {
-                                                    changed |= ui.selectable_value(sp, k.to_string(), k).changed();
-                                                }
-                                            });
-                                        }
-                                        Part::PixFmt => {
-                                            let pf = p.pix_fmt.as_mut().unwrap();
-                                            egui::ComboBox::from_id_salt(("pp", &name)).selected_text(pf.clone()).show_ui(ui, |ui| {
-                                                changed |= ui.selectable_value(pf, "auto".to_string(), "auto").changed();
-                                                for k in PIX_FMTS {
-                                                    changed |= ui.selectable_value(pf, k.to_string(), k).changed();
-                                                }
-                                            });
-                                        }
-                                        Part::Resize => {
-                                            let sc = p.scale.as_mut().unwrap();
-                                            ui.horizontal(|ui| {
-                                                let (mut w, mut h) = (sc.w.unwrap_or(0), sc.h.unwrap_or(0));
-                                                let fmt = |n: f64, _: std::ops::RangeInclusive<usize>| if n == 0.0 { "auto".to_string() } else { format!("{n:.0}") };
-                                                let a = ui.add(DragValue::new(&mut w).range(0..=16384).speed(2.0).custom_formatter(fmt));
-                                                ui.label("×");
-                                                let b = ui.add(DragValue::new(&mut h).range(0..=16384).speed(2.0).custom_formatter(fmt));
-                                                if a.changed() || b.changed() {
-                                                    *sc = Scale { w: (w > 0).then_some(w), h: (h > 0).then_some(h) };
-                                                    changed = true;
-                                                }
-                                            });
-                                        }
-                                        Part::AudioCodec => {
-                                            let a = p.audio_codec.as_mut().unwrap();
-                                            let before = a.clone();
-                                            codecs::audio_codec_combo(ui, ("pa", &name), a, &enc, 230.0);
-                                            changed |= before != *a;
-                                        }
-                                        Part::AudioBitrate => {
-                                            changed |= ui.add(DragValue::new(p.audio_bitrate_kbps.as_mut().unwrap()).range(32..=1536).speed(2.0).suffix(" kbps")).changed();
-                                        }
-                                        Part::AudioMode => {
-                                            let m = p.audio_mode.as_mut().unwrap();
-                                            egui::ComboBox::from_id_salt(("pm", &name)).selected_text(audio_mode_label(*m)).show_ui(ui, |ui| {
-                                                for k in [AudioMode::None, AudioMode::Merge, AudioMode::Separate] {
-                                                    changed |= ui.selectable_value(m, k, audio_mode_label(k)).changed();
-                                                }
-                                            });
-                                        }
-                                        Part::VideoEffects | Part::Captions => {
-                                            let text = match part {
-                                                Part::VideoEffects => {
-                                                    let names: Vec<&str> = p.video_effects.as_ref().unwrap().iter().map(|e| e.name()).collect();
-                                                    if names.is_empty() { "none".to_string() } else { names.join(", ") }
-                                                }
-                                                _ => {
-                                                    let (t, b) = p.captions.as_ref().unwrap();
-                                                    format!("top {} · bottom {}", if t.on { "on" } else { "off" }, if b.on { "on" } else { "off" })
-                                                }
-                                            };
-                                            ui.horizontal(|ui| {
-                                                ui.add(egui::Label::new(RichText::new(text).size(12.0).color(Color32::from_gray(160))).truncate());
-                                                if ui.small_button("Update from current").on_hover_text("Replace with what is set up in the editor now").clicked() {
-                                                    p.fill(part, &cur_container, &cur);
-                                                    changed = true;
-                                                }
-                                            });
-                                        }
-                                    }
-                                    ui.end_row();
-                                }
-                            });
-
-                        });
-                    });
-                    ui.add_space(8.0);
+                if let Some(m) = &self.presets_ui.msg {
+                    widgets::warn(ui, m.clone());
+                    ui.add_space(6.0);
                 }
-            });
+                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.presets_ui.tab {
+                    PresetsTab::Export => self.export_presets_tab(ui),
+                    PresetsTab::Audio => self.fx_presets_tab(ui),
+                });
             });
         });
         if !open {
-            self.show_presets = false;
-            self.preset_rename = None;
-            self.fx_rename = None;
-            self.preset_msg = None;
-        }
-
-        // ---- actions (outside the window closure so we may touch everything)
-        if let Some((old, new)) = rename {
-            if new.is_empty() {
-                self.preset_msg = Some("A preset needs a name.".into());
-            } else if new != old && self.presets.contains_key(&new) {
-                self.preset_msg = Some(format!("A preset named “{new}” already exists."));
-            } else {
-                if let Some(p) = self.presets.remove(&old) {
-                    self.presets.insert(new, p);
-                }
-                self.preset_rename = None;
-                self.preset_msg = None;
-                changed = true;
-            }
-        }
-        if let Some(n) = delete {
-            self.presets.remove(&n);
-            changed = true;
-        }
-        if let Some(n) = apply {
-            if let Some(p) = self.presets.get(&n).cloned() {
-                self.apply_preset(&p);
-                self.preset_msg = Some(format!("Applied “{n}”."));
-            }
-        }
-        if changed {
-            self.save_presets();
-        }
-        if let Some(n) = export_one {
-            if let Some(p) = self.presets.get(&n) {
-                let one: presets::Presets = [(n.clone(), p.clone())].into_iter().collect();
-                self.write_presets_file(&format!("{n}.json"), &one);
-            }
+            self.dialogs.presets = false;
+            self.set_presets_tab(self.presets_ui.tab);
         }
         if export_all {
-            let all = self.presets.clone();
+            let all = self.presets.export.clone();
             self.write_presets_file("ffcut-presets.json", &all);
         }
         if import {
@@ -349,87 +255,155 @@ impl App {
         }
     }
 
-    /// The "Audio effects" tab: named effect stacks, applied to one track at a time.
-    fn fx_presets_tab(&mut self, ui: &mut egui::Ui) {
-        if self.fx_presets.is_empty() {
-            ui.add_space(30.0);
-            ui.vertical_centered(|ui| {
-                ui.label(RichText::new("No audio presets yet").size(15.0).color(Color32::from_gray(190)));
-                ui.add_space(4.0);
-                ui.weak("Set up effects on a track, then Audio effects → Audio presets → Save preset…");
-            });
+    /// Handles what the card of `name` asked for that is the same on both tabs. Returns the act if it is not.
+    fn common_card_act<T>(&mut self, name: &str, act: CardAct, map: impl Fn(&mut Self) -> &mut BTreeMap<String, T>) -> (Option<CardAct>, bool) {
+        match act {
+            CardAct::StartRename => self.presets_ui.rename = Some((name.to_string(), name.to_string())),
+            CardAct::CancelRename => self.presets_ui.rename = None,
+            CardAct::Rename(new) => {
+                let r = rename_in(map(self), name, new);
+                match r {
+                    Ok(()) => {
+                        self.presets_ui.rename = None;
+                        self.presets_ui.msg = None;
+                        return (None, true);
+                    }
+                    Err(e) => self.presets_ui.msg = Some(e),
+                }
+            }
+            CardAct::Delete => {
+                map(self).remove(name);
+                return (None, true);
+            }
+            other => return (Some(other), false),
+        }
+        (None, false)
+    }
+
+    fn rename_field(&mut self, name: &str) -> Option<&mut String> {
+        self.presets_ui.rename.as_mut().filter(|(old, _)| old == name).map(|(_, new)| new)
+    }
+
+    fn export_presets_tab(&mut self, ui: &mut egui::Ui) {
+        if self.presets.export.is_empty() {
+            widgets::empty_state(ui, "No presets yet", "Set up codec, quality and audio in the sidebar, then Presets → Save current settings…");
             return;
         }
-        let mut apply: Option<String> = None;
-        let mut delete: Option<String> = None;
-        let mut rename: Option<(String, String)> = None;
+        let enc = self.encoders.lock().unwrap().clone();
+        let (cur_container, cur) = (self.container.clone(), self.s.clone());
+        let can_apply = self.clip.is_some();
         let mut changed = false;
-        let track = self.fx.window.filter(|i| *i < self.s.tracks.len()).or(if self.s.tracks.is_empty() { None } else { Some(0) });
-        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-            let names: Vec<String> = self.fx_presets.keys().cloned().collect();
-            for name in names {
-                egui::Frame::NONE.fill(Color32::from_rgb(40, 42, 48)).stroke(egui::Stroke::new(1.0, Color32::from_gray(54))).corner_radius(10).inner_margin(egui::Margin::same(14)).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    let renaming = self.fx_rename.as_ref().map_or(false, |(old, _)| *old == name);
-                    ui.horizontal(|ui| {
-                        if renaming {
-                            let new = &mut self.fx_rename.as_mut().unwrap().1;
-                            let r = ui.add(egui::TextEdit::singleline(new).desired_width(200.0));
-                            r.request_focus();
-                            if ui.small_button("OK").clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
-                                rename = Some((name.clone(), new.trim().to_string()));
+        let names: Vec<String> = self.presets.export.keys().cloned().collect();
+        for name in names {
+            let summary = self.presets.export[&name].summary();
+            let mut p = self.presets.export[&name].clone();
+            let mut edited = false;
+            let rename = self.presets_ui.rename.as_ref().filter(|(o, _)| *o == name).map(|(_, n)| n.clone());
+            let mut rename_buf = rename.clone().unwrap_or_default();
+            let act = preset_card(
+                ui,
+                &name,
+                rename.is_some().then_some(&mut rename_buf),
+                &summary,
+                ("Apply", can_apply.then(|| "Use this preset for the open file".to_string())),
+                true,
+                |ui| {
+                    widgets::hint(ui, "Tick what the preset should set (audio effects have their own presets). Anything unticked is left as it is when the preset is applied.");
+                    ui.add_space(4.0);
+                    widgets::grid(("grid", &name)).num_columns(3).show(ui, |ui| {
+                        for part in Part::ALL {
+                            let mut on = p.has(part);
+                            if ui.checkbox(&mut on, "").changed() {
+                                if on {
+                                    p.fill(part, &cur_container, &cur);
+                                } else {
+                                    p.remove(part);
+                                }
+                                edited = true;
                             }
-                            if ui.small_button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                self.fx_rename = None;
+                            ui.label(part.label());
+                            if on {
+                                edited |= part_editor(ui, &name, part, &mut p, &enc, (&cur_container, &cur));
+                            } else {
+                                ui.label(RichText::new("not included").color(theme::TEXT_OFF));
                             }
-                        } else {
-                            ui.label(RichText::new(&name).strong().size(14.0));
+                            ui.end_row();
                         }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("Delete").clicked() {
-                                delete = Some(name.clone());
-                            }
-                            if ui.small_button("Rename").clicked() {
-                                self.fx_rename = Some((name.clone(), name.clone()));
-                            }
-                            let tip = track.map_or("Open a video or audio file first".to_string(), |i| format!("Replace the effects of “{}”", self.s.tracks[i].label));
-                            if ui.add_enabled(track.is_some(), egui::Button::new(RichText::new("Apply to track").color(Color32::BLACK)).fill(theme::ACCENT).small()).on_hover_text(tip).clicked() {
-                                apply = Some(name.clone());
-                            }
-                        });
                     });
-                    let fx = self.fx_presets.get_mut(&name).unwrap();
-                    let names: Vec<&str> = fx.iter().map(|e| e.name()).collect();
-                    ui.add(egui::Label::new(RichText::new(if names.is_empty() { "no effects".to_string() } else { names.join(" · ") }).size(12.0).color(Color32::from_gray(140))).truncate());
-                    egui::CollapsingHeader::new(RichText::new("Edit").size(12.5)).id_salt(("fxedit", &name)).show(ui, |ui| {
-                        changed |= super::fx_ui::preset_effects(ui, fx);
-                    });
-                });
-                ui.add_space(8.0);
+                },
+            );
+            if let Some(f) = self.rename_field(&name) {
+                *f = rename_buf;
             }
-        });
-        if let Some((old, new)) = rename {
-            if new.is_empty() {
-                self.preset_msg = Some("A preset needs a name.".into());
-            } else if new != old && self.fx_presets.contains_key(&new) {
-                self.preset_msg = Some(format!("A preset named “{new}” already exists."));
-            } else {
-                if let Some(p) = self.fx_presets.remove(&old) {
-                    self.fx_presets.insert(new, p);
-                }
-                self.fx_rename = None;
-                self.preset_msg = None;
+            if edited {
+                self.presets.export.insert(name.clone(), p);
                 changed = true;
             }
+            let Some(act) = act else { continue };
+            let (rest, ch) = self.common_card_act(&name, act, |a| &mut a.presets.export);
+            changed |= ch;
+            match rest {
+                Some(CardAct::Apply) => {
+                    if let Some(p) = self.presets.export.get(&name).cloned() {
+                        self.apply_preset(&p);
+                        self.presets_ui.msg = Some(format!("Applied “{name}”."));
+                    }
+                }
+                Some(CardAct::Export) => {
+                    if let Some(p) = self.presets.export.get(&name) {
+                        let one: presets::Presets = [(name.clone(), p.clone())].into_iter().collect();
+                        self.write_presets_file(&format!("{name}.json"), &one);
+                    }
+                }
+                _ => {}
+            }
         }
-        if let Some(n) = delete {
-            self.fx_presets.remove(&n);
-            changed = true;
+        if changed {
+            self.save_presets();
         }
-        if let (Some(n), Some(i)) = (apply, track) {
-            if let Some(fx) = self.fx_presets.get(&n) {
-                self.s.tracks[i].effects = fx.clone();
-                self.preset_msg = Some(format!("Applied “{n}” to {}.", self.s.tracks[i].label));
+    }
+
+    /// The "Audio effects" tab: named effect stacks, applied to one track at a time.
+    fn fx_presets_tab(&mut self, ui: &mut egui::Ui) {
+        if self.presets.fx.is_empty() {
+            widgets::empty_state(ui, "No audio presets yet", "Set up effects on a track in the sidebar's Audio section, then Presets → Save these effects…");
+            return;
+        }
+        let track = self.side.fx_track.filter(|i| *i < self.s.tracks.len()).or((!self.s.tracks.is_empty()).then_some(0));
+        let mut changed = false;
+        let names: Vec<String> = self.presets.fx.keys().cloned().collect();
+        for name in names {
+            let mut fx = self.presets.fx[&name].clone();
+            let summary = {
+                let n: Vec<&str> = fx.iter().map(|e| e.name()).collect();
+                if n.is_empty() {
+                    "no effects".to_string()
+                } else {
+                    n.join(" · ")
+                }
+            };
+            let rename = self.presets_ui.rename.as_ref().filter(|(o, _)| *o == name).map(|(_, n)| n.clone());
+            let mut rename_buf = rename.clone().unwrap_or_default();
+            let tip = track.map(|i| format!("Replace the effects of “{}”", self.s.tracks[i].label));
+            let mut edited = false;
+            let act = preset_card(ui, &name, rename.is_some().then_some(&mut rename_buf), &summary, ("Apply to track", tip), false, |ui| {
+                edited = super::fx_ui::preset_effects(ui, &mut fx);
+            });
+            if let Some(f) = self.rename_field(&name) {
+                *f = rename_buf;
+            }
+            if edited {
+                self.presets.fx.insert(name.clone(), fx);
+                changed = true;
+            }
+            let Some(act) = act else { continue };
+            let (rest, ch) = self.common_card_act(&name, act, |a| &mut a.presets.fx);
+            changed |= ch;
+            if let (Some(CardAct::Apply), Some(i)) = (rest, track) {
+                if let Some(fx) = self.presets.fx.get(&name) {
+                    self.s.tracks[i].effects = fx.clone();
+                    self.presets_ui.msg = Some(format!("Applied “{name}” to {}.", self.s.tracks[i].label));
+                }
             }
         }
         if changed {
@@ -439,29 +413,36 @@ impl App {
 
     fn write_presets_file(&mut self, default_name: &str, set: &presets::Presets) {
         let safe: String = default_name.chars().map(|c| if r#"/\:*?"<>|"#.contains(c) { '_' } else { c }).collect();
-        let Some(path) = rfd::FileDialog::new().set_title("Export presets").add_filter("Presets (JSON)", &["json"]).set_file_name(safe).save_file() else { return };
-        self.preset_msg = Some(match std::fs::write(&path, presets::export_json(set)) {
+        let Some(path) = rfd::FileDialog::new().set_title("Export presets").add_filter("Presets (JSON)", &["json"]).set_file_name(safe).save_file() else {
+            return;
+        };
+        let written = presets::export_json(set).map_err(|e| e.to_string()).and_then(|j| std::fs::write(&path, j).map_err(|e| e.to_string()));
+        self.presets_ui.msg = Some(match written {
             Ok(()) => format!("Exported {} preset(s) to {}", set.len(), path.display()),
             Err(e) => format!("Cannot write {}: {e}", path.display()),
         });
     }
 
     fn import_presets(&mut self) {
-        let Some(files) = rfd::FileDialog::new().set_title("Import presets").add_filter("Presets (JSON)", &["json"]).add_filter("All files", &["*"]).pick_files() else { return };
+        let Some(files) =
+            rfd::FileDialog::new().set_title("Import presets").add_filter("Presets (JSON)", &["json"]).add_filter("All files", &["*"]).pick_files()
+        else {
+            return;
+        };
         let (mut added, mut skipped, mut errors) = (0, 0, Vec::new());
         for f in files {
-            match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|t| presets::parse_import(&t)) {
+            match std::fs::read_to_string(&f).map_err(|e| e.to_string()).and_then(|t| presets::parse_import(&t).map_err(|e| e.to_string())) {
                 Ok((list, bad)) => {
                     skipped += bad;
                     for (name, p) in list {
                         // never overwrite silently: "Name", "Name (2)", ...
                         let mut n = name.clone();
                         let mut i = 2;
-                        while self.presets.contains_key(&n) {
+                        while self.presets.export.contains_key(&n) {
                             n = format!("{name} ({i})");
                             i += 1;
                         }
-                        self.presets.insert(n, p);
+                        self.presets.export.insert(n, p);
                         added += 1;
                     }
                 }
@@ -478,6 +459,6 @@ impl App {
         if !errors.is_empty() {
             msg.push_str(&format!(" {}", errors.join("; ")));
         }
-        self.preset_msg = Some(msg);
+        self.presets_ui.msg = Some(msg);
     }
 }

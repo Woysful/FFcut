@@ -1,12 +1,7 @@
+use super::widgets::{self, Grip};
 use crate::app::{App, FsMode};
 use crate::theme;
-use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Rect, RichText, Sense, Stroke, StrokeKind};
-
-#[derive(Clone, Copy)]
-enum Grip {
-    Body,
-    Edge { l: bool, t: bool, r: bool, b: bool },
-}
+use eframe::egui::{self, pos2, vec2, Color32, Rect, RichText, Sense, Stroke, StrokeKind};
 
 impl App {
     pub fn video_panel(&mut self, ui: &mut egui::Ui) {
@@ -31,14 +26,14 @@ impl App {
             self.player.paint(ui, rect);
 
             let click = ui.interact(rect, ui.id().with("video"), Sense::click());
-            if click.clicked() && !self.crop_on {
+            if click.clicked() && !self.crop.on {
                 self.play_pause();
             }
-            if click.double_clicked() && !self.crop_on {
+            if click.double_clicked() && !self.crop.on {
                 let ctx = ui.ctx().clone();
                 self.set_fs(&ctx, if self.fs == FsMode::Video { FsMode::Off } else { FsMode::Video });
             }
-            if self.crop_on && self.fs != FsMode::Video {
+            if self.crop.on && self.fs != FsMode::Video {
                 self.crop_overlay(ui, rect, inner, fw as f32, fh as f32);
             } else if self.fs != FsMode::Video {
                 self.vfx_overlay(ui, inner);
@@ -56,17 +51,25 @@ impl App {
                 if !self.tools_ok() {
                     ui.colored_label(theme::ERR, "ffmpeg / ffprobe not found.");
                     if ui.button("Open settings").clicked() {
-                        self.show_settings = true;
+                        self.dialogs.settings = true;
                     }
                 } else {
-                    if ui.add(egui::Button::new(RichText::new("Open video…").size(16.0)).fill(theme::ACCENT.gamma_multiply(0.75)).min_size(vec2(180.0, 38.0))).clicked() {
+                    if ui
+                        .add(egui::Button::new(RichText::new("Open video…").size(16.0)).fill(theme::ACCENT.gamma_multiply(0.75)).min_size(vec2(180.0, 38.0)))
+                        .clicked()
+                    {
                         self.open_dialog();
                     }
                     ui.add_space(6.0);
                     if self.backend == crate::display::Backend::Wayland {
                         // winit cannot receive dropped files on Wayland: say so instead of showing a dead cursor
                         ui.weak(format!("{} to open a file", self.keys(crate::hotkeys::Action::Open)));
-                        ui.add(egui::Label::new(RichText::new("Drag & drop does not work on Wayland. Switch to X11 in File → Settings.").size(12.0).color(theme::WARN)).wrap());
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new("Drag & drop does not work on Wayland. Switch to X11 in File → Settings.").size(12.0).color(theme::WARN),
+                            )
+                            .wrap(),
+                        );
                     } else {
                         ui.weak(format!("or drop a file here  ·  {}", self.keys(crate::hotkeys::Action::Open)));
                     }
@@ -76,11 +79,10 @@ impl App {
     }
 
     fn crop_overlay(&mut self, ui: &mut egui::Ui, full: Rect, rect: Rect, fw: f32, fh: f32) {
-        let sx = rect.width() / fw;
-        let sy = rect.height() / fh;
+        let (sx, sy) = (rect.width() / fw, rect.height() / fh);
         let to_screen = |x: f32, y: f32| pos2(rect.left() + x * sx, rect.top() + y * sy);
-        let [mut x0, mut y0, mut x1, mut y1] = self.crop_edges;
-        let cr = Rect::from_min_max(to_screen(x0, y0), to_screen(x1, y1));
+        let e = self.crop.edges;
+        let cr = Rect::from_min_max(to_screen(e[0], e[1]), to_screen(e[2], e[3]));
 
         // dim everything outside the crop
         let dim = Color32::from_black_alpha(150);
@@ -98,88 +100,46 @@ impl App {
         }
         p.rect_stroke(cr, 0.0, Stroke::new(1.5, theme::CROP), StrokeKind::Inside);
 
-        // grips: 4 corners, 4 edges, body
-        let m = 14.0_f32;
-        let mut grips: Vec<(Rect, Grip, CursorIcon)> = Vec::new();
-        let (l, r, t, b) = (cr.left(), cr.right(), cr.top(), cr.bottom());
-        let c = cr.center();
-        let h = |p: egui::Pos2| Rect::from_center_size(p, vec2(m * 1.4, m * 1.4));
-        grips.push((h(pos2(l, t)), Grip::Edge { l: true, t: true, r: false, b: false }, CursorIcon::ResizeNwSe));
-        grips.push((h(pos2(r, t)), Grip::Edge { l: false, t: true, r: true, b: false }, CursorIcon::ResizeNeSw));
-        grips.push((h(pos2(l, b)), Grip::Edge { l: true, t: false, r: false, b: true }, CursorIcon::ResizeNeSw));
-        grips.push((h(pos2(r, b)), Grip::Edge { l: false, t: false, r: true, b: true }, CursorIcon::ResizeNwSe));
-        grips.push((h(pos2(c.x, t)), Grip::Edge { l: false, t: true, r: false, b: false }, CursorIcon::ResizeVertical));
-        grips.push((h(pos2(c.x, b)), Grip::Edge { l: false, t: false, r: false, b: true }, CursorIcon::ResizeVertical));
-        grips.push((h(pos2(l, c.y)), Grip::Edge { l: true, t: false, r: false, b: false }, CursorIcon::ResizeHorizontal));
-        grips.push((h(pos2(r, c.y)), Grip::Edge { l: false, t: false, r: true, b: false }, CursorIcon::ResizeHorizontal));
-        grips.push((cr.shrink(m * 0.7), Grip::Body, CursorIcon::Grab));
-
-        let base = ui.id().with("crop");
-        let mut delta = vec2(0.0, 0.0);
-        let mut active: Option<Grip> = None;
-        // later grips win overlaps (body is last, so test it first)
-        for (i, (grect, grip, cursor)) in grips.iter().enumerate().rev() {
-            let resp = ui.interact(*grect, base.with(i), Sense::click_and_drag());
-            if resp.hovered() || resp.dragged() {
-                ui.ctx().set_cursor_icon(*cursor);
-            }
-            if resp.dragged() && active.is_none() {
-                active = Some(*grip);
-                delta = resp.drag_delta();
-            }
-        }
-        if let Some(g) = active {
-            let (dx, dy) = (delta.x / sx, delta.y / sy);
-            match g {
-                Grip::Body => {
-                    let (w, hh) = (x1 - x0, y1 - y0);
-                    x0 = (x0 + dx).clamp(0.0, fw - w);
-                    y0 = (y0 + dy).clamp(0.0, fh - hh);
-                    x1 = x0 + w;
-                    y1 = y0 + hh;
-                }
-                Grip::Edge { l, t, r, b } => {
-                    if l { x0 = (x0 + dx).clamp(0.0, x1 - 16.0); }
-                    if r { x1 = (x1 + dx).clamp(x0 + 16.0, fw); }
-                    if t { y0 = (y0 + dy).clamp(0.0, y1 - 16.0); }
-                    if b { y1 = (y1 + dy).clamp(y0 + 16.0, fh); }
-                }
-            }
-            self.crop_edges = [x0, y0, x1, y1];
+        let zones = widgets::grips(cr, 14.0);
+        if let Some((g, d)) = widgets::drag_grips(ui, ui.id().with("crop"), &zones) {
+            let e = &mut self.crop.edges;
+            widgets::move_edges(e, g, vec2(d.x / sx, d.y / sy), vec2(fw, fh), 16.0);
+            let [x0, y0, x1, y1] = *e;
             // resizing: a loupe at the moving corner / edge
             if let Grip::Edge { l, t, r, b } = g {
                 let ptr = ui.input(|i| i.pointer.interact_pos()).unwrap_or(rect.center());
-                let px = if l { x0 } else if r { x1 } else { ((ptr.x - rect.left()) / sx).clamp(x0, x1) };
-                let py = if t { y0 } else if b { y1 } else { ((ptr.y - rect.top()) / sy).clamp(y0, y1) };
+                let px = if l {
+                    x0
+                } else if r {
+                    x1
+                } else {
+                    ((ptr.x - rect.left()) / sx).clamp(x0, x1)
+                };
+                let py = if t {
+                    y0
+                } else if b {
+                    y1
+                } else {
+                    ((ptr.y - rect.top()) / sy).clamp(y0, y1)
+                };
                 let crop_screen = Rect::from_min_max(to_screen(x0, y0), to_screen(x1, y1));
                 self.crop_loupe(ui, full, to_screen(px, py), crop_screen);
             }
-        } else if self.loupe_dirty {
-            self.loupe_dirty = false;
+        } else if self.loupe.dirty {
+            self.loupe.dirty = false;
             self.settings.save();
         }
+        widgets::paint_grips(ui.painter(), &zones, theme::CROP, 9.0);
 
-        // handles drawn last so they are on top
-        let p = ui.painter();
-        for (grect, grip, _) in &grips {
-            if matches!(grip, Grip::Edge { .. }) {
-                let hr = Rect::from_center_size(grect.center(), vec2(9.0, 9.0));
-                p.rect_filled(hr, 2.0, theme::CROP);
-                p.rect_stroke(hr, 2.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Outside);
-            }
-        }
         // size label
         let cropped = self.crop_rect();
-        let label = format!("{} × {}", cropped.w, cropped.h);
-        let font = egui::FontId::proportional(12.0);
-        let galley = ui.painter().layout_no_wrap(label, font, Color32::WHITE);
+        let galley = ui.painter().layout_no_wrap(format!("{} × {}", cropped.w, cropped.h), egui::FontId::proportional(12.0), Color32::WHITE);
         let pos = pos2(cr.left() + 6.0, (cr.top() + 6.0).min(rect.bottom() - 20.0));
         let bg = Rect::from_min_size(pos, galley.size()).expand2(vec2(5.0, 2.0));
         ui.painter().rect_filled(bg, 4.0, Color32::from_black_alpha(190));
         ui.painter().galley(pos, galley, Color32::WHITE);
     }
 }
-
 impl App {
     /// A magnifier next to the crop edge being dragged, for placing it to the pixel.
     /// Wheel: magnification. Ctrl + wheel: size of the window.
@@ -192,7 +152,7 @@ impl App {
             } else {
                 zoom = (zoom * (d.y * 0.004).exp()).clamp(2.0, 16.0);
             }
-            self.loupe_dirty = true;
+            self.loupe.dirty = true;
         }
         self.settings.loupe_size = Some(size);
         self.settings.loupe_zoom = Some(zoom);
@@ -211,14 +171,14 @@ impl App {
         ]);
         if let Some(img) = self.player.take_loupe() {
             let ci = egui::ColorImage::from_rgba_unmultiplied([img.w, img.h], &img.rgba);
-            match &mut self.loupe_tex {
+            match &mut self.loupe.tex {
                 Some(t) => t.set(ci, egui::TextureOptions::NEAREST),
-                None => self.loupe_tex = Some(ctx.load_texture("crop-loupe", ci, egui::TextureOptions::NEAREST)),
+                None => self.loupe.tex = Some(ctx.load_texture("crop-loupe", ci, egui::TextureOptions::NEAREST)),
             }
-            self.loupe_region = img.region;
+            self.loupe.region = img.region;
         }
         ctx.request_repaint();
-        let Some(tex) = self.loupe_tex.clone() else { return };
+        let Some(tex) = self.loupe.tex.clone() else { return };
 
         // the window sits diagonally from the point, on the side where there is room
         let gap = 26.0;
@@ -231,8 +191,8 @@ impl App {
         ui.put(win, egui::Image::new((tex.id(), win.size())).corner_radius(radius));
         // the crop edges and the point, in the picture the loupe shows
         let used = Rect::from_min_max(
-            pos2(full.left() + self.loupe_region[0] * full.width(), full.top() + self.loupe_region[1] * full.height()),
-            pos2(full.left() + self.loupe_region[2] * full.width(), full.top() + self.loupe_region[3] * full.height()),
+            pos2(full.left() + self.loupe.region[0] * full.width(), full.top() + self.loupe.region[1] * full.height()),
+            pos2(full.left() + self.loupe.region[2] * full.width(), full.top() + self.loupe.region[3] * full.height()),
         );
         let k = size / used.width().max(1.0);
         let to_win = |p: egui::Pos2| pos2(win.left() + (p.x - used.left()) * k, win.top() + (p.y - used.top()) * k);

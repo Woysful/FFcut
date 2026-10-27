@@ -1,8 +1,18 @@
 //! The audio effects against a real ffmpeg: render the same chain the export uses and measure the result.
+use ffcut_core::analysis::measure;
 use ffcut_core::audiofx::*;
 use ffcut_core::*;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// These tests need the real tools; without them they pass vacuously (and say so).
+fn tools_missing() -> bool {
+    let missing = ffcut_core::tools::find_tool("ffmpeg", None).is_none() || ffcut_core::tools::find_tool("ffprobe", None).is_none();
+    if missing {
+        eprintln!("skipped: ffmpeg / ffprobe not on PATH");
+    }
+    missing
+}
 
 fn tmp(name: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("ffcut-fx-{}", std::process::id()));
@@ -19,7 +29,25 @@ fn tone() -> PathBuf {
 fn make_tone() -> PathBuf {
     let p = tmp("tone.mkv");
     assert!(Command::new("ffmpeg")
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=5:duration=10", "-f", "lavfi", "-i", "sine=frequency=1000:duration=10,volume=4", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "pcm_s16le"])
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=5:duration=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:duration=10,volume=4",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "pcm_s16le"
+        ])
         .arg(&p)
         .status()
         .unwrap()
@@ -52,6 +80,9 @@ fn level(file: &Path, from: f64, to: f64) -> f64 {
 
 #[test]
 fn shift_and_trim_are_in_the_rendered_preview() {
+    if tools_missing() {
+        return;
+    }
     let i = tone();
     let mut t = track();
     t.shift = 2.0;
@@ -66,6 +97,9 @@ fn shift_and_trim_are_in_the_rendered_preview() {
 
 #[test]
 fn fades_and_keyframes_follow_the_clip() {
+    if tools_missing() {
+        return;
+    }
     let i = tone();
     let mut t = track();
     t.fade_in = 2.0;
@@ -82,7 +116,15 @@ fn fades_and_keyframes_follow_the_clip() {
     assert!((hi - mid - 10.0).abs() < 1.5, "mid {mid} hi {hi}");
     // the same through the export builder, with an export range that cuts into the clip
     let src = probe::probe(Path::new("ffprobe"), &i).unwrap();
-    let s = ExportSettings { tracks: vec![t], trim_start: 3.0, trim_end: Some(8.0), audio_codec: AudioCodec::Encoder("flac".into()), video_codec: VideoCodec::Encoder("libx264".into()), preset: "ultrafast".into(), ..Default::default() };
+    let s = ExportSettings {
+        tracks: vec![t],
+        trim_start: 3.0,
+        trim_end: Some(8.0),
+        audio_codec: AudioCodec::Encoder("flac".into()),
+        video_codec: VideoCodec::Encoder("libx264".into()),
+        preset: "ultrafast".into(),
+        ..Default::default()
+    };
     let out = tmp("export.mka");
     let argv = builder::build_args(&src, &s, &i, &out);
     let r = Command::new("ffmpeg").args(&argv[1..]).output().unwrap_or_else(|_| panic!("run"));
@@ -94,6 +136,9 @@ fn fades_and_keyframes_follow_the_clip() {
 
 #[test]
 fn equalizer_and_compressor_change_the_sound() {
+    if tools_missing() {
+        return;
+    }
     let i = tone();
     let base = level(&render(&track(), &i, "plain.flac"), 1.0, 9.0);
     let mut t = track();
@@ -109,6 +154,9 @@ fn equalizer_and_compressor_change_the_sound() {
 
 #[test]
 fn normalization_reaches_the_target() {
+    if tools_missing() {
+        return;
+    }
     let i = tone();
     let ff = Path::new("ffmpeg");
     // peak: -6 dB tone -> peak -1 dB
@@ -140,6 +188,9 @@ fn normalization_reaches_the_target() {
 
 #[test]
 fn waveform_of_the_rendered_track_shows_the_effects() {
+    if tools_missing() {
+        return;
+    }
     // the level meter reads the peaks of the rendered preview: a compressor with make-up gain must show
     let i = tone();
     let peak = |f: &Path| ffcut_core::waveform::peaks(Path::new("ffmpeg"), f, 0).unwrap().into_iter().fold(0.0f32, f32::max);
@@ -152,8 +203,16 @@ fn waveform_of_the_rendered_track_shows_the_effects() {
 
 #[test]
 fn audio_file_is_probed_and_exported_without_video() {
+    if tools_missing() {
+        return;
+    }
     let src_path = tmp("only.mp3");
-    assert!(Command::new("ffmpeg").args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-c:a", "libmp3lame"]).arg(&src_path).status().unwrap().success());
+    assert!(Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-c:a", "libmp3lame"])
+        .arg(&src_path)
+        .status()
+        .unwrap()
+        .success());
     let info = probe::probe(Path::new("ffprobe"), &src_path).unwrap();
     assert!(info.audio_only);
     assert_eq!(info.audio.len(), 1);
@@ -175,9 +234,40 @@ fn audio_file_is_probed_and_exported_without_video() {
 
 #[test]
 fn audio_only_export_of_a_video_with_two_tracks() {
+    if tools_missing() {
+        return;
+    }
     let video = tmp("two.mkv");
     assert!(Command::new("ffmpeg")
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=5:duration=4", "-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-f", "lavfi", "-i", "sine=frequency=880:duration=4", "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"])
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=64x64:rate=5:duration=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=4",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=4",
+            "-map",
+            "0",
+            "-map",
+            "1",
+            "-map",
+            "2",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac"
+        ])
         .arg(&video)
         .status()
         .unwrap()

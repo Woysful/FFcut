@@ -17,7 +17,11 @@ pub enum Icon {
 
 fn tri(c: Pos2, s: f32, right: bool, col: Color32) -> Shape {
     let d = if right { 1.0 } else { -1.0 };
-    Shape::convex_polygon(vec![pos2(c.x - d * s * 0.45, c.y - s * 0.55), pos2(c.x - d * s * 0.45, c.y + s * 0.55), pos2(c.x + d * s * 0.55, c.y)], col, Stroke::NONE)
+    Shape::convex_polygon(
+        vec![pos2(c.x - d * s * 0.45, c.y - s * 0.55), pos2(c.x - d * s * 0.45, c.y + s * 0.55), pos2(c.x + d * s * 0.55, c.y)],
+        col,
+        Stroke::NONE,
+    )
 }
 
 fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
@@ -42,7 +46,11 @@ fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
         Icon::Tracks => {
             // three lanes of different length, like clips on a timeline
             for (dy, x0, x1) in [(-0.5, -0.6, 0.35), (0.0, -0.25, 0.6), (0.5, -0.6, 0.1)] {
-                p.add(Shape::rect_filled(egui::Rect::from_min_max(pos2(c.x + s * x0, c.y + s * dy - s * 0.14), pos2(c.x + s * x1, c.y + s * dy + s * 0.14)), 1.5, col));
+                p.add(Shape::rect_filled(
+                    egui::Rect::from_min_max(pos2(c.x + s * x0, c.y + s * dy - s * 0.14), pos2(c.x + s * x1, c.y + s * dy + s * 0.14)),
+                    1.5,
+                    col,
+                ));
             }
             p.add(Shape::Noop)
         }
@@ -56,10 +64,12 @@ fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
             let r = s * 0.62;
             let (a0, a1) = (-0.9_f32, 4.5_f32); // radians; clockwise on screen
             let n = 28;
-            let pts: Vec<Pos2> = (0..=n).map(|i| {
-                let a = a0 + (a1 - a0) * i as f32 / n as f32;
-                pos2(c.x + r * a.cos(), c.y + r * a.sin())
-            }).collect();
+            let pts: Vec<Pos2> = (0..=n)
+                .map(|i| {
+                    let a = a0 + (a1 - a0) * i as f32 / n as f32;
+                    pos2(c.x + r * a.cos(), c.y + r * a.sin())
+                })
+                .collect();
             p.add(Shape::line(pts, st));
             let end = pos2(c.x + r * a1.cos(), c.y + r * a1.sin());
             let t = vec2(-a1.sin(), a1.cos()); // tangent (direction of travel)

@@ -75,12 +75,8 @@ pub fn parse_release(json: &str, current: &str) -> Result<Option<Release>, Strin
 fn fetch() -> Outcome {
     let url = endpoint().ok_or("the update source is not configured (repository in Cargo.toml still says OWNER)")?;
     let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(8))).build().into();
-    let mut resp = agent
-        .get(&url)
-        .header("User-Agent", &format!("FFcut/{VERSION}"))
-        .header("Accept", "application/vnd.github+json")
-        .call()
-        .map_err(|e| match e {
+    let mut resp =
+        agent.get(&url).header("User-Agent", &format!("FFcut/{VERSION}")).header("Accept", "application/vnd.github+json").call().map_err(|e| match e {
             ureq::Error::StatusCode(404) => "no releases published yet".to_string(),
             e => format!("{e}"),
         })?;

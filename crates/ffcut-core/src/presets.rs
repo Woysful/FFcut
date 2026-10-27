@@ -1,58 +1,12 @@
 //! Export presets: a named bundle of encoding choices (not trim/crop/rotate — those belong to a clip).
 
+use crate::error::Error;
 use crate::model::*;
+use crate::videofx::{Caption, VEffect};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
-
-/// One thing a preset can contain. A preset holds only the parts it was given: applying it changes those and
-/// leaves everything else as it is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Part {
-    Container,
-    VideoCodec,
-    Quality,
-    Speed,
-    PixFmt,
-    Resize,
-    AudioCodec,
-    AudioBitrate,
-    AudioMode,
-    VideoEffects,
-    Captions,
-}
-
-impl Part {
-    pub const ALL: [Part; 11] = [
-        Part::Container,
-        Part::VideoCodec,
-        Part::Quality,
-        Part::Speed,
-        Part::PixFmt,
-        Part::Resize,
-        Part::AudioCodec,
-        Part::AudioBitrate,
-        Part::AudioMode,
-        Part::VideoEffects,
-        Part::Captions,
-    ];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Part::Container => "Container",
-            Part::VideoCodec => "Video codec",
-            Part::Quality => "Quality / bitrate",
-            Part::Speed => "Encode preset",
-            Part::PixFmt => "Pixel format",
-            Part::Resize => "Resize",
-            Part::AudioCodec => "Audio codec",
-            Part::AudioBitrate => "Audio bitrate",
-            Part::AudioMode => "Audio tracks mode",
-            Part::VideoEffects => "Video effects & text",
-            Part::Captions => "Captions",
-        }
-    }
-}
 
 /// A named bundle of export choices (not trim / crop / rotate: those belong to a clip). Every part is optional;
 /// files saved by older versions had the first eight set, and still read the same way.
@@ -80,62 +34,82 @@ pub struct Preset {
     pub audio_mode: Option<AudioMode>,
     /// Video effects (colour, restoration, covered areas, text blocks) with their settings.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub video_effects: Option<Vec<crate::videofx::VEffect>>,
+    pub video_effects: Option<Vec<VEffect>>,
     /// The top and bottom caption bars.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub captions: Option<(crate::videofx::Caption, crate::videofx::Caption)>,
+    pub captions: Option<(Caption, Caption)>,
+}
+
+/// Declares `Part` and everything that goes part by part, from one table:
+/// `Part => preset field, label, value taken from (container, settings), written back into settings`.
+macro_rules! parts {
+    ($($part:ident => $field:ident, $label:literal, take($c:ident, $s:ident) $take:expr, give($v:ident, $t:ident) $give:block)*) => {
+        /// One thing a preset can contain. A preset holds only the parts it was given: applying it changes those and
+        /// leaves everything else as it is.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum Part {
+            $($part,)*
+        }
+
+        impl Part {
+            pub const ALL: [Part; 0 $(+ { let _ = Part::$part; 1 })*] = [$(Part::$part),*];
+
+            pub fn label(self) -> &'static str {
+                match self {
+                    $(Part::$part => $label,)*
+                }
+            }
+        }
+
+        impl Preset {
+            pub fn has(&self, p: Part) -> bool {
+                match p {
+                    $(Part::$part => self.$field.is_some(),)*
+                }
+            }
+
+            pub fn remove(&mut self, p: Part) {
+                match p {
+                    $(Part::$part => self.$field = None,)*
+                }
+            }
+
+            /// Takes (or refreshes) one part from the current settings.
+            pub fn fill(&mut self, p: Part, container: &str, s: &ExportSettings) {
+                match p {
+                    $(Part::$part => {
+                        let ($c, $s) = (container, s);
+                        self.$field = Some($take);
+                    })*
+                }
+            }
+
+            /// Writes every part the preset has into `s` (the container is the caller's business).
+            fn give(&self, s: &mut ExportSettings) {
+                $(if let Some($v) = &self.$field {
+                    let $t = &mut *s;
+                    $give
+                })*
+            }
+        }
+    };
+}
+
+parts! {
+    Container => container, "Container", take(c, _s) c.to_string(), give(_v, _t) {}
+    VideoCodec => video_codec, "Video codec", take(_c, s) s.video_codec.clone(), give(v, t) { t.video_codec = v.clone() }
+    Quality => quality, "Quality / bitrate", take(_c, s) s.quality, give(v, t) { t.quality = *v }
+    Speed => preset, "Encode preset", take(_c, s) s.preset.clone(), give(v, t) { t.preset = v.clone() }
+    PixFmt => pix_fmt, "Pixel format", take(_c, s) s.pix_fmt.clone().unwrap_or_else(|| "auto".into()), give(v, t) { t.pix_fmt = (v != "auto").then(|| v.clone()) }
+    Resize => scale, "Resize", take(_c, s) s.scale, give(v, t) { t.scale = *v }
+    AudioCodec => audio_codec, "Audio codec", take(_c, s) s.audio_codec.clone(), give(v, t) { t.audio_codec = v.clone() }
+    AudioBitrate => audio_bitrate_kbps, "Audio bitrate", take(_c, s) s.audio_bitrate_kbps, give(v, t) { t.audio_bitrate_kbps = *v }
+    AudioMode => audio_mode, "Audio tracks mode", take(_c, s) s.audio_mode, give(v, t) { t.audio_mode = *v }
+    VideoEffects => video_effects, "Video effects & text", take(_c, s) s.vfx.effects.clone(), give(v, t) { t.vfx.effects = v.clone() }
+    Captions => captions, "Captions", take(_c, s) (s.vfx.top.clone(), s.vfx.bottom.clone()), give(v, t) { (t.vfx.top, t.vfx.bottom) = v.clone() }
 }
 
 impl Preset {
-    pub fn has(&self, p: Part) -> bool {
-        match p {
-            Part::Container => self.container.is_some(),
-            Part::VideoCodec => self.video_codec.is_some(),
-            Part::Quality => self.quality.is_some(),
-            Part::Speed => self.preset.is_some(),
-            Part::PixFmt => self.pix_fmt.is_some(),
-            Part::Resize => self.scale.is_some(),
-            Part::AudioCodec => self.audio_codec.is_some(),
-            Part::AudioBitrate => self.audio_bitrate_kbps.is_some(),
-            Part::AudioMode => self.audio_mode.is_some(),
-            Part::VideoEffects => self.video_effects.is_some(),
-            Part::Captions => self.captions.is_some(),
-        }
-    }
-
-    pub fn remove(&mut self, p: Part) {
-        match p {
-            Part::Container => self.container = None,
-            Part::VideoCodec => self.video_codec = None,
-            Part::Quality => self.quality = None,
-            Part::Speed => self.preset = None,
-            Part::PixFmt => self.pix_fmt = None,
-            Part::Resize => self.scale = None,
-            Part::AudioCodec => self.audio_codec = None,
-            Part::AudioBitrate => self.audio_bitrate_kbps = None,
-            Part::AudioMode => self.audio_mode = None,
-            Part::VideoEffects => self.video_effects = None,
-            Part::Captions => self.captions = None,
-        }
-    }
-
-    /// Takes (or refreshes) one part from the current settings.
-    pub fn fill(&mut self, p: Part, container: &str, s: &ExportSettings) {
-        match p {
-            Part::Container => self.container = Some(container.into()),
-            Part::VideoCodec => self.video_codec = Some(s.video_codec.clone()),
-            Part::Quality => self.quality = Some(s.quality),
-            Part::Speed => self.preset = Some(s.preset.clone()),
-            Part::PixFmt => self.pix_fmt = Some(s.pix_fmt.clone().unwrap_or_else(|| "auto".into())),
-            Part::Resize => self.scale = Some(s.scale),
-            Part::AudioCodec => self.audio_codec = Some(s.audio_codec.clone()),
-            Part::AudioBitrate => self.audio_bitrate_kbps = Some(s.audio_bitrate_kbps),
-            Part::AudioMode => self.audio_mode = Some(s.audio_mode),
-            Part::VideoEffects => self.video_effects = Some(s.vfx.effects.clone()),
-            Part::Captions => self.captions = Some((s.vfx.top.clone(), s.vfx.bottom.clone())),
-        }
-    }
-
     /// What is worth saving by default: the encoding choices, plus effects and captions when there are any.
     pub fn default_parts(s: &ExportSettings) -> Vec<Part> {
         Part::ALL
@@ -165,44 +139,57 @@ impl Preset {
 
     /// Writes the preset's parts into `s`; returns the container to use, if the preset has one.
     pub fn apply(&self, s: &mut ExportSettings) -> Option<String> {
-        if let Some(v) = &self.video_codec {
-            s.video_codec = v.clone();
-        }
-        if let Some(q) = self.quality {
-            s.quality = q;
-        }
-        if let Some(p) = &self.preset {
-            s.preset = p.clone();
-        }
-        if let Some(f) = &self.pix_fmt {
-            s.pix_fmt = (f != "auto").then(|| f.clone());
-        }
-        if let Some(a) = &self.audio_codec {
-            s.audio_codec = a.clone();
-        }
-        if let Some(b) = self.audio_bitrate_kbps {
-            s.audio_bitrate_kbps = b;
-        }
-        if let Some(sc) = self.scale {
-            s.scale = sc;
-        }
-        if let Some(m) = self.audio_mode {
-            s.audio_mode = m;
-        }
-        if let Some(fx) = &self.video_effects {
-            s.vfx.effects = fx.clone();
-        }
-        if let Some((top, bottom)) = &self.captions {
-            s.vfx.top = top.clone();
-            s.vfx.bottom = bottom.clone();
-        }
+        self.give(s);
         self.container.clone()
     }
 
-    /// One line for the presets list.
+    /// One line for the presets list: `.mp4 · libx265 (CRF 28) · audio aac · auto×720`.
     pub fn summary(&self) -> String {
-        let parts: Vec<&str> = Part::ALL.into_iter().filter(|p| self.has(*p)).map(Part::label).collect();
-        if parts.is_empty() { "empty".to_string() } else { parts.join(" · ") }
+        let mut v: Vec<String> = Vec::new();
+        if let Some(c) = &self.container {
+            v.push(format!(".{c}"));
+        }
+        match (&self.video_codec, self.quality) {
+            (Some(VideoCodec::Copy), _) => v.push("video copy".into()),
+            (vc, q) => {
+                let name = match vc {
+                    Some(VideoCodec::Auto) => Some("auto".to_string()),
+                    Some(VideoCodec::Encoder(e)) => Some(e.clone()),
+                    _ => None,
+                };
+                let q = q.map(|q| match q {
+                    Quality::Crf(c) => format!("CRF {c}"),
+                    Quality::Bitrate(k) => format!("{k} kbps"),
+                });
+                match (name, q) {
+                    (Some(n), Some(q)) => v.push(format!("{n} ({q})")),
+                    (Some(n), None) => v.push(n),
+                    (None, Some(q)) => v.push(q),
+                    _ => {}
+                }
+            }
+        }
+        match &self.audio_codec {
+            Some(AudioCodec::Copy) => v.push("audio copy".into()),
+            Some(AudioCodec::Encoder(e)) => v.push(format!("audio {e}")),
+            None => {}
+        }
+        if let Some(sc) = self.scale {
+            if sc.w.is_some() || sc.h.is_some() {
+                v.push(format!("{}×{}", sc.w.map_or("auto".into(), |x| x.to_string()), sc.h.map_or("auto".into(), |x| x.to_string())));
+            }
+        }
+        if let Some(fx) = &self.video_effects {
+            v.push(format!("{} video effect(s)", fx.len()));
+        }
+        if let Some((t, b)) = &self.captions {
+            v.push(format!("captions{}", if t.on || b.on { "" } else { " (off)" }));
+        }
+        if v.is_empty() {
+            "empty: applying changes nothing".into()
+        } else {
+            v.join(" · ")
+        }
     }
 }
 
@@ -211,58 +198,63 @@ pub type Presets = BTreeMap<String, Preset>;
 /// Named audio effect stacks ("Mic", "Game"…), applied to one track at a time. Kept apart from the export presets.
 pub type FxPresets = BTreeMap<String, Vec<Effect>>;
 
-pub fn load_fx(path: &Path) -> FxPresets {
+/// Reads a JSON file; a missing or unreadable file gives the default (an empty list, for presets).
+fn load_json<T: DeserializeOwned + Default>(path: &Path) -> T {
     std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+/// Writes pretty JSON to a temp file first, then renames it over `path`: a crash can never leave a
+/// half-written file behind.
+fn save_json_atomic<T: Serialize + ?Sized>(path: &Path, value: &T) -> std::io::Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    let text = serde_json::to_string_pretty(value).map_err(std::io::Error::other)?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(tmp, path)
+}
+
+pub fn load_fx(path: &Path) -> FxPresets {
+    load_json(path)
 }
 
 pub fn save_fx(path: &Path, p: &FxPresets) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(p).unwrap())?;
-    std::fs::rename(tmp, path)
+    save_json_atomic(path, p)
 }
 
 pub fn load(path: &Path) -> Presets {
-    std::fs::read_to_string(path).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+    load_json(path)
 }
 
 pub fn save(path: &Path, presets: &Presets) -> std::io::Result<()> {
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
-    // write to a temp file first so a crash can never leave a half-written presets file
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(presets).unwrap())?;
-    std::fs::rename(tmp, path)
+    save_json_atomic(path, presets)
 }
 
 /// File format for sharing presets: `{"version": 2, "presets": { "<name>": {...} }}`.
-pub fn export_json(presets: &Presets) -> String {
-    serde_json::to_string_pretty(&serde_json::json!({ "version": 2, "presets": presets })).unwrap()
+pub fn export_json(presets: &Presets) -> Result<String, Error> {
+    serde_json::to_string_pretty(&serde_json::json!({ "version": 2, "presets": presets })).map_err(|e| Error::Parse(format!("cannot write the presets: {e}")))
 }
 
 /// Reads presets from: our export format, a bare `{name: preset}` map, or the old Electron
 /// FFcut export (`{"version":"1.0","presets":{name:{videoCodec,...}}}`).
 /// Returns the presets and how many entries could not be understood.
-pub fn parse_import(text: &str) -> Result<(Vec<(String, Preset)>, usize), String> {
-    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| format!("not a valid JSON file: {e}"))?;
-    let map = match v.get("presets") {
-        Some(p) => p,
-        None => &v,
-    }
-    .as_object()
-    .ok_or("this file does not contain presets")?;
+pub fn parse_import(text: &str) -> Result<(Vec<(String, Preset)>, usize), Error> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| Error::Parse(format!("not a valid JSON file: {e}")))?;
+    let map = v.get("presets").unwrap_or(&v).as_object().ok_or_else(|| Error::Invalid("this file does not contain presets".into()))?;
     let (mut ok, mut bad) = (Vec::new(), 0);
     for (name, item) in map {
-        match if item.get("videoCodec").is_some() { from_legacy(item) } else { serde_json::from_value::<Preset>(item.clone()).ok().filter(|p| *p != Preset::default()) } {
+        match if item.get("videoCodec").is_some() {
+            from_legacy(item)
+        } else {
+            serde_json::from_value::<Preset>(item.clone()).ok().filter(|p| *p != Preset::default())
+        } {
             Some(p) => ok.push((name.clone(), p)),
             None => bad += 1,
         }
     }
     if ok.is_empty() {
-        return Err("no presets found in this file".into());
+        return Err(Error::Invalid("no presets found in this file".into()));
     }
     Ok((ok, bad))
 }
@@ -304,7 +296,12 @@ mod tests {
     fn roundtrip_and_apply() {
         let dir = std::env::temp_dir().join(format!("ffcut-presets-{}", std::process::id()));
         let path = dir.join("presets.json");
-        let s = ExportSettings { video_codec: VideoCodec::Encoder("libx265".into()), quality: Quality::Crf(28), scale: Scale { w: None, h: Some(720) }, ..Default::default() };
+        let s = ExportSettings {
+            video_codec: VideoCodec::Encoder("libx265".into()),
+            quality: Quality::Crf(28),
+            scale: Scale { w: None, h: Some(720) },
+            ..Default::default()
+        };
         let mut all = Presets::new();
         all.insert("Small 720p".into(), Preset::capture("mp4", &s));
         save(&path, &all).unwrap();
@@ -319,7 +316,7 @@ mod tests {
     fn export_import_roundtrip_and_legacy() {
         let mut all = Presets::new();
         all.insert("A".into(), Preset::capture("mkv", &ExportSettings { video_codec: VideoCodec::Encoder("libx265".into()), ..Default::default() }));
-        let (back, bad) = parse_import(&export_json(&all)).unwrap();
+        let (back, bad) = parse_import(&export_json(&all).unwrap()).unwrap();
         assert_eq!((back.len(), bad), (1, 0));
         assert_eq!(back[0].1, all["A"]);
 
@@ -342,6 +339,63 @@ mod tests {
         assert_eq!(t.quality, Quality::Crf(30));
         // an old file that still carries audio_effects loads fine
         assert!(serde_json::from_str::<Preset>(r#"{"quality":{"Crf":20},"audio_effects":[]}"#).is_ok());
+    }
+
+    #[test]
+    fn json_shape_is_unchanged() {
+        let s = ExportSettings {
+            video_codec: VideoCodec::Encoder("libx265".into()),
+            quality: Quality::Crf(28),
+            scale: Scale { w: None, h: Some(720) },
+            ..Default::default()
+        };
+        let p = Preset::from_parts("mp4", &s, &Part::ALL);
+        let j = serde_json::to_string(&p).unwrap();
+        assert!(
+            j.starts_with(r#"{"container":"mp4","video_codec":{"Encoder":"libx265"},"quality":{"Crf":28},"preset":"medium","pix_fmt":"auto","audio_codec":"Copy","audio_bitrate_kbps":192,"scale":{"w":null,"h":720},"audio_mode":"Separate","video_effects":[],"captions":[{"on":false,"#),
+            "{j}"
+        );
+        assert_eq!(serde_json::from_str::<Preset>(&j).unwrap(), p);
+        assert_eq!(serde_json::to_string(&Preset::from_parts("mkv", &s, &[Part::Quality])).unwrap(), r#"{"quality":{"Crf":28}}"#);
+    }
+
+    #[test]
+    fn every_part_round_trips_through_fill_has_apply_remove() {
+        let mut s = ExportSettings { pix_fmt: Some("yuv444p".into()), audio_mode: AudioMode::Merge, preset: "slow".into(), ..Default::default() };
+        s.vfx.effects = vec![VEffect::new(crate::videofx::VKind::Sharpen(1.0))];
+        s.vfx.top.on = true;
+        for part in Part::ALL {
+            let mut p = Preset::default();
+            assert!(!p.has(part));
+            p.fill(part, "webm", &s);
+            assert!(p.has(part), "{}", part.label());
+            let mut t = ExportSettings::default();
+            let container = p.apply(&mut t);
+            assert_eq!(container.is_some(), part == Part::Container);
+            p.remove(part);
+            assert_eq!(p, Preset::default());
+        }
+        let mut t = ExportSettings::default();
+        assert_eq!(Preset::from_parts("webm", &s, &Part::ALL).apply(&mut t).as_deref(), Some("webm"));
+        assert_eq!((t.pix_fmt.as_deref(), t.audio_mode, t.preset.as_str(), t.vfx.top.on), (Some("yuv444p"), AudioMode::Merge, "slow", true));
+        assert_eq!(t.vfx.effects, s.vfx.effects);
+        // "auto" pixel format means: let the encoder choose
+        let mut t = ExportSettings { pix_fmt: Some("nv12".into()), ..Default::default() };
+        Preset::from_parts("mp4", &ExportSettings::default(), &[Part::PixFmt]).apply(&mut t);
+        assert_eq!(t.pix_fmt, None);
+        assert_eq!(Part::ALL.len(), 11);
+    }
+
+    #[test]
+    fn summary_lists_what_the_preset_holds() {
+        let s = ExportSettings {
+            video_codec: VideoCodec::Encoder("libx265".into()),
+            quality: Quality::Crf(28),
+            scale: Scale { w: None, h: Some(720) },
+            ..Default::default()
+        };
+        assert_eq!(Preset::capture("mp4", &s).summary(), ".mp4 · libx265 (CRF 28) · audio copy · auto×720");
+        assert_eq!(Preset::default().summary(), "empty: applying changes nothing");
     }
 
     #[test]

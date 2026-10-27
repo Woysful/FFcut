@@ -5,6 +5,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
+/// These tests need the real tools; without them they pass vacuously (and say so).
+fn tools_missing() -> bool {
+    let missing = ffcut_core::tools::find_tool("ffmpeg", None).is_none() || ffcut_core::tools::find_tool("ffprobe", None).is_none();
+    if missing {
+        eprintln!("skipped: ffmpeg / ffprobe not on PATH");
+    }
+    missing
+}
+
 const W: u32 = 320;
 const H: u32 = 240;
 
@@ -22,7 +31,21 @@ fn input() -> &'static PathBuf {
     I.get_or_init(|| {
         let p = dir().join("src.mp4");
         let st = Command::new("ffmpeg")
-            .args(["-v", "error", "-y", "-f", "lavfi", "-i", &format!("testsrc2=size={W}x{H}:rate=10:duration=3"), "-pix_fmt", "yuv420p", "-c:v", "libx264", "-crf", "0"])
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("testsrc2=size={W}x{H}:rate=10:duration=3"),
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-crf",
+                "0",
+            ])
             .arg(&p)
             .status()
             .unwrap();
@@ -101,6 +124,9 @@ fn font() -> String {
 
 #[test]
 fn cover_area_is_solid_and_the_rest_is_untouched() {
+    if tools_missing() {
+        return;
+    }
     let a = Area { shape: AreaShape::Fill, x: 0.25, y: 0.25, w: 0.5, h: 0.5, color: [0, 0, 0], ..Area::new(AreaShape::Fill) };
     let out = export("cover", &settings(with(vec![VKind::Area(a)])));
     let (r, o) = (gray(&reference(), 1.0, W, H), gray(&out, 1.0, W, H));
@@ -111,6 +137,9 @@ fn cover_area_is_solid_and_the_rest_is_untouched() {
 
 #[test]
 fn area_time_range_follows_the_cut() {
+    if tools_missing() {
+        return;
+    }
     // source seconds 1.5..2.5, export starts at 1.0 -> covered from output second 0.5 to 1.5
     let a = Area { shape: AreaShape::Fill, range: Some((1.5, 2.5)), ..Area::new(AreaShape::Fill) };
     let mut s = settings(with(vec![VKind::Area(a)]));
@@ -124,6 +153,9 @@ fn area_time_range_follows_the_cut() {
 
 #[test]
 fn pixelate_makes_blocks_and_blur_removes_detail() {
+    if tools_missing() {
+        return;
+    }
     let r = gray(&reference(), 1.0, W, H);
     let a = Area { x: 0.1, y: 0.1, w: 0.6, h: 0.6, amount: 0.5, ..Area::new(AreaShape::Pixelate) };
     let p = gray(&export("pix", &settings(with(vec![VKind::Area(a)]))), 1.0, W, H);
@@ -142,6 +174,9 @@ fn pixelate_makes_blocks_and_blur_removes_detail() {
 
 #[test]
 fn every_pixel_effect_is_accepted() {
+    if tools_missing() {
+        return;
+    }
     let curves = Curves { master: vec![(0.0, 0.0), (0.4, 0.3), (1.0, 1.0)], r: vec![(0.0, 0.1), (1.0, 1.0)], ..Default::default() };
     let fx = with(vec![
         VKind::Color(ColorAdj { brightness: 0.1, contrast: 1.3, saturation: 1.5, gamma: 1.2 }),
@@ -163,6 +198,9 @@ fn every_pixel_effect_is_accepted() {
 
 #[test]
 fn brightness_and_gamma_move_the_picture() {
+    if tools_missing() {
+        return;
+    }
     let r = gray(&reference(), 1.0, W, H);
     let up = gray(&export("bright", &settings(with(vec![VKind::Color(ColorAdj { brightness: 0.2, ..Default::default() })]))), 1.0, W, H);
     let gam = gray(&export("gamma", &settings(with(vec![VKind::Color(ColorAdj { gamma: 2.0, ..Default::default() })]))), 1.0, W, H);
@@ -173,7 +211,11 @@ fn brightness_and_gamma_move_the_picture() {
 
 #[test]
 fn text_with_awkward_characters_renders() {
-    let t = TextBlock { text: "it's 50%: a,b;c [x] \\ \"q\"\nline two".into(), font: font(), x: 0.5, y: 0.5, v: VAlign::Middle, size: 12.0, ..Default::default() };
+    if tools_missing() {
+        return;
+    }
+    let t =
+        TextBlock { text: "it's 50%: a,b;c [x] \\ \"q\"\nline two".into(), font: font(), x: 0.5, y: 0.5, v: VAlign::Middle, size: 12.0, ..Default::default() };
     let out = export("text", &settings(with(vec![VKind::Text(t)])));
     let (r, o) = (gray(&reference(), 1.0, W, H), gray(&out, 1.0, W, H));
     let changed = (60..180).flat_map(|y| (0..W).map(move |x| (x, y))).filter(|(x, y)| px(&o, W, *x, *y) != px(&r, W, *x, *y)).count();
@@ -184,9 +226,14 @@ fn text_with_awkward_characters_renders() {
 
 #[test]
 fn captions_add_bars_with_text() {
-    let mut fx = VideoFx::default();
-    fx.top = Caption { on: true, text: "when the\nexport finishes".into(), font: font(), ..Default::default() };
-    fx.bottom = Caption { on: true, text: "bottom".into(), font: font(), bg: [0, 0, 0], color: [255, 255, 255], ..Default::default() };
+    if tools_missing() {
+        return;
+    }
+    let fx = VideoFx {
+        top: Caption { on: true, text: "when the\nexport finishes".into(), font: font(), ..Default::default() },
+        bottom: Caption { on: true, text: "bottom".into(), font: font(), bg: [0, 0, 0], color: [255, 255, 255], ..Default::default() },
+        ..Default::default()
+    };
     let (top, bottom) = bars(&fx, W);
     assert!(top > 0 && bottom > 0);
     let out = export("caps", &settings(fx));
@@ -200,6 +247,9 @@ fn captions_add_bars_with_text() {
 
 #[test]
 fn areas_use_the_rotated_frame_and_survive_a_crop() {
+    if tools_missing() {
+        return;
+    }
     // rotate 90°: the frame is 240x320. Cover its top-left corner, then crop that corner away from nothing.
     let a = Area { shape: AreaShape::Fill, x: 0.0, y: 0.0, w: 0.25, h: 0.25, ..Area::new(AreaShape::Fill) };
     let mut s = settings(with(vec![VKind::Area(a)]));
@@ -218,15 +268,22 @@ fn areas_use_the_rotated_frame_and_survive_a_crop() {
 
 #[test]
 fn preview_chain_runs_in_ffmpeg_too() {
+    if tools_missing() {
+        return;
+    }
     // the preview uses the same graph (absolute times): it must be a valid -vf
     let fx = with(vec![VKind::Sharpen(1.0), VKind::Area(Area::new(AreaShape::Blur)), VKind::Text(TextBlock { font: font(), ..Default::default() })]);
     let p = preview_chain(&fx, 90, true, false, H, W).unwrap();
-    let st = Command::new("ffmpeg").args(["-v", "error", "-y", "-i"]).arg(input()).args(["-vf", &p.graph, "-frames:v", "3", "-f", "null", "-"]).output().unwrap();
+    let st =
+        Command::new("ffmpeg").args(["-v", "error", "-y", "-i"]).arg(input()).args(["-vf", &p.graph, "-frames:v", "3", "-f", "null", "-"]).output().unwrap();
     assert!(st.status.success(), "{}\n{}", p.graph, String::from_utf8_lossy(&st.stderr));
 }
 
 #[test]
 fn awkward_text_is_drawn_exactly_as_typed() {
+    if tools_missing() {
+        return;
+    }
     // reference: the same drawtext fed from a text file (no escaping involved)
     let typed = "it's 50%: a,b;c [x] \\ \"q\" {n} é";
     let t = TextBlock { text: typed.into(), font: font(), x: 0.5, y: 0.5, v: VAlign::Middle, size: 9.0, ..Default::default() };
@@ -237,7 +294,10 @@ fn awkward_text_is_drawn_exactly_as_typed() {
     std::fs::write(&txt, typed).unwrap();
     let reference = format!("{}textfile={}{}", &built[..a], txt.display(), &built[b..]);
     let render = |vf: &str| {
-        let o = Command::new("ffmpeg").args(["-v", "error", "-f", "lavfi", "-i", "color=c=0x303030:s=320x240", "-vf", vf, "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", "-"]).output().unwrap();
+        let o = Command::new("ffmpeg")
+            .args(["-v", "error", "-f", "lavfi", "-i", "color=c=0x303030:s=320x240", "-vf", vf, "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", "-"])
+            .output()
+            .unwrap();
         assert!(o.status.success(), "{vf}\n{}", String::from_utf8_lossy(&o.stderr));
         o.stdout
     };

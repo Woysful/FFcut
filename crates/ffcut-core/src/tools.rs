@@ -15,7 +15,5 @@ pub fn find_tool(name: &str, override_path: Option<&Path>) -> Option<PathBuf> {
             return Some(c);
         }
     }
-    std::env::var_os("PATH").and_then(|paths| {
-        std::env::split_paths(&paths).map(|d| d.join(&file)).find(|c| c.is_file())
-    })
+    std::env::var_os("PATH").and_then(|paths| std::env::split_paths(&paths).map(|d| d.join(&file)).find(|c| c.is_file()))
 }

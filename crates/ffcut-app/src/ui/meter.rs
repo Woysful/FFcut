@@ -103,7 +103,13 @@ impl App {
         while y - 3.0 > rect.top() {
             let d_here = FLOOR_DB + (rect.bottom() - y) / h * (-FLOOR_DB);
             if d_here <= db {
-                let col = if d_here > -3.0 { theme::ERR } else if d_here > -12.0 { theme::WARN } else { theme::OK };
+                let col = if d_here > -3.0 {
+                    theme::ERR
+                } else if d_here > -12.0 {
+                    theme::WARN
+                } else {
+                    theme::OK
+                };
                 p.rect_filled(Rect::from_min_max(pos2(rect.left() + 1.5, y - 3.0), pos2(rect.right() - 1.5, y)), 1.0, col);
             }
             y -= step;
@@ -112,7 +118,10 @@ impl App {
             let yy = y_of(hold).clamp(rect.top() + 1.0, rect.bottom() - 1.0);
             p.line_segment([pos2(rect.left() + 1.0, yy), pos2(rect.right() - 1.0, yy)], Stroke::new(1.5, Color32::from_white_alpha(200)));
         }
-        resp.on_hover_text(format!("Level at the playhead: {}\n(from the waveform of the tracks you hear)", if db <= FLOOR_DB + 0.5 { "silent".to_string() } else { format!("{db:.1} dB") }));
+        resp.on_hover_text(format!(
+            "Level at the playhead: {}\n(from the waveform of the tracks you hear)",
+            if db <= FLOOR_DB + 0.5 { "silent".to_string() } else { format!("{db:.1} dB") }
+        ));
         if !self.player.paused() || self.meter.db > FLOOR_DB + 0.5 {
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(33));
         }

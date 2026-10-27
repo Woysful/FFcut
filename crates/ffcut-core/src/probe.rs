@@ -1,46 +1,34 @@
 //! ffprobe -> SourceInfo
 
+use crate::error::Error;
 use crate::model::{AudioStream, SourceInfo};
+use crate::run::{command, run_capture};
 use serde_json::Value;
 use std::path::Path;
 
-
-#[derive(Debug)]
-pub enum ProbeError {
-    Spawn(std::io::Error),
-    Failed(String),
-    NoVideo,
-    Json(serde_json::Error),
+/// ffprobe's JSON for `file`, with the given selection arguments.
+fn ffprobe_json(ffprobe: &Path, args: &[&str], file: &Path) -> Result<Vec<u8>, Error> {
+    Ok(run_capture("ffprobe", command(ffprobe).args(["-v", "error"]).args(args).args(["-of", "json"]).arg(file))?.stdout)
 }
 
-impl std::fmt::Display for ProbeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProbeError::Spawn(e) => write!(f, "cannot start ffprobe: {e}"),
-            ProbeError::Failed(s) => write!(f, "ffprobe failed: {s}"),
-            ProbeError::NoVideo => write!(f, "no video stream in file"),
-            ProbeError::Json(e) => write!(f, "bad ffprobe output: {e}"),
-        }
-    }
+fn parse_json(json: &[u8]) -> Result<Value, Error> {
+    serde_json::from_slice(json).map_err(|e| Error::Parse(format!("bad ffprobe output: {e}")))
 }
 
-pub fn probe(ffprobe: &Path, file: &Path) -> Result<SourceInfo, ProbeError> {
-    let out = crate::run::command(ffprobe)
-        .args(["-v", "error", "-show_format", "-show_streams", "-of", "json"])
-        .arg(file)
-        .output()
-        .map_err(ProbeError::Spawn)?;
-    if !out.status.success() {
-        return Err(ProbeError::Failed(String::from_utf8_lossy(&out.stderr).trim().to_string()));
-    }
+/// A number ffprobe may write as a JSON number or as a string.
+fn num(x: &Value) -> Option<f64> {
+    x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()))
+}
+
+pub fn probe(ffprobe: &Path, file: &Path) -> Result<SourceInfo, Error> {
+    let json = ffprobe_json(ffprobe, &["-show_format", "-show_streams"], file)?;
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-    parse_ext(&out.stdout, &ext)
+    parse_ext(&json, &ext)
 }
 
-pub fn parse(json: &[u8]) -> Result<SourceInfo, ProbeError> {
+pub fn parse(json: &[u8]) -> Result<SourceInfo, Error> {
     parse_ext(json, "")
 }
-
 /// ffprobe calls the whole MP4/MOV/3GP family "QuickTime / MOV". Tell them apart by the
 /// ISO-BMFF major brand (and, for Matroska vs WebM, by the file extension).
 pub fn container_label(format_name: &str, long_name: &str, brand: &str, ext: &str) -> String {
@@ -65,24 +53,26 @@ pub fn container_label(format_name: &str, long_name: &str, brand: &str, ext: &st
     if format_name.contains("matroska") {
         return if ext == "webm" { "WebM".into() } else { "Matroska".into() };
     }
-    if long_name.is_empty() { format_name.to_string() } else { long_name.to_string() }
+    if long_name.is_empty() {
+        format_name.to_string()
+    } else {
+        long_name.to_string()
+    }
 }
 
-fn parse_ext(json: &[u8], ext: &str) -> Result<SourceInfo, ProbeError> {
-    let v: Value = serde_json::from_slice(json).map_err(ProbeError::Json)?;
+fn parse_ext(json: &[u8], ext: &str) -> Result<SourceInfo, Error> {
+    let v = parse_json(json)?;
     let streams = v["streams"].as_array().cloned().unwrap_or_default();
 
     // Cover art in mp3/mkv shows up as a "video" stream: skip attached pictures.
     let video = streams.iter().find(|s| s["codec_type"] == "video" && s["disposition"]["attached_pic"] != 1);
     let has_audio = streams.iter().any(|s| s["codec_type"] == "audio");
     if video.is_none() && !has_audio {
-        return Err(ProbeError::NoVideo);
+        return Err(Error::NoStreams);
     }
     let audio_only = video.is_none();
     let null = Value::Null;
     let video = video.unwrap_or(&null);
-
-    let num = |x: &Value| -> Option<f64> { x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok())) };
 
     let duration = num(&v["format"]["duration"]).or_else(|| num(&video["duration"])).unwrap_or(0.0);
 
@@ -152,21 +142,13 @@ pub struct AudioFileInfo {
     pub label: String,
 }
 
-pub fn probe_audio(ffprobe: &Path, file: &Path) -> Result<AudioFileInfo, ProbeError> {
-    let out = crate::run::command(ffprobe)
-        .args(["-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name,channels,duration:format=duration", "-of", "json"])
-        .arg(file)
-        .output()
-        .map_err(ProbeError::Spawn)?;
-    if !out.status.success() {
-        return Err(ProbeError::Failed(String::from_utf8_lossy(&out.stderr).trim().to_string()));
-    }
-    let v: Value = serde_json::from_slice(&out.stdout).map_err(ProbeError::Json)?;
-    let st = v["streams"].as_array().and_then(|a| a.first()).ok_or_else(|| ProbeError::Failed("no audio stream in this file".into()))?;
-    let num = |x: &Value| x.as_f64().or_else(|| x.as_str().and_then(|s| s.parse().ok()));
+pub fn probe_audio(ffprobe: &Path, file: &Path) -> Result<AudioFileInfo, Error> {
+    let json = ffprobe_json(ffprobe, &["-select_streams", "a:0", "-show_entries", "stream=codec_name,channels,duration:format=duration"], file)?;
+    let v = parse_json(&json)?;
+    let st = v["streams"].as_array().and_then(|a| a.first()).ok_or_else(|| Error::Invalid("no audio stream in this file".into()))?;
     let duration = num(&v["format"]["duration"]).or_else(|| num(&st["duration"])).unwrap_or(0.0);
     if duration <= 0.0 {
-        return Err(ProbeError::Failed("cannot determine the audio length".into()));
+        return Err(Error::Invalid("cannot determine the audio length".into()));
     }
     let name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     Ok(AudioFileInfo { duration, label: name })
@@ -180,10 +162,7 @@ pub struct Encoders {
 }
 
 pub fn list_encoders(ffmpeg: &Path) -> Option<Encoders> {
-    let out = crate::run::command(ffmpeg).args(["-hide_banner", "-encoders"]).output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
+    let out = run_capture("ffmpeg", command(ffmpeg).args(["-hide_banner", "-encoders"])).ok()?;
     Some(parse_encoders(&String::from_utf8_lossy(&out.stdout)))
 }
 
@@ -248,8 +227,12 @@ mod tests {
 
     #[test]
     fn mp4_is_not_called_quicktime() {
-        let j = |brand: &str| format!(r#"{{"streams":[{{"codec_type":"video","codec_name":"h264","width":2,"height":2}}],
-          "format":{{"format_name":"mov,mp4,m4a,3gp,3g2,mj2","format_long_name":"QuickTime / MOV","tags":{{"major_brand":"{brand}"}}}}}}"#);
+        let j = |brand: &str| {
+            format!(
+                r#"{{"streams":[{{"codec_type":"video","codec_name":"h264","width":2,"height":2}}],
+          "format":{{"format_name":"mov,mp4,m4a,3gp,3g2,mj2","format_long_name":"QuickTime / MOV","tags":{{"major_brand":"{brand}"}}}}}}"#
+            )
+        };
         assert_eq!(parse(j("isom").as_bytes()).unwrap().format, "MP4");
         assert_eq!(parse(j("mp42").as_bytes()).unwrap().format, "MP4");
         assert_eq!(parse(j("qt  ").as_bytes()).unwrap().format, "QuickTime MOV");
@@ -276,6 +259,6 @@ mod tests {
 
     #[test]
     fn file_without_streams_is_an_error() {
-        assert!(matches!(parse(br#"{"streams":[],"format":{}}"#), Err(ProbeError::NoVideo)));
+        assert!(matches!(parse(br#"{"streams":[],"format":{}}"#), Err(Error::NoStreams)));
     }
 }

@@ -44,8 +44,8 @@ impl App {
                 ui.add_space(8.0);
                 // what will be exported: in / out and the resulting length
                 let end = if self.trim_end > 0.0 { self.trim_end } else { self.dur() };
-                let dim = Color32::from_gray(140);
-                ui.label(RichText::new(format!("{} → {}", fmt_time(self.trim_start), fmt_time(end))).monospace().size(11.5).color(Color32::from_gray(200)));
+                let dim = theme::TEXT_DIM;
+                ui.label(RichText::new(format!("{} → {}", fmt_time(self.trim_start), fmt_time(end))).monospace().size(11.5).color(theme::TEXT));
                 ui.label(RichText::new(format!("length {}", fmt_time((end - self.trim_start).max(0.0)))).monospace().size(11.5).color(dim));
             });
             self.timeline(ui, 50.0);
@@ -61,10 +61,10 @@ impl App {
                 let h = audible(&self.s.tracks);
                 self.s.tracks.iter().map(|t| h.iter().any(|x| std::ptr::eq(*x, t))).collect()
             };
-            for i in 0..n {
+            for (i, &heard) in heard.iter().enumerate().take(n) {
                 ui.horizontal(|ui| {
-                    self.track_header(ui, i, heard[i], &mut act);
-                    self.track_lane(ui, &ctx, i, heard[i], &mut act);
+                    self.track_header(ui, i, heard, &mut act);
+                    self.track_lane(ui, &ctx, i, heard, &mut act);
                 });
             }
             if n == 0 {
@@ -79,14 +79,23 @@ impl App {
             if self.tracks_edited() && ui.button("Reset all tracks").clicked() {
                 self.reset_tracks();
             }
-            ui.add(egui::Label::new(RichText::new("The preview plays all audible tracks together, with their trim, shift and effects (FX). Drag the panel edge up for more room.").size(11.5).color(Color32::from_gray(120))).truncate());
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "The preview plays all audible tracks together, with their trim, shift and effects (FX). Drag the panel edge up for more room.",
+                    )
+                    .size(11.5)
+                    .color(theme::TEXT_OFF),
+                )
+                .truncate(),
+            );
         });
 
         match act {
             Some(Act::Delete(i)) => {
                 self.fx.env_edit = None;
-                if self.fx.window.is_some() {
-                    self.fx.window = None;
+                if self.side.fx_track == Some(i) {
+                    self.side.fx_track = None;
                 }
                 if matches!(self.s.tracks[i].source, TrackSource::External { .. }) {
                     self.s.tracks.remove(i); // an added file has nothing to restore
@@ -94,10 +103,7 @@ impl App {
                     self.s.tracks[i].deleted = true;
                 }
             }
-            Some(Act::Fx(i)) => {
-                self.fx.window = Some(i);
-                super::side::open_section(ui.ctx(), "Audio effects");
-            }
+            Some(Act::Fx(i)) => self.show_track_fx(i),
             Some(Act::Restore(i)) => self.s.tracks[i].deleted = false,
             Some(Act::Replace(i)) => self.replace_track(i),
             Some(Act::Reset(i)) => {
@@ -122,11 +128,14 @@ impl App {
     fn lane_menu(&mut self, ui: &mut egui::Ui, i: usize, point: Option<usize>, act: &mut Option<Act>) {
         let Some(t) = self.s.tracks.get_mut(i) else { return };
         if let Some(k) = point.filter(|k| *k < t.envelope.len()) {
-            ui.label(RichText::new("Volume keyframe").strong());
-            ui.horizontal(|ui| {
+            super::widgets::menu_indent(ui, |ui| ui.label(RichText::new("Volume keyframe").strong()));
+            super::widgets::menu_indent(ui, |ui| {
                 ui.label("Level");
                 let mut db = t.envelope[k].db;
-                if ui.add(DragValue::new(&mut db).range(-60.0..=12.0).speed(0.2).suffix(" dB").fixed_decimals(1)).on_hover_text("Drag, or click and type a value").changed() {
+                if super::widgets::value(ui, DragValue::new(&mut db).range(-60.0..=12.0).speed(0.2).suffix(" dB").fixed_decimals(1))
+                    .on_hover_text("Drag, or click and type a value")
+                    .changed()
+                {
                     t.envelope[k].db = db;
                 }
             });
@@ -144,22 +153,24 @@ impl App {
             return;
         }
         if ui.button("Audio effects…").clicked() {
-            self.fx.window = Some(i);
-            super::side::open_section(ui.ctx(), "Audio effects");
+            self.show_track_fx(i);
             ui.close();
             return;
         }
         let mut editing = self.fx.env_edit == Some(i);
-        if ui.checkbox(&mut editing, "Edit volume keyframes").on_hover_text("Click the track to add a point, drag to move it, right-click a point for its menu").changed() {
+        if super::widgets::menu_indent(ui, |ui| ui.checkbox(&mut editing, "Edit volume keyframes"))
+            .on_hover_text("Click the track to add a point, drag to move it, right-click a point for its menu")
+            .changed()
+        {
             self.fx.env_edit = if editing { Some(i) } else { None };
             ui.close();
             return;
         }
         ui.separator();
-        ui.horizontal(|ui| {
+        super::widgets::menu_indent(ui, |ui| {
             ui.label("Volume");
             let mut pct = t.volume * 100.0;
-            if ui.add(DragValue::new(&mut pct).range(0.0..=300.0).speed(1.0).suffix("%").fixed_decimals(0)).changed() {
+            if super::widgets::value(ui, DragValue::new(&mut pct).range(0.0..=300.0).speed(1.0).suffix("%").fixed_decimals(0)).changed() {
                 t.volume = pct / 100.0;
             }
         });
@@ -167,7 +178,11 @@ impl App {
             *act = Some(Act::Replace(i));
             ui.close();
         }
-        if ui.add_enabled(t.shift.abs() > 0.0005, egui::Button::new("Reset position")).on_hover_text("Move the track back to where it starts in the file").clicked() {
+        if ui
+            .add_enabled(t.shift.abs() > 0.0005, egui::Button::new("Reset position"))
+            .on_hover_text("Move the track back to where it starts in the file")
+            .clicked()
+        {
             t.shift = 0.0;
             ui.close();
         }
@@ -193,7 +208,7 @@ impl App {
         ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
         ui.spacing_mut().button_padding = vec2(2.0, 1.0);
 
-        let fx_open = self.fx.window == Some(i);
+        let fx_open = self.side.fx_track == Some(i) && self.is_open(super::Section::Audio);
         let t = &mut self.s.tracks[i];
         let has_fx = t.has_fx();
         let icon = |glyph: &str| RichText::new(glyph).size(14.0);
@@ -204,7 +219,7 @@ impl App {
                 if ui.add_sized(vec2(41.0, 20.0), egui::Button::new(icon("↩"))).on_hover_text("Put this track back into the export").clicked() {
                     *act = Some(Act::Restore(i));
                 }
-                ui.label(RichText::new("removed").size(11.5).color(Color32::from_gray(120)));
+                ui.label(RichText::new("removed").size(11.5).color(theme::TEXT_OFF));
             });
             return;
         }
@@ -222,7 +237,7 @@ impl App {
             {
                 // |← drawn by hand: the font has no glyph for it
                 let c = r.rect.center();
-                let col = if moved { Color32::from_gray(215) } else { Color32::from_gray(90) };
+                let col = if moved { theme::TEXT } else { Color32::from_gray(90) };
                 let st = Stroke::new(1.6, col);
                 let p = ui.painter();
                 p.line_segment([pos2(c.x - 8.0, c.y - 5.0), pos2(c.x - 8.0, c.y + 5.0)], st);
@@ -233,14 +248,23 @@ impl App {
             if r.clicked() {
                 t.shift = 0.0;
             }
-            let fx = egui::Button::new(RichText::new("FX").size(12.0).strong().color(if has_fx { Color32::BLACK } else { Color32::from_gray(200) })).fill(if has_fx { theme::ACCENT } else if fx_open { Color32::from_gray(70) } else { ui.visuals().widgets.inactive.weak_bg_fill });
+            let fx = egui::Button::new(RichText::new("FX").size(12.0).strong().color(if has_fx { Color32::BLACK } else { theme::TEXT })).fill(if has_fx {
+                theme::ACCENT
+            } else if fx_open {
+                Color32::from_gray(70)
+            } else {
+                ui.visuals().widgets.inactive.weak_bg_fill
+            });
             if ui.add_sized(sz, fx).on_hover_text("Audio effects").clicked() {
                 *act = Some(Act::Fx(i));
             }
         });
         ui.horizontal(|ui| {
             let mut pct = t.volume * 100.0;
-            if ui.add_sized(vec2(86.0, 24.0), DragValue::new(&mut pct).range(0.0..=300.0).speed(1.0).suffix("%").fixed_decimals(0)).on_hover_text("Track volume (drag or type)").changed() {
+            if super::widgets::value_sized(ui, vec2(86.0, 24.0), DragValue::new(&mut pct).range(0.0..=300.0).speed(1.0).suffix("%").fixed_decimals(0))
+                .on_hover_text("Track volume (drag or type)")
+                .changed()
+            {
                 t.volume = pct / 100.0;
             }
             // solo / mute are exclusive on one track
@@ -272,7 +296,13 @@ impl App {
             let strip = Rect::from_min_max(pos2(rect.left() + 10.0, rect.top() + 2.0), pos2(rect.right() - 10.0, rect.bottom() - 2.0));
             let p = ui.painter_at(rect);
             p.rect_filled(strip, 5.0, Color32::from_rgb(34, 35, 40));
-            p.text(strip.left_center() + vec2(8.0, 0.0), Align2::LEFT_CENTER, format!("{} — removed from the export (right-click: restore)", t.label), FontId::proportional(11.0), Color32::from_gray(120));
+            p.text(
+                strip.left_center() + vec2(8.0, 0.0),
+                Align2::LEFT_CENTER,
+                format!("{} — removed from the export (right-click: restore)", t.label),
+                FontId::proportional(11.0),
+                theme::TEXT_OFF,
+            );
             return;
         }
         let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), LANE_H), Sense::click_and_drag());
@@ -284,11 +314,15 @@ impl App {
         let (xs, xe) = (t2x(pa), t2x(pb));
         let px_per_s = track.width() / dur as f32;
         let env_mode = (self.fx.env_edit == Some(i) || ui.input(|i| i.modifiers.alt)) && !t.deleted; // Alt held = keyframe mode
-        // keyframe height: +12 dB at the top, -48 dB at the bottom
+                                                                                                     // keyframe height: +12 dB at the top, -48 dB at the bottom
         let y_of_db = |db: f32| track.top() + (ENV_MAX - db.clamp(ENV_MIN, ENV_MAX)) / (ENV_MAX - ENV_MIN) * track.height();
         let db_of_y = |y: f32| {
             let v = ENV_MAX - ((y - track.top()) / track.height()).clamp(0.0, 1.0) * (ENV_MAX - ENV_MIN);
-            if v.abs() < 1.0 { 0.0 } else { v }
+            if v.abs() < 1.0 {
+                0.0
+            } else {
+                v
+            }
         };
         let env_xy = |pt: &ffcut_core::EnvPoint| pos2(t2x(pt.t + t.shift), y_of_db(pt.db));
         let near_env = |p: egui::Pos2, r: f32| t.envelope.iter().position(|pt| env_xy(pt).distance(p) <= r);
@@ -378,9 +412,7 @@ impl App {
             if let Some(p) = resp.hover_pos() {
                 let cur = if env_mode {
                     Some(if near_env(p, 9.0).is_some() { egui::CursorIcon::Grab } else { egui::CursorIcon::Crosshair })
-                } else if near_top(p) && ((p.x - fi_x).abs() <= 8.0 || (p.x - fo_x).abs() <= 8.0) {
-                    Some(egui::CursorIcon::ResizeHorizontal)
-                } else if (p.x - xs).abs() <= EDGE || (p.x - xe).abs() <= EDGE {
+                } else if (near_top(p) && ((p.x - fi_x).abs() <= 8.0 || (p.x - fo_x).abs() <= 8.0)) || (p.x - xs).abs() <= EDGE || (p.x - xe).abs() <= EDGE {
                     Some(egui::CursorIcon::ResizeHorizontal)
                 } else if p.x > xs && p.x < xe {
                     Some(egui::CursorIcon::Grab)
@@ -420,7 +452,13 @@ impl App {
         let half = track.height() * 0.5 - 4.0;
         let accent = if matches!(t.source, TrackSource::External { .. }) { theme::CROP } else { theme::OK };
         let (on, off) = (accent, Color32::from_gray(85));
-        let (on, off) = if t.deleted { (Color32::from_gray(70), Color32::from_gray(55)) } else if !heard { (Color32::from_gray(105), Color32::from_gray(70)) } else { (on, off) };
+        let (on, off) = if t.deleted {
+            (Color32::from_gray(70), theme::LINE)
+        } else if !heard {
+            (theme::TEXT_OFF, Color32::from_gray(70))
+        } else {
+            (on, off)
+        };
 
         // With effects the lane shows the rendered preview of the track (so the picture follows the effects);
         // until it is ready, and outside the kept part, the file itself.
@@ -461,16 +499,16 @@ impl App {
                 }
             }
             Some(Wave::Loading) | None => {
-                p.text(track.center(), Align2::CENTER_CENTER, "reading waveform…", FontId::proportional(11.5), Color32::from_gray(120));
+                p.text(track.center(), Align2::CENTER_CENTER, "reading waveform…", FontId::proportional(11.5), theme::TEXT_OFF);
             }
             Some(Wave::Failed) => {
-                p.text(track.center(), Align2::CENTER_CENTER, "no waveform", FontId::proportional(11.5), Color32::from_gray(120));
+                p.text(track.center(), Align2::CENTER_CENTER, "no waveform", FontId::proportional(11.5), theme::TEXT_OFF);
             }
         }
         drop(wave);
 
         if t.deleted {
-            p.text(track.center(), Align2::CENTER_CENTER, "removed from export", FontId::proportional(12.0), Color32::from_gray(150));
+            p.text(track.center(), Align2::CENTER_CENTER, "removed from export", FontId::proportional(12.0), theme::TEXT_LABEL);
         } else {
             let clip = Rect::from_min_max(pos2(xs.max(track.left()), track.top()), pos2(xe.min(track.right()), track.bottom()));
             if clip.width() > 0.0 {
@@ -485,18 +523,31 @@ impl App {
             let top = track.top();
             if t.fade_in > 0.001 {
                 let x1 = fi_x.min(track.right());
-                p.add(egui::Shape::convex_polygon(vec![pos2(xs.max(track.left()), top), pos2(x1, top), pos2(xs.max(track.left()), track.bottom())], Color32::from_black_alpha(90), Stroke::NONE));
+                p.add(egui::Shape::convex_polygon(
+                    vec![pos2(xs.max(track.left()), top), pos2(x1, top), pos2(xs.max(track.left()), track.bottom())],
+                    Color32::from_black_alpha(90),
+                    Stroke::NONE,
+                ));
                 p.line_segment([pos2(xs, track.bottom()), pos2(fi_x, top)], Stroke::new(1.5, Color32::from_white_alpha(170)));
             }
             if t.fade_out > 0.001 {
                 let x0 = fo_x.max(track.left());
-                p.add(egui::Shape::convex_polygon(vec![pos2(xe.min(track.right()), top), pos2(x0, top), pos2(xe.min(track.right()), track.bottom())], Color32::from_black_alpha(90), Stroke::NONE));
+                p.add(egui::Shape::convex_polygon(
+                    vec![pos2(xe.min(track.right()), top), pos2(x0, top), pos2(xe.min(track.right()), track.bottom())],
+                    Color32::from_black_alpha(90),
+                    Stroke::NONE,
+                ));
                 p.line_segment([pos2(fo_x, top), pos2(xe, track.bottom())], Stroke::new(1.5, Color32::from_white_alpha(170)));
             }
             if !env_mode {
                 for (x, on) in [(fi_x, t.fade_in > 0.001), (fo_x, t.fade_out > 0.001)] {
                     if x >= track.left() - 1.0 && x <= track.right() + 1.0 {
-                        p.circle(pos2(x, top + 7.0), 3.5, if on { Color32::WHITE } else { Color32::from_white_alpha(60) }, Stroke::new(1.0, Color32::from_black_alpha(160)));
+                        p.circle(
+                            pos2(x, top + 7.0),
+                            3.5,
+                            if on { Color32::WHITE } else { Color32::from_white_alpha(60) },
+                            Stroke::new(1.0, Color32::from_black_alpha(160)),
+                        );
                     }
                 }
             }
@@ -525,18 +576,24 @@ impl App {
             // the file name in the corner, like in video editors
             let label_x = xs.max(track.left()) + 14.0;
             let name = format!("{}{}", if matches!(t.source, TrackSource::External { .. }) { "+ " } else { "" }, t.label);
-            let gal = p.layout_no_wrap(name, FontId::proportional(10.5), if heard { Color32::from_gray(230) } else { Color32::from_gray(140) });
+            let gal = p.layout_no_wrap(name, FontId::proportional(10.5), if heard { theme::TEXT_STRONG } else { theme::TEXT_DIM });
             let at = pos2(label_x, track.top() + 3.0);
             p.rect_filled(Rect::from_min_size(at, gal.size()).expand2(vec2(4.0, 1.0)), 3.0, Color32::from_black_alpha(150));
             p.galley(at, gal, Color32::WHITE);
             if t.shift.abs() > 0.001 {
-                let gal = p.layout_no_wrap(format!("{:+.2}s", t.shift), FontId::proportional(10.5), Color32::from_gray(210));
+                let gal = p.layout_no_wrap(format!("{:+.2}s", t.shift), FontId::proportional(10.5), theme::TEXT);
                 let at = pos2(label_x, track.bottom() - 3.0 - gal.size().y);
                 p.rect_filled(Rect::from_min_size(at, gal.size()).expand2(vec2(4.0, 1.0)), 3.0, Color32::from_black_alpha(150));
                 p.galley(at, gal, Color32::WHITE);
             }
             if env_mode {
-                p.text(pos2(track.right() - 8.0, track.top() + 3.0), Align2::RIGHT_TOP, "keyframes: click adds, right-click = menu", FontId::proportional(10.5), theme::WARN);
+                p.text(
+                    pos2(track.right() - 8.0, track.top() + 3.0),
+                    Align2::RIGHT_TOP,
+                    "keyframes: click adds, right-click = menu",
+                    FontId::proportional(10.5),
+                    theme::WARN,
+                );
             }
         }
 

@@ -37,9 +37,35 @@ fn sine(name: &str, hz: u32, rate: u32) -> PathBuf {
 fn video() -> PathBuf {
     let p = tmp("v.mp4");
     let ok = Command::new("ffmpeg")
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25:duration=3",
-               "-f", "lavfi", "-i", "sine=frequency=1000:duration=3", "-f", "lavfi", "-i", "sine=frequency=2000:duration=3",
-               "-map", "0:v", "-map", "1:a", "-map", "2:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"])
+        .args([
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x240:rate=25:duration=3",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=1000:duration=3",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=2000:duration=3",
+            "-map",
+            "0:v",
+            "-map",
+            "1:a",
+            "-map",
+            "2:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-c:a",
+            "aac",
+        ])
         .arg(&p)
         .status()
         .unwrap()

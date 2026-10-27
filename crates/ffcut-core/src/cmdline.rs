@@ -2,12 +2,13 @@
 //!
 //! Rules (deliberately small, and Windows-path friendly):
 //! * whitespace separates arguments;
-//! * `"..."` groups; inside it `\"` is a quote, every other backslash is literal;
+//! * `"..."` groups; inside it a backslash is literal unless backslashes run up to a `"`: then
+//!   2n of them + `"` = n backslashes and the end of the group, 2n+1 = n backslashes and a literal `"`
+//!   (so `\"` is a quote and `"C:\dir\\"` is `C:\dir\`);
 //! * `'...'` groups with no escapes at all (handy for pasted Linux commands);
 //! * a backslash outside quotes is literal, so `C:\videos\a.mp4` just works.
 //!
-//! Known limit: an argument that *ends* with a backslash inside double quotes
-//! (`"C:\dir\"`) is ambiguous; real file paths never end like that.
+//! `quote` writes exactly what `parse` reads back, including arguments that end with a backslash.
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum ParseError {
@@ -42,9 +43,21 @@ pub fn parse(text: &str) -> Result<Vec<String>, ParseError> {
                     match chars.next() {
                         None => return Err(ParseError::UnterminatedQuote('"')),
                         Some('"') => break,
-                        Some('\\') if chars.peek() == Some(&'"') => {
-                            cur.push('"');
-                            chars.next();
+                        Some('\\') => {
+                            let mut run = 1;
+                            while chars.peek() == Some(&'\\') {
+                                chars.next();
+                                run += 1;
+                            }
+                            if chars.peek() == Some(&'"') {
+                                cur.extend(std::iter::repeat_n('\\', run / 2));
+                                if run % 2 == 1 {
+                                    cur.push('"');
+                                    chars.next();
+                                } // else the quote closes the group, on the next turn
+                            } else {
+                                cur.extend(std::iter::repeat_n('\\', run));
+                            }
                         }
                         Some(ch) => cur.push(ch),
                     }
@@ -73,18 +86,35 @@ pub fn parse(text: &str) -> Result<Vec<String>, ParseError> {
 }
 
 fn needs_quotes(arg: &str) -> bool {
-    arg.is_empty()
-        || arg.chars().any(|c| {
-            c.is_whitespace() || matches!(c, '"' | '\'' | '&' | '|' | ';' | '(' | ')' | '<' | '>' | '$' | '`' | '*' | '?' | '!')
-        })
+    arg.is_empty() || arg.chars().any(|c| c.is_whitespace() || matches!(c, '"' | '\'' | '&' | '|' | ';' | '(' | ')' | '<' | '>' | '$' | '`' | '*' | '?' | '!'))
 }
 
 pub fn quote(arg: &str) -> String {
-    if needs_quotes(arg) {
-        format!("\"{}\"", arg.replace('"', "\\\""))
-    } else {
-        arg.to_string()
+    if !needs_quotes(arg) {
+        return arg.to_string();
     }
+    let mut out = String::with_capacity(arg.len() + 2);
+    out.push('"');
+    // backslashes are written once they are known not to precede a quote (or the closing quote)
+    let mut run = 0;
+    for c in arg.chars() {
+        match c {
+            '\\' => run += 1,
+            '"' => {
+                out.extend(std::iter::repeat_n('\\', run * 2 + 1));
+                out.push('"');
+                run = 0;
+            }
+            c => {
+                out.extend(std::iter::repeat_n('\\', run));
+                out.push(c);
+                run = 0;
+            }
+        }
+    }
+    out.extend(std::iter::repeat_n('\\', run * 2));
+    out.push('"');
+    out
 }
 
 pub fn to_text(args: &[String]) -> String {
@@ -116,8 +146,34 @@ mod tests {
 
     #[test]
     fn roundtrip() {
-        let args: Vec<String> = ["ffmpeg", "-i", r"C:\my videos\a.mp4", "-metadata", r#"title=say "hi""#, "-vf", "scale=-1:720,setsar=1", "-filter_complex", "[0:a:0][0:a:1]amix=inputs=2[aout]", ""]
-            .iter().map(|s| s.to_string()).collect();
+        let args: Vec<String> = [
+            "ffmpeg",
+            "-i",
+            r"C:\my videos\a.mp4",
+            "-metadata",
+            r#"title=say "hi""#,
+            "-vf",
+            "scale=-1:720,setsar=1",
+            "-filter_complex",
+            "[0:a:0][0:a:1]amix=inputs=2[aout]",
+            "",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(parse(&to_text(&args)).unwrap(), args);
+    }
+
+    #[test]
+    fn backslashes_before_quotes_roundtrip() {
+        let args: Vec<String> = [r"C:\my dir\", r"C:\my dir\\", r#"a\"b c"#, r#"say \\"x" "#, r"\\server\share\a b.mp4", r#"text='it'\\\''s "q"'"#]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let text = to_text(&args);
+        assert_eq!(parse(&text).unwrap(), args, "{text}");
+        assert_eq!(quote(r"C:\my dir\"), r#""C:\my dir\\""#);
+        // what people type keeps working
+        assert_eq!(parse(r#""C:\my dir\a.mp4" "say \"hi\"""#).unwrap(), [r"C:\my dir\a.mp4", r#"say "hi""#]);
     }
 }

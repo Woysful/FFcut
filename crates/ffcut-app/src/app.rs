@@ -1,13 +1,14 @@
 //! Application state and the per-frame glue. Widgets live in `ui/*`.
 
+use crate::audiomix;
 use crate::display::Backend;
 use crate::player::Player;
-use ffcut_app::audiomix;
 use crate::settings::{self, Settings};
+use crate::state::{CmdState, CropState, Dialogs, Loupe, PresetStore, PresetsUi, Updates};
 use crate::theme;
+use crate::ui::SideState;
 use eframe::egui::{self, Key, Modifiers};
 use ffcut_core::cmdline;
-use ffcut_core::presets::{self, Presets};
 use ffcut_core::probe::{self, Encoders};
 use ffcut_core::run::{Event, Job};
 use ffcut_core::tools::find_tool;
@@ -74,6 +75,9 @@ impl HiRes {
     }
 }
 
+/// (key, from, to, per second) of a finer waveform.
+pub type HiResReq = (String, f64, f64, f64);
+
 pub enum Wave {
     Loading,
     Ready(Vec<f32>),
@@ -136,44 +140,25 @@ pub struct App {
     pub trim_start: f64,
     pub trim_end: f64,
     pub loop_on: bool,
-    pub lock_trim: bool,
     pub tl_drag: Option<TlDrag>,
     /// Trim handle the context menu was opened on (`true` = start).
     pub trim_menu: Option<bool>,
 
-    pub crop_on: bool,
-    /// Crop edges in frame pixels (x0, y0, x1, y1) of the rotated+flipped frame. Floats so slow drags work.
-    pub crop_edges: [f32; 4],
+    pub crop: CropState,
 
     pub preview_audio: usize,
     pub volume: f32,
     pub muted: bool,
 
-    pub cmd_text: String,
-    pub cmd_edited: bool,
-    pub cmd_stale: bool,
-    pub last_auto: String,
+    pub cmd: CmdState,
 
     pub job: Option<Running>,
     pub status: Option<Status>,
-    pub error_window: Option<(String, String)>,
 
-    pub presets: Presets,
-    pub presets_path: PathBuf,
-    pub fx_presets: ffcut_core::presets::FxPresets,
-    pub fx_presets_path: PathBuf,
-    pub fx_preset_name: String,
-    /// track the "Save audio preset" dialog takes its effects from
-    pub fx_save_track: Option<usize>,
-    pub fx_rename: Option<(String, String)>,
-    /// 0 = export presets, 1 = audio presets
-    pub presets_tab: u8,
-    pub preset_name: String,
-    pub show_save_preset: bool,
-    /// parts ticked in the save-preset dialog
-    pub save_parts: Vec<ffcut_core::presets::Part>,
-    pub show_settings: bool,
-    pub show_about: bool,
+    pub dialogs: Dialogs,
+    pub presets: PresetStore,
+    pub presets_ui: PresetsUi,
+    pub side: SideState,
     pub meter: crate::ui::MeterState,
     pub fx: crate::fx::FxState,
     pub vfx: crate::vfx::VfxState,
@@ -185,34 +170,21 @@ pub struct App {
     pub audio_hold: Option<(f64, Instant, u64)>,
     pub settings_tab: usize,
     pub window_title: String,
-    pub show_update: bool,
-    /// A newer release than this one (None = up to date / unknown).
-    pub update_found: Option<crate::update::Release>,
-    pub update_rx: Option<std::sync::mpsc::Receiver<crate::update::Outcome>>,
-    /// Result line of the last manual "Check now" (Settings / About).
-    pub update_msg: Option<String>,
-    pub update_manual: bool,
+    pub updates: Updates,
     pub fs: FsMode,
     /// Timeline shows one lane per audio track (waveforms, per-track edits).
     pub multitrack: bool,
     pub aview: AudioView,
     pub waves: Arc<Mutex<HashMap<String, Wave>>>,
     pub hires: Arc<Mutex<Option<HiRes>>>,
-    /// The crop loupe: the last piece of the picture it was given, and what part of the picture that is.
-    pub loupe_tex: Option<egui::TextureHandle>,
-    pub loupe_region: [f32; 4],
-    pub loupe_dirty: bool,
+    pub loupe: Loupe,
     /// (key, from, to, per second) of the finer waveform that is being made or was made last.
-    pub hires_req: Arc<Mutex<Option<(String, f64, f64, f64)>>>,
+    pub hires_req: Arc<Mutex<Option<HiResReq>>>,
     pub trk_drag: Option<(usize, TrkDrag)>,
     /// What mpv was last told to play (see `sync_preview_audio`).
     pub applied_audio: Option<PreviewAudio>,
     /// Windowing system in use (Linux: Wayland or X11).
     pub backend: Backend,
-    pub show_presets: bool,
-    /// (old name, text being typed) while a preset is being renamed in the editor.
-    pub preset_rename: Option<(String, String)>,
-    pub preset_msg: Option<String>,
     /// File from the command line: opened after the first frame so mpv has a running render loop.
     pub pending_open: Option<PathBuf>,
 }
@@ -222,8 +194,6 @@ impl App {
         theme::apply(&cc.egui_ctx);
         let player = Player::new(cc)?;
         let settings = Settings::load();
-        let presets_path = settings::config_dir().join("presets.json");
-        let fx_presets_path = settings::config_dir().join("audio-presets.json");
 
         let mut app = App {
             player,
@@ -238,51 +208,30 @@ impl App {
             trim_start: 0.0,
             trim_end: 0.0,
             loop_on: false,
-            lock_trim: false,
             tl_drag: None,
             trim_menu: None,
-            crop_on: false,
-            crop_edges: [0.0; 4],
+            crop: CropState::default(),
             preview_audio: 0,
             volume: settings.volume.unwrap_or(100.0),
             muted: settings.muted,
-            cmd_text: String::new(),
-            cmd_edited: false,
-            cmd_stale: false,
-            last_auto: String::new(),
+            cmd: CmdState::default(),
             job: None,
             status: None,
-            error_window: None,
-            presets: presets::load(&presets_path),
-            fx_presets: presets::load_fx(&fx_presets_path),
-            fx_presets_path,
-            fx_preset_name: String::new(),
-            fx_save_track: None,
-            fx_rename: None,
-            presets_tab: 0,
-            presets_path,
-            preset_name: String::new(),
-            show_save_preset: false,
-            save_parts: Vec::new(),
-            show_settings: false,
-            show_about: false,
+            dialogs: Dialogs::default(),
+            presets: PresetStore::load(&settings::config_dir()),
+            presets_ui: PresetsUi::default(),
+            side: SideState::default(),
             meter: Default::default(),
             fx: Default::default(),
             vfx: Default::default(),
             audio_hold: None,
             settings_tab: 0,
             window_title: String::new(),
-            show_update: false,
-            update_found: None,
-            update_rx: None,
-            update_msg: None,
-            update_manual: false,
+            updates: Updates::default(),
             fs: FsMode::Off,
             multitrack: false,
             hires: Default::default(),
-            loupe_tex: None,
-            loupe_region: [0.0; 4],
-            loupe_dirty: false,
+            loupe: Loupe::default(),
             hires_req: Default::default(),
             hist: Default::default(),
             hk_capture: None,
@@ -292,9 +241,6 @@ impl App {
             trk_drag: None,
             applied_audio: None,
             backend,
-            show_presets: false,
-            preset_rename: None,
-            preset_msg: None,
             pending_open: open,
             settings,
         };
@@ -311,45 +257,45 @@ impl App {
 
     /// `manual`: the user pressed "Check now", so say how it went even when nothing is new.
     pub fn start_update_check(&mut self, ctx: &egui::Context, manual: bool) {
-        if self.update_rx.is_some() {
+        if self.updates.rx.is_some() {
             return;
         }
         if !crate::update::configured() {
             if manual {
-                self.update_msg = Some("The update source is not set up in this build.".into());
+                self.updates.msg = Some("The update source is not set up in this build.".into());
             }
             return;
         }
-        self.update_manual = manual;
+        self.updates.manual = manual;
         if manual {
-            self.update_msg = Some("Checking…".into());
+            self.updates.msg = Some("Checking…".into());
         }
         let ctx = ctx.clone();
-        self.update_rx = Some(crate::update::check_in_background(move || ctx.request_repaint()));
+        self.updates.rx = Some(crate::update::check_in_background(move || ctx.request_repaint()));
     }
 
     fn poll_update(&mut self) {
-        let Some(rx) = &self.update_rx else { return };
+        let Some(rx) = &self.updates.rx else { return };
         let Ok(res) = rx.try_recv() else { return };
-        self.update_rx = None;
+        self.updates.rx = None;
         match res {
             Ok(Some(r)) => {
-                self.update_msg = Some(format!("Version {} is available.", r.version));
-                if self.update_manual {
+                self.updates.msg = Some(format!("Version {} is available.", r.version));
+                if self.updates.manual {
                     self.settings.skipped_version.clear(); // asked for it explicitly: show it again
-                    self.show_update = true;
+                    self.dialogs.update = true;
                 }
                 if r.version != self.settings.skipped_version {
-                    self.update_found = Some(r);
+                    self.updates.found = Some(r);
                 }
             }
             Ok(None) => {
-                self.update_found = None;
-                self.update_msg = Some(format!("You have the latest version ({}).", crate::update::VERSION));
+                self.updates.found = None;
+                self.updates.msg = Some(format!("You have the latest version ({}).", crate::update::VERSION));
             }
-            Err(e) => self.update_msg = if self.update_manual { Some(format!("Could not check: {e}")) } else { None },
+            Err(e) => self.updates.msg = if self.updates.manual { Some(format!("Could not check: {e}")) } else { None },
         }
-        self.update_manual = false;
+        self.updates.manual = false;
     }
 
     // ---------------------------------------------------------------- tools
@@ -386,13 +332,13 @@ impl App {
     pub fn open_file(&mut self, path: &Path) {
         let path = &std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         let Some(ffprobe) = self.ffprobe.clone() else {
-            self.error_window = Some(("ffprobe not found".into(), "Set the path to ffmpeg/ffprobe in File → Settings.".into()));
+            self.dialogs.error = Some(("ffprobe not found".into(), "Set the path to ffmpeg/ffprobe in File → Settings.".into()));
             return;
         };
         let info = match probe::probe(&ffprobe, path) {
             Ok(i) => i,
             Err(e) => {
-                self.error_window = Some((format!("Cannot open {}", path.file_name().unwrap_or_default().to_string_lossy()), e.to_string()));
+                self.dialogs.error = Some((format!("Cannot open {}", path.file_name().unwrap_or_default().to_string_lossy()), e.to_string()));
                 return;
             }
         };
@@ -415,12 +361,13 @@ impl App {
         self.applied_audio = None;
         self.trim_start = 0.0;
         self.trim_end = info.duration;
-        self.crop_on = false;
-        self.crop_edges = [0.0, 0.0, info.width as f32, info.height as f32];
+        self.crop.on = false;
+        self.crop.edges = [0.0, 0.0, info.width as f32, info.height as f32];
         self.preview_audio = 0;
+        self.side.fx_track = None;
         self.loop_on = false;
-        self.cmd_edited = false;
-        self.cmd_stale = false;
+        self.cmd.edited = false;
+        self.cmd.stale = false;
         self.hist.clear();
         self.status = None;
 
@@ -428,8 +375,14 @@ impl App {
         self.multitrack = false;
         self.aview = AudioView::default();
         self.container = if info.audio_only {
-            let lossless = info.audio.first().map_or(false, |a| a.codec == "flac" || a.codec.starts_with("pcm"));
-            if AUDIO_CONTAINERS.contains(&ext.as_str()) { ext } else if lossless { "flac".into() } else { "mp3".into() }
+            let lossless = info.audio.first().is_some_and(|a| a.codec == "flac" || a.codec.starts_with("pcm"));
+            if AUDIO_CONTAINERS.contains(&ext.as_str()) {
+                ext
+            } else if lossless {
+                "flac".into()
+            } else {
+                "mp3".into()
+            }
         } else if CONTAINERS.contains(&ext.as_str()) {
             ext
         } else {
@@ -498,7 +451,7 @@ impl App {
     }
 
     pub fn audio_mode(&self) -> bool {
-        self.clip.as_ref().map_or(false, |c| c.info.audio_only)
+        self.clip.as_ref().is_some_and(|c| c.info.audio_only)
     }
 
     pub fn containers(&self) -> &'static [&'static str] {
@@ -517,7 +470,7 @@ impl App {
             return;
         }
         self.multitrack = false;
-        self.crop_on = false;
+        self.crop.on = false;
         let (a, b) = (self.trim_start, self.trim_end);
         if let Some(t) = self.s.tracks.first_mut() {
             if (t.trim_start - a).abs() > 1e-6 {
@@ -545,7 +498,7 @@ impl App {
     pub fn set_rotation(&mut self, r: Rotation) {
         self.s.rotation = r;
         let (w, h) = self.frame_dims();
-        self.crop_edges = [0.0, 0.0, w as f32, h as f32]; // the frame changed shape: restart the crop
+        self.crop.edges = [0.0, 0.0, w as f32, h as f32]; // the frame changed shape: restart the crop
         self.apply_preview_transform();
     }
 
@@ -564,24 +517,16 @@ impl App {
     /// ffmpeg: rotate, then flip (in the picture you see). mpv rotates on the GPU; the flip is done by
     /// the player when it draws the frame, so it is in the same displayed frame and needs no video filter.
     pub fn apply_preview_transform(&self) {
-        let user = match self.s.rotation {
-            Rotation::None => 0,
-            Rotation::Cw90 => 90,
-            Rotation::R180 => 180,
-            Rotation::Ccw90 => 270,
-        };
-        let container = self.clip.as_ref().map_or(0, |c| c.info.rotation as i64);
-        let total = (user + container) % 360;
         if self.vfx.rotates {
             self.player.set_transform(0, false, false); // the video filter turns the picture itself
         } else {
-            self.player.set_transform(total, self.s.flip_h, self.s.flip_v);
+            self.player.set_transform(self.total_rotation(), self.s.flip_h, self.s.flip_v);
         }
     }
 
     pub fn crop_rect(&self) -> Crop {
         let (fw, fh) = self.frame_dims();
-        let e = self.crop_edges;
+        let e = self.crop.edges;
         let even = |v: f32| ((v / 2.0).round() * 2.0).max(0.0) as u32;
         let x0 = even(e[0].min(e[2])).min(fw.saturating_sub(2));
         let y0 = even(e[1].min(e[3])).min(fh.saturating_sub(2));
@@ -592,7 +537,38 @@ impl App {
 
     pub fn reset_crop(&mut self) {
         let (w, h) = self.frame_dims();
-        self.crop_edges = [0.0, 0.0, w as f32, h as f32];
+        self.crop.edges = [0.0, 0.0, w as f32, h as f32];
+    }
+
+    /// Turns the crop on or off; a frame too small to grab starts over as the whole picture.
+    pub fn set_crop(&mut self, on: bool) {
+        self.crop.on = on && !self.audio_mode();
+        if self.crop.on {
+            let c = self.crop_rect();
+            if c.w < 4 || c.h < 4 {
+                self.reset_crop();
+            }
+            self.reveal(crate::ui::Section::Transform);
+        }
+    }
+
+    // ------------------------------------------------------------ trim
+
+    pub fn set_trim_start_here(&mut self) {
+        self.trim_start = self.player.time().min(self.trim_end - 0.05).max(0.0);
+        self.sync_loop();
+    }
+
+    pub fn set_trim_end_here(&mut self) {
+        self.trim_end = self.player.time().max(self.trim_start + 0.05).min(self.dur());
+        self.sync_loop();
+    }
+
+    /// The whole file.
+    pub fn reset_trim(&mut self) {
+        self.trim_start = 0.0;
+        self.trim_end = self.dur();
+        self.sync_loop();
     }
 
     // ------------------------------------------------------------ playback
@@ -640,27 +616,27 @@ impl App {
         let dur = clip.info.duration;
         self.s.trim_start = self.trim_start;
         self.s.trim_end = if self.trim_end >= dur - 0.01 { None } else { Some(self.trim_end) };
-        self.s.crop = if self.crop_on { Some(self.crop_rect()) } else { None };
+        self.s.crop = if self.crop.on { Some(self.crop_rect()) } else { None };
 
         let auto = cmdline::to_text(&build_args(&clip.info, &self.s, &clip.path, Path::new(&self.out_str)));
-        if auto != self.last_auto {
-            if self.cmd_edited {
-                self.cmd_stale = true;
+        if auto != self.cmd.last_auto {
+            if self.cmd.edited {
+                self.cmd.stale = true;
             } else {
-                self.cmd_text = auto.clone();
+                self.cmd.text = auto.clone();
             }
-            self.last_auto = auto;
+            self.cmd.last_auto = auto;
         }
-        if self.cmd_edited && self.cmd_text == self.last_auto {
-            self.cmd_edited = false;
-            self.cmd_stale = false;
+        if self.cmd.edited && self.cmd.text == self.cmd.last_auto {
+            self.cmd.edited = false;
+            self.cmd.stale = false;
         }
     }
 
     pub fn reset_command(&mut self) {
-        self.cmd_text = self.last_auto.clone();
-        self.cmd_edited = false;
-        self.cmd_stale = false;
+        self.cmd.text = self.cmd.last_auto.clone();
+        self.cmd.edited = false;
+        self.cmd.stale = false;
     }
 
     /// Applies a preset to the open clip; its container only if this kind of file can use it.
@@ -683,13 +659,19 @@ impl App {
     /// Export button: asks where to save, then runs the command with that output path.
     pub fn export_clicked(&mut self) {
         let Some(clip) = &self.clip else { return };
-        let mut argv = match cmdline::parse(&self.cmd_text) {
+        let mut argv = match cmdline::parse(&self.cmd.text) {
             Ok(a) => a,
             Err(e) => {
                 self.status = Some(Status::Error(format!("Command error: {e}")));
                 return;
             }
         };
+        // the runner swaps the first word for the ffmpeg it found: it must be meant as ffmpeg
+        let program = argv.first().map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_lowercase());
+        if !program.is_some_and(|p| p.starts_with("ffmpeg")) {
+            self.status = Some(Status::Error("The command must start with ffmpeg".into()));
+            return;
+        }
         let Some(current) = argv.last().filter(|l| argv.len() >= 4 && !l.starts_with('-')).cloned() else {
             self.status = Some(Status::Error("The command must end with an output file name".into()));
             return;
@@ -700,7 +682,9 @@ impl App {
         let numbered_old = |k: usize| builder::numbered(&old_out, k).to_string_lossy().into_owned();
         let multi: Vec<usize> = (1..=64).filter(|k| argv.iter().any(|a| *a == numbered_old(*k))).collect();
         let cur = if multi.is_empty() { PathBuf::from(&current) } else { old_out.clone() };
-        let mut dlg = rfd::FileDialog::new().set_title(if self.audio_mode() { "Export audio" } else { "Export video" }).add_filter(if self.audio_mode() { "Audio" } else { "Video" }, self.containers());
+        let mut dlg = rfd::FileDialog::new()
+            .set_title(if self.audio_mode() { "Export audio" } else { "Export video" })
+            .add_filter(if self.audio_mode() { "Audio" } else { "Video" }, self.containers());
         if let Some(d) = cur.parent().filter(|d| d.is_dir()).or_else(|| clip.path.parent()) {
             dlg = dlg.set_directory(d);
         }
@@ -725,26 +709,29 @@ impl App {
             }
         }
         self.out_str = out.to_string_lossy().into_owned();
-        if multi.is_empty() {
+        let outputs: Vec<PathBuf> = if multi.is_empty() {
             *argv.last_mut().unwrap() = self.out_str.clone();
+            vec![PathBuf::from(&self.out_str)]
         } else {
             for a in argv.iter_mut() {
                 if let Some(k) = multi.iter().copied().find(|k| *a == numbered_old(*k)) {
                     *a = builder::numbered(&out, k).to_string_lossy().into_owned();
                 }
             }
-        }
-        if self.cmd_edited {
-            self.cmd_text = cmdline::to_text(&argv);
+            multi.iter().map(|k| builder::numbered(&out, *k)).collect()
+        };
+        if self.cmd.edited {
+            self.cmd.text = cmdline::to_text(&argv);
         }
         self.refresh_command();
-        if self.cmd_edited {
-            self.cmd_stale = false; // only the path changed, and we just applied it
+        if self.cmd.edited {
+            self.cmd.stale = false; // only the path changed, and we just applied it
         }
-        self.run_export(argv);
+        self.run_export(argv, outputs);
     }
 
-    pub fn run_export(&mut self, mut argv: Vec<String>) {
+    /// `outputs`: the files the command writes (removed again if the export fails or is cancelled).
+    pub fn run_export(&mut self, mut argv: Vec<String>, outputs: Vec<PathBuf>) {
         let Some(ffmpeg) = self.ffmpeg.clone() else {
             self.status = Some(Status::Error("ffmpeg not found — see File → Settings".into()));
             return;
@@ -754,7 +741,7 @@ impl App {
         }
         let output = PathBuf::from(argv.last().cloned().unwrap_or_default());
         let expected = (self.trim_end - self.trim_start).max(0.0);
-        match Job::spawn(&ffmpeg, &argv, Some(expected)) {
+        match Job::spawn(&ffmpeg, &argv, &outputs, Some(expected)) {
             Ok(job) => {
                 self.status = None;
                 self.job = Some(Running { job, started: Instant::now(), percent: None, speed: None, out_time: 0.0, output });
@@ -783,7 +770,7 @@ impl App {
                 Event::Finished => Status::Done(output),
                 Event::Cancelled => Status::Info("Export cancelled".into()),
                 Event::Failed(msg) => {
-                    self.error_window = Some(("Export failed".into(), msg));
+                    self.dialogs.error = Some(("Export failed".into(), msg));
                     Status::Error("Export failed".into())
                 }
                 Event::Progress { .. } => unreachable!(),
@@ -824,7 +811,13 @@ impl App {
             self.want_mix(ctx)
         } else {
             // one chosen track; if it carries edits (shift, trim, effects) it is played rendered, like in the track view
-            let pick = self.s.tracks.iter().find(|t| t.source == TrackSource::Original(self.preview_audio) && !t.deleted).filter(|t| t.needs_bake(self.dur()) || (t.volume - 1.0).abs() > 0.001).cloned();
+            let pick = self
+                .s
+                .tracks
+                .iter()
+                .find(|t| t.source == TrackSource::Original(self.preview_audio) && !t.deleted)
+                .filter(|t| t.needs_bake(self.dur()) || (t.volume - 1.0).abs() > 0.001)
+                .cloned();
             match pick {
                 Some(t) => PreviewAudio::Mix(vec![(self.preview_source(ctx, &t), (t.volume.max(0.0) * 1000.0).round() as u32)]),
                 None => PreviewAudio::Single(self.preview_audio),
@@ -912,10 +905,10 @@ impl App {
         }
         let (a, b) = (view.0, view.0 + view.1);
         let usable = |k: &str, f: f64, t: f64, ps: f64| k == key && f <= a + 1e-6 && t >= b - 1e-6 && ps >= px_per_s * 0.9;
-        if self.hires.lock().unwrap().as_ref().map_or(false, |h| h.key == key && h.covers(a, b, px_per_s)) {
+        if self.hires.lock().unwrap().as_ref().is_some_and(|h| h.key == key && h.covers(a, b, px_per_s)) {
             return;
         }
-        if self.hires_req.lock().unwrap().as_ref().map_or(false, |(k, f, t, ps)| usable(k, *f, *t, *ps)) {
+        if self.hires_req.lock().unwrap().as_ref().is_some_and(|(k, f, t, ps)| usable(k, *f, *t, *ps)) {
             return; // already on its way
         }
         let dur = self.dur();
@@ -953,7 +946,7 @@ impl App {
         match probe::probe_audio(&ffprobe, &p) {
             Ok(i) => Some((p, i)),
             Err(e) => {
-                self.error_window = Some((format!("Cannot use {}", p.file_name().unwrap_or_default().to_string_lossy()), e.to_string()));
+                self.dialogs.error = Some((format!("Cannot use {}", p.file_name().unwrap_or_default().to_string_lossy()), e.to_string()));
                 None
             }
         }
@@ -1062,21 +1055,10 @@ impl App {
                 Action::StepBack => self.player.step_frame(false),
                 Action::StepForward if audio => self.player.seek(self.player.time() + 1.0),
                 Action::StepForward => self.player.step_frame(true),
-                Action::TrimStart if !self.lock_trim => {
-                    self.trim_start = self.player.time().min(self.trim_end - 0.05).max(0.0);
-                    self.sync_loop();
-                }
-                Action::TrimEnd if !self.lock_trim => {
-                    self.trim_end = self.player.time().max(self.trim_start + 0.05).min(self.dur());
-                    self.sync_loop();
-                }
-                Action::ResetTrim if !self.lock_trim => {
-                    self.trim_start = 0.0;
-                    self.trim_end = self.dur();
-                    self.sync_loop();
-                }
-                Action::Crop if !audio => self.crop_on = !self.crop_on,
-                Action::LockTrim => self.lock_trim = !self.lock_trim,
+                Action::TrimStart => self.set_trim_start_here(),
+                Action::TrimEnd => self.set_trim_end_here(),
+                Action::ResetTrim => self.reset_trim(),
+                Action::Crop if !audio => self.set_crop(!self.crop.on),
                 Action::Loop => {
                     self.loop_on = !self.loop_on;
                     self.sync_loop();
@@ -1114,7 +1096,8 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
 
-        let title = crate::layout::render_title(&self.settings.title_template, self.clip.as_ref().map(|c| (c.path.as_path(), &c.info)), &self.settings.path_sep);
+        let title =
+            crate::layout::render_title(&self.settings.title_template, self.clip.as_ref().map(|c| (c.path.as_path(), &c.info)), &self.settings.path_sep);
         if title != self.window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.window_title = title;
@@ -1136,7 +1119,8 @@ impl eframe::App for App {
         self.settings.muted = self.muted;
         self.settings.save();
         if let Some(r) = &self.job {
-            r.job.cancel();
+            // wait a moment, so the half-written output is removed before the program ends
+            r.job.cancel_and_wait(std::time::Duration::from_secs(3));
         }
     }
 }

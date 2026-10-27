@@ -8,13 +8,13 @@ use eframe::egui_glow;
 use eframe::glow::{self, HasContext};
 use libmpv2::render::{OpenGLInitParams, RenderContext, RenderParam, RenderParamApiType};
 use libmpv2::Mpv;
-use std::ffi::{c_void, CStr, CString};
 use std::cell::{Cell, RefCell};
+use std::ffi::{c_void, CStr, CString};
 use std::mem::ManuallyDrop;
-use std::time::{Duration, Instant};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 type GetProc = Arc<dyn Fn(&CStr) -> *const c_void + Send + Sync>;
 
@@ -71,7 +71,13 @@ struct MpvRef(&'static Mpv);
 unsafe impl Send for MpvRef {}
 
 fn spawn_bridge(mpv: &'static Mpv) -> Arc<Bridge> {
-    let b = Arc::new(Bridge { pending: Mutex::new(None), wake: Condvar::new(), time: AtomicU64::new(0f64.to_bits()), paused: AtomicBool::new(true), eof: AtomicBool::new(false) });
+    let b = Arc::new(Bridge {
+        pending: Mutex::new(None),
+        wake: Condvar::new(),
+        time: AtomicU64::new(0f64.to_bits()),
+        paused: AtomicBool::new(true),
+        eof: AtomicBool::new(false),
+    });
     let (bb, m) = (b.clone(), MpvRef(mpv));
     std::thread::Builder::new()
         .name("mpv-bridge".into())
@@ -362,7 +368,7 @@ impl Player {
             let gl = painter.gl();
             unsafe {
                 let mut slot = shared.fbo.lock().unwrap();
-                if slot.as_ref().map_or(true, |f| f.w != w || f.h != h) {
+                if slot.as_ref().is_none_or(|f| f.w != w || f.h != h) {
                     if let Some(old) = slot.take() {
                         gl.delete_framebuffer(old.fbo);
                         gl.delete_texture(old.tex);
@@ -419,7 +425,7 @@ impl Player {
                         let src = if flip_v { row } else { ch - 1 - row };
                         let line = &buf[src * cw * 4..(src + 1) * cw * 4];
                         if flip_h {
-                            for px in line.chunks_exact(4).rev() {
+                            for px in line.as_chunks::<4>().0.iter().rev() {
                                 rgba.extend_from_slice(px);
                             }
                         } else {
