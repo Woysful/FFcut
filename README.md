@@ -11,10 +11,8 @@ Small and fast wrapper for FFmpeg.
 - Flip
 - Resize
 - Presets
-- Video effects: colour, vignette, sharpen, denoise, deblock, deband, deflicker, blur, pixelate or cover an area, text blocks, top / bottom caption
+- Video/Audio effects
 - Multi-track audio timeline
-- Audio effects: fade in / out, volume keyframes, parametric equalizer, compressor, normalization, de-esser, de-noiser.
-- **Any FFmpeg filter** as an audio or video effect: pick it from the list of your ffmpeg, its options become a form
 - **Plugins**: LADSPA and LV2 (audio), frei0r (video), run by ffmpeg
 - Specific audio track export, or mix all tracks into one
 - **Custom FFmpeg command** — the final command is shown and fully editable, and exactly that text is what runs
