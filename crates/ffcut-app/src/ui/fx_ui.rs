@@ -2,7 +2,7 @@
 //! shown in the sidebar and in the audio presets editor.
 
 use super::widgets::{self, StackAct, StackEntry};
-use super::{field, filter_ui, grid, plugin_ui};
+use super::{builtin_ui, field, filter_ui, grid, plugin_ui};
 use crate::app::App;
 use crate::catalog::Catalog;
 use crate::theme;
@@ -167,6 +167,7 @@ fn fx_tip(k: &EffectKind) -> Option<&'static str> {
         EffectKind::DeEss(_) => "Softens harsh “s” and “sh” sounds in voice recordings. Raise Intensity until they stop stinging.",
         EffectKind::Denoise(_) => "Takes steady background noise (hiss, fan, hum) out of the sound. It follows the noise while you play.",
         EffectKind::Norm(_) => "Measures the clip as it reaches this point of the stack and sets the level for you. The track volume stays on top.",
+        EffectKind::Builtin(b) => return builtin_ui::tip(b),
         EffectKind::Filter(_) | EffectKind::Plugin(_) => return None,
     })
 }
@@ -299,6 +300,7 @@ fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Opt
     match kind {
         EffectKind::Filter(f) => filter_ui::body(ui, ("afilter", k), f, cat),
         EffectKind::Plugin(p) => plugin_ui::body(ui, ("aplugin", k), p, cat),
+        EffectKind::Builtin(b) => builtin_ui::body(ui, ("abuiltin", k), b),
         EffectKind::Eq(bands) => {
             let mut band_sel = (*sel).filter(|s| s.0 == k).map(|s| s.1);
             eq_plot(ui, bands, &mut band_sel);

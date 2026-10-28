@@ -1,6 +1,7 @@
 //! Video effects, covered areas, text blocks and caption bars, as the user set them.
 //! `videofx` turns them into ffmpeg filters (and re-exports everything here).
 
+use super::builtin::BuiltinFx;
 use super::filter::FilterFx;
 use super::plugin::PluginFx;
 use serde::{Deserialize, Serialize};
@@ -47,6 +48,8 @@ pub enum VKind {
     Filter(FilterFx),
     /// A frei0r plugin (applied with the pixel effects).
     Plugin(PluginFx),
+    /// A ready-made effect (LUT, film grain...), applied with the pixel effects.
+    Builtin(BuiltinFx),
 }
 
 impl VEffect {
@@ -71,6 +74,7 @@ impl VEffect {
             VKind::Text(_) => "Text",
             VKind::Filter(f) => &f.name,
             VKind::Plugin(p) => p.title(),
+            VKind::Builtin(b) => crate::builtin::def(&b.id).map_or(&b.id, |d| d.name),
         }
     }
     /// Drawn on the rotated frame (areas, text) rather than on the decoded picture.

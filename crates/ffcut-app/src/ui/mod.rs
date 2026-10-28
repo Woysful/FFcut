@@ -2,6 +2,7 @@
 //! building blocks they share.
 
 mod audio_view;
+mod builtin_ui;
 mod codecs;
 mod command;
 mod filter_ui;

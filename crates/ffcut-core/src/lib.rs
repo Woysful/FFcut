@@ -18,6 +18,7 @@
 pub mod analysis;
 pub mod audiofx;
 pub mod builder;
+pub mod builtin;
 pub mod cmdline;
 mod error;
 pub mod filters;

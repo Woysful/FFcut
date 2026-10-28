@@ -2,7 +2,7 @@
 //! captions) and the markers it draws on the video.
 
 use super::widgets::{self, StackAct, StackEntry};
-use super::{filter_ui, plugin_ui};
+use super::{builtin_ui, filter_ui, plugin_ui};
 use crate::app::App;
 use crate::catalog::Catalog;
 use crate::theme;
@@ -30,6 +30,7 @@ fn vfx_tip(k: &VKind) -> Option<&'static str> {
         VKind::Deflicker(_) => "Evens out brightness that pulses from frame to frame. A longer window is smoother.",
         VKind::Area(_) => "Hides a part of the picture. Drag the frame on the video to place it.",
         VKind::Text(_) => "Place it with the buttons, the numbers, or by dragging the marker on the video.",
+        VKind::Builtin(b) => return super::builtin_ui::tip(b),
         _ => return None,
     })
 }
@@ -254,6 +255,7 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
             widgets::hint(ui, "Applied with the colour effects. A filter that resizes or retimes the picture moves the crop, areas and text.");
         }
         VKind::Plugin(p) => plugin_ui::body(ui, ("vplugin", k), p, cx.cat),
+        VKind::Builtin(b) => builtin_ui::body(ui, ("vbuiltin", k), b),
         VKind::Color(c) => {
             widgets::grid(("color", k)).show(ui, |ui| {
                 ui.label("Brightness");
@@ -612,7 +614,7 @@ impl App {
         if let Some(e) = &self.vfx.error {
             widgets::error(ui, format!("The preview could not apply this: {e}"));
             let missing = ["No such filter", "Could not find module", "not found"].iter().any(|m| e.contains(m));
-            if missing && fx.effects.iter().any(|e| e.on && matches!(e.kind, VKind::Filter(_) | VKind::Plugin(_))) {
+            if missing && fx.effects.iter().any(|e| e.on && matches!(e.kind, VKind::Filter(_) | VKind::Plugin(_) | VKind::Builtin(_))) {
                 widgets::hint(ui, "The preview uses the player's own ffmpeg, which may lack a filter that yours has: the export can still work.");
             }
         }

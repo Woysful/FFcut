@@ -155,6 +155,7 @@ pub(crate) fn pixel_filter(k: &VKind) -> Option<String> {
         VKind::Deflicker(size) => Some(format!("deflicker=size={}:mode=am", (*size).clamp(2, 30))),
         VKind::Filter(f) => filters::filter_text(f),
         VKind::Plugin(p) => crate::plugins::plugin_text(p),
+        VKind::Builtin(b) => crate::builtin::filter_text(b, filters::Media::Video),
         VKind::Area(_) | VKind::Text(_) => None,
     }
 }

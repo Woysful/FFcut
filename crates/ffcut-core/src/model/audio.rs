@@ -1,3 +1,4 @@
+use super::builtin::BuiltinFx;
 use super::filter::FilterFx;
 use super::plugin::PluginFx;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -72,6 +73,8 @@ pub enum EffectKind {
     Filter(FilterFx),
     /// A LADSPA or LV2 plugin.
     Plugin(PluginFx),
+    /// A ready-made effect (echo, limiter...).
+    Builtin(BuiltinFx),
 }
 
 impl Effect {
@@ -87,6 +90,7 @@ impl Effect {
             EffectKind::Denoise(_) => "Noise reduction",
             EffectKind::Filter(f) => &f.name,
             EffectKind::Plugin(p) => p.title(),
+            EffectKind::Builtin(b) => crate::builtin::def(&b.id).map_or(&b.id, |d| d.name),
         }
     }
 }
