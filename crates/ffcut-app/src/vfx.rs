@@ -30,6 +30,8 @@ pub struct VfxState {
     pub bars: (u32, u32),
     hw_copy: bool,
     pub error: Option<String>,
+    /// ffmpeg's messages since the chain was applied (mpv reports a failed graph only in its log).
+    log: Vec<String>,
 }
 
 impl Default for VfxState {
@@ -48,6 +50,7 @@ impl Default for VfxState {
             bars: (0, 0),
             hw_copy: false,
             error: None,
+            log: Vec::new(),
         }
     }
 }
@@ -96,11 +99,26 @@ impl App {
         (user + self.clip.as_ref().map_or(0, |c| c.info.rotation as i64)) % 360
     }
 
+    /// mpv accepts any graph and only says in its log that it could not build it (then plays without it).
+    fn watch_filter_log(&mut self) {
+        let log = self.player.filter_log();
+        self.vfx.log.extend(log.errors);
+        let n = self.vfx.log.len();
+        self.vfx.log.drain(..n.saturating_sub(8));
+        let ours = matches!(self.vfx.applied, Some(Some(_)));
+        if log.failed && ours && self.vfx.error.is_none() {
+            // the last line that names the cause ("Error creating filters" and the like only say that it failed)
+            let why = self.vfx.log.iter().rev().find(|l| !l.starts_with("Error ")).or(self.vfx.log.last());
+            self.vfx.error = Some(why.cloned().unwrap_or_else(|| "the player could not build the filters".into()));
+        }
+    }
+
     /// Keeps mpv's video filter in step with the settings. Waits until the user stops dragging.
     pub fn sync_video_preview(&mut self, ctx: &egui::Context) {
         if self.clip.is_none() {
             return;
         }
+        self.watch_filter_log();
         let (fw, fh) = self.frame_dims();
         let want = videofx::preview_chain(&self.s.vfx, self.total_rotation(), self.s.flip_h, self.s.flip_v, fw, fh);
         if want != self.vfx.want {
@@ -137,6 +155,7 @@ impl App {
             }
         };
         self.vfx.error = result.err().map(|e| format!("{e}"));
+        self.vfx.log.clear();
         self.vfx.rotates = want.as_ref().is_some_and(|c| c.rotates);
         self.vfx.bars = if self.vfx.rotates { videofx::bars(&self.s.vfx, fw) } else { (0, 0) };
         self.vfx.applied = Some(want);

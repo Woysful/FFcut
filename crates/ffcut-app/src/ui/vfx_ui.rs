@@ -1,12 +1,16 @@
 //! The "Video effects & text" sidebar section (colour, curves, style, restoration, covered areas, text,
 //! captions) and the markers it draws on the video.
 
+use super::filter_ui;
 use super::widgets::{self, ComboExt, StackAct, StackEntry};
 use crate::app::App;
+use crate::catalog::Catalog;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, StrokeKind};
+use ffcut_core::filters::Media;
 use ffcut_core::fonts::Font;
 use ffcut_core::videofx::*;
+use ffcut_core::FilterFx;
 
 /// Curves editor channels: name and the colour of its line.
 const CHANNELS: [(&str, Color32); 4] = [
@@ -239,10 +243,15 @@ struct Ctx<'a> {
     dur: f64,
     curve_ch: &'a mut usize,
     curve_sel: &'a mut Option<(usize, usize)>,
+    cat: &'a Catalog,
 }
 
 fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
     match &mut e.kind {
+        VKind::Filter(f) => {
+            filter_ui::body(ui, ("vfilter", k), f, cx.cat);
+            widgets::hint(ui, "Applied with the colour effects. A filter that resizes or retimes the picture moves the crop, areas and text.");
+        }
         VKind::Color(c) => {
             widgets::grid(("color", k)).show(ui, |ui| {
                 ui.label("Brightness");
@@ -450,7 +459,7 @@ fn caption_ui(ui: &mut egui::Ui, id: &str, c: &mut Caption, fonts: Option<&[Font
 
 // ------------------------------------------------------------------ window
 
-fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
+fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str, cat: &Catalog) -> bool {
     let mut added = false;
     let mut push = |ui: &mut egui::Ui, kind: VKind| {
         fx.effects.push(VEffect::new(kind));
@@ -501,6 +510,13 @@ fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str) -> bool {
     if ui.button("Text").clicked() {
         push(ui, VKind::Text(TextBlock { font: default_font.to_string(), ..Default::default() }));
     }
+    ui.separator();
+    widgets::form_submenu(ui, "FFmpeg filter", |ui| {
+        if let Some(name) = filter_ui::picker(ui, cat, Media::Video) {
+            push(ui, VKind::Filter(FilterFx::new(name)));
+        }
+    })
+    .on_hover_text("Any video filter of your ffmpeg, with its settings");
     added
 }
 
@@ -529,6 +545,7 @@ impl App {
         let mut sel = self.vfx.sel;
         let mut curve_ch = self.vfx.curve_ch;
         let mut curve_sel = self.vfx.curve_sel;
+        let cat = self.catalog.clone();
 
         widgets::side_box(ui, "Captions", Some("A bar of solid colour above or below the video with text on it, like in video memes."), |ui| {
             caption_ui(ui, "Top", &mut fx.top, fonts.as_deref());
@@ -544,9 +561,14 @@ impl App {
         let mut act: Option<StackAct> = None;
         let count = fx.effects.len();
         for (k, e) in fx.effects.iter_mut().enumerate() {
-            let entry = StackEntry { k, count, name: e.name(), tip: vfx_tip(&e.kind), highlight: sel == Some(k) && e.is_overlay() };
+            let desc = match &e.kind {
+                VKind::Filter(f) => cat.desc(&f.name),
+                _ => None,
+            };
+            let name = e.name().to_string();
+            let entry = StackEntry { k, count, name: &name, tip: desc.as_deref().or(vfx_tip(&e.kind)), highlight: sel == Some(k) && e.is_overlay() };
             let mut on = e.on;
-            let mut cx = Ctx { fonts: fonts.as_deref(), now, dur, curve_ch: &mut curve_ch, curve_sel: &mut curve_sel };
+            let mut cx = Ctx { fonts: fonts.as_deref(), now, dur, curve_ch: &mut curve_ch, curve_sel: &mut curve_sel, cat: &cat };
             let resp = widgets::stack_card(ui, entry, &mut on, &mut act, |ui| effect_body(ui, k, e, &mut cx));
             e.on = on;
             // pressing anywhere on a card selects it (its frame shows on the video)
@@ -564,7 +586,7 @@ impl App {
         }
         ui.horizontal(|ui| {
             widgets::menu_button(ui, "+ Add effect", |ui| {
-                if add_menu(ui, &mut fx, &default_font) {
+                if add_menu(ui, &mut fx, &default_font, &cat) {
                     sel = Some(fx.effects.len() - 1);
                 }
             });
@@ -580,6 +602,10 @@ impl App {
         });
         if let Some(e) = &self.vfx.error {
             widgets::error(ui, format!("The preview could not apply this: {e}"));
+            let missing = ["No such filter", "Could not find module", "not found"].iter().any(|m| e.contains(m));
+            if missing && fx.effects.iter().any(|e| e.on && matches!(e.kind, VKind::Filter(_))) {
+                widgets::hint(ui, "The preview uses the player's own ffmpeg, which may lack a filter that yours has: the export can still work.");
+            }
         }
 
         if fx != self.s.vfx {

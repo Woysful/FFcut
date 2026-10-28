@@ -20,6 +20,7 @@ pub mod audiofx;
 pub mod builder;
 pub mod cmdline;
 mod error;
+pub mod filters;
 mod fmtnum;
 pub mod fonts;
 mod hash;

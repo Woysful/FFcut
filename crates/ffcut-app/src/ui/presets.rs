@@ -373,6 +373,7 @@ impl App {
         let track = self.side.fx_track.filter(|i| *i < self.s.tracks.len()).or((!self.s.tracks.is_empty()).then_some(0));
         let mut changed = false;
         let names: Vec<String> = self.presets.fx.keys().cloned().collect();
+        let cat = self.catalog.clone();
         for name in names {
             let mut fx = self.presets.fx[&name].clone();
             let summary = {
@@ -388,7 +389,7 @@ impl App {
             let tip = track.map(|i| format!("Replace the effects of “{}”", self.s.tracks[i].label));
             let mut edited = false;
             let act = preset_card(ui, &name, rename.is_some().then_some(&mut rename_buf), &summary, ("Apply to track", tip), false, |ui| {
-                edited = super::fx_ui::preset_effects(ui, &mut fx);
+                edited = super::fx_ui::preset_effects(ui, &mut fx, &cat);
             });
             if let Some(f) = self.rename_field(&name) {
                 *f = rename_buf;

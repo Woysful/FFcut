@@ -1,6 +1,7 @@
 //! Video effects, covered areas, text blocks and caption bars, as the user set them.
 //! `videofx` turns them into ffmpeg filters (and re-exports everything here).
 
+use super::filter::FilterFx;
 use serde::{Deserialize, Serialize};
 
 pub type Rgb = [u8; 3];
@@ -41,13 +42,15 @@ pub enum VKind {
     Deflicker(u32),
     Area(Area),
     Text(TextBlock),
+    /// Any ffmpeg video filter, by name (applied with the pixel effects).
+    Filter(FilterFx),
 }
 
 impl VEffect {
     pub fn new(kind: VKind) -> Self {
         VEffect { on: true, kind }
     }
-    pub fn name(&self) -> &'static str {
+    pub fn name(&self) -> &str {
         match &self.kind {
             VKind::Color(_) => "Color",
             VKind::Curves(_) => "Curves",
@@ -63,6 +66,7 @@ impl VEffect {
                 AreaShape::Fill => "Cover area",
             },
             VKind::Text(_) => "Text",
+            VKind::Filter(f) => &f.name,
         }
     }
     /// Drawn on the rotated frame (areas, text) rather than on the decoded picture.

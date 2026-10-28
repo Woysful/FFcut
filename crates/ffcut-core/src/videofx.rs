@@ -15,6 +15,7 @@
 //!
 //! The data types live in `model::video` and are re-exported here.
 
+use crate::filters::{self, quote_value};
 pub use crate::model::video::*;
 
 /// A colour / curve setting this close to neutral changes nothing.
@@ -152,6 +153,7 @@ pub(crate) fn pixel_filter(k: &VKind) -> Option<String> {
             format!("deband=1thr={t}:2thr={t}:3thr={t}:range=16:blur=1", t = n(t))
         }),
         VKind::Deflicker(size) => Some(format!("deflicker=size={}:mode=am", (*size).clamp(2, 30))),
+        VKind::Filter(f) => filters::filter_text(f),
         VKind::Area(_) | VKind::Text(_) => None,
     }
 }
@@ -189,13 +191,6 @@ fn area_filter(a: &Area, idx: usize, w: u32, h: u32, shift: f64) -> String {
             )
         }
     }
-}
-
-/// Escapes a value for a filter option inside `'...'` (found by experiment against real ffmpeg, which
-/// parses the text twice): `\` doubles, `:` gets a backslash, and a `'` leaves the quote and comes back.
-fn quote_value(s: &str) -> String {
-    let t = s.replace('\\', "\\\\").replace(':', "\\:").replace('\'', "'\\\\\\''");
-    format!("'{t}'")
 }
 
 /// A font path as a drawtext option (`C:` needs its colon escaped).

@@ -131,6 +131,8 @@ pub struct App {
     pub ffprobe: Option<PathBuf>,
     pub ffmpeg_version: String,
     pub encoders: Arc<Mutex<Option<Encoders>>>,
+    /// ffmpeg's filters and their options (for the "FFmpeg filter" effects).
+    pub catalog: crate::catalog::Catalog,
 
     pub clip: Option<Clip>,
     pub s: ExportSettings,
@@ -201,6 +203,7 @@ impl App {
             ffprobe: None,
             ffmpeg_version: String::new(),
             encoders: Arc::new(Mutex::new(None)),
+            catalog: Default::default(),
             clip: None,
             s: {
                 let mut s = ExportSettings::default();
@@ -315,6 +318,7 @@ impl App {
             .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())
             .unwrap_or_default();
 
+        self.catalog = crate::catalog::Catalog::new(self.ffmpeg.clone(), ctx);
         // the encoder list takes a moment: fetch it off the UI thread
         *self.encoders.lock().unwrap() = None;
         if let Some(ff) = self.ffmpeg.clone() {

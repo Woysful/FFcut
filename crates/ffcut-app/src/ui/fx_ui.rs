@@ -2,12 +2,14 @@
 //! shown in the sidebar and in the audio presets editor.
 
 use super::widgets::{self, ComboExt, StackAct, StackEntry};
-use super::{field, grid};
+use super::{field, filter_ui, grid};
 use crate::app::App;
+use crate::catalog::Catalog;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, Pos2, RichText, Sense, Stroke};
 use ffcut_core::audiofx;
-use ffcut_core::{Compressor, DeEsser, Denoise, Effect, EffectKind, EqBand, EqKind, NormMode, Normalize, TrackEdit};
+use ffcut_core::filters::Media;
+use ffcut_core::{Compressor, DeEsser, Denoise, Effect, EffectKind, EqBand, EqKind, FilterFx, NormMode, Normalize, TrackEdit};
 
 const MAX_BANDS: usize = 8;
 
@@ -157,14 +159,15 @@ fn eq_plot(ui: &mut egui::Ui, bands: &mut Vec<EqBand>, sel: &mut Option<usize>) 
     }
 }
 
-fn fx_tip(k: &EffectKind) -> &'static str {
-    match k {
+fn fx_tip(k: &EffectKind) -> Option<&'static str> {
+    Some(match k {
         EffectKind::Eq(_) => "Drag a point: frequency and gain. Wheel: width. Double-click: new band. Right-click a point: remove.",
         EffectKind::Comp(_) => "Evens out loud and quiet parts. Raise the make-up gain to bring the level back.",
         EffectKind::DeEss(_) => "Softens harsh “s” and “sh” sounds in voice recordings. Raise Intensity until they stop stinging.",
         EffectKind::Denoise(_) => "Takes steady background noise (hiss, fan, hum) out of the sound. It follows the noise while you play.",
         EffectKind::Norm(_) => "Measures the clip as it reaches this point of the stack and sets the level for you. The track volume stays on top.",
-    }
+        EffectKind::Filter(_) => return None,
+    })
 }
 
 fn db_fmt(v: f64) -> String {
@@ -180,11 +183,12 @@ struct FxCtx {
     sel: Option<(usize, usize)>,
     /// show the fades card (not for a preset, which has no clip)
     fades: bool,
+    cat: Catalog,
 }
 
 /// The effects stack of one track (fades, effects, add menu): shared by the sidebar and the presets editor.
 fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
-    let FxCtx { rendering, render_err, meas, sel, fades } = c;
+    let FxCtx { rendering, render_err, meas, sel, fades, cat } = c;
     let (rendering, render_err) = (*rendering, render_err.clone());
     let len = (t.trim_end - t.trim_start).max(0.1);
     ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
@@ -206,9 +210,14 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
     let mut act: Option<StackAct> = None;
     let count = t.effects.len();
     for (k, e) in t.effects.iter_mut().enumerate() {
-        let entry = StackEntry { k, count, name: e.name(), tip: Some(fx_tip(&e.kind)), highlight: false };
+        let desc = match &e.kind {
+            EffectKind::Filter(f) => cat.desc(&f.name),
+            _ => None,
+        };
+        let name = e.name().to_string();
+        let entry = StackEntry { k, count, name: &name, tip: desc.as_deref().or(fx_tip(&e.kind)), highlight: false };
         let mut on = e.on;
-        widgets::stack_card(ui, entry, &mut on, &mut act, |ui| effect_body(ui, k, &mut e.kind, sel, meas));
+        widgets::stack_card(ui, entry, &mut on, &mut act, |ui| effect_body(ui, k, &mut e.kind, sel, meas, cat));
         e.on = on;
     }
     if let Some(a) = act {
@@ -245,6 +254,14 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                 t.effects.push(Effect::new(EffectKind::Norm(Normalize::new(NormMode::Peak))));
                 ui.close();
             }
+            ui.separator();
+            widgets::form_submenu(ui, "FFmpeg filter", |ui| {
+                if let Some(name) = filter_ui::picker(ui, cat, Media::Audio) {
+                    t.effects.push(Effect::new(EffectKind::Filter(FilterFx::new(name))));
+                    ui.close();
+                }
+            })
+            .on_hover_text("Any audio filter of your ffmpeg, with its settings");
         });
         if ui
             .add_enabled(t.has_fx() || !t.effects.is_empty(), egui::Button::new("Reset all"))
@@ -269,8 +286,9 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
 }
 
 /// The settings of one effect of the stack.
-fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Option<(usize, usize)>, meas: &[(Option<String>, bool)]) {
+fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Option<(usize, usize)>, meas: &[(Option<String>, bool)], cat: &Catalog) {
     match kind {
+        EffectKind::Filter(f) => filter_ui::body(ui, ("afilter", k), f, cat),
         EffectKind::Eq(bands) => {
             let mut band_sel = (*sel).filter(|s| s.0 == k).map(|s| s.1);
             eq_plot(ui, bands, &mut band_sel);
@@ -418,7 +436,7 @@ impl App {
             })
             .collect();
         let sel = self.fx.eq_sel.filter(|s| matches!(t0.effects.get(s.0).map(|e| &e.kind), Some(EffectKind::Eq(_))));
-        FxCtx { rendering: self.preview_rendering(t0), render_err: self.preview_error(t0), meas, sel, fades: true }
+        FxCtx { rendering: self.preview_rendering(t0), render_err: self.preview_error(t0), meas, sel, fades: true, cat: self.catalog.clone() }
     }
 
     /// The effects of track `i` in the sidebar.
@@ -436,10 +454,10 @@ impl App {
 }
 
 /// The effect stack of an audio preset, edited with the same cards as a track (no clip, so no measuring or fades).
-pub fn preset_effects(ui: &mut egui::Ui, fx: &mut Vec<ffcut_core::Effect>) -> bool {
+pub fn preset_effects(ui: &mut egui::Ui, fx: &mut Vec<ffcut_core::Effect>, cat: &Catalog) -> bool {
     let mut t = TrackEdit::original(0, "preset".into(), 3600.0);
     t.effects = fx.clone();
-    let mut c = FxCtx { rendering: false, render_err: None, meas: vec![(None, false); t.effects.len()], sel: None, fades: false };
+    let mut c = FxCtx { rendering: false, render_err: None, meas: vec![(None, false); t.effects.len()], sel: None, fades: false, cat: cat.clone() };
     fx_body(ui, &mut t, &mut c);
     let changed = t.effects != *fx;
     if changed {

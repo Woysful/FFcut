@@ -4,6 +4,7 @@
 mod audio_view;
 mod codecs;
 mod command;
+mod filter_ui;
 mod fx_ui;
 mod icons;
 mod meter;

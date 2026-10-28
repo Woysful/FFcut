@@ -130,6 +130,14 @@ pub fn menu_button<R>(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, add
     egui::containers::menu::MenuButton::new(label.into()).config(config).ui(ui, add).0
 }
 
+/// A submenu that holds a form (a search field...): clicks inside it do not close the menu, only an entry
+/// that calls `ui.close()` or a click outside does.
+pub fn form_submenu<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::Response {
+    use egui::containers::menu::{MenuConfig, SubMenuButton};
+    let config = MenuConfig::new().style(theme::menu_style).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    SubMenuButton::new(label).config(config).ui(ui, add).0
+}
+
 /// A two-column grid of "label | control" rows with the same label column as [`field`].
 pub fn grid(id: impl std::hash::Hash + std::fmt::Debug) -> egui::Grid {
     egui::Grid::new(id).num_columns(2).min_col_width(LABEL_W).spacing([8.0, 6.0])

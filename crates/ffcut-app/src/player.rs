@@ -16,6 +16,19 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn ffmpeg_lines_lose_their_internal_names() {
+        assert_eq!(
+            super::clean_ffmpeg_line("Parsed_colorbalance_0: Unable to parse option value \"zz\"\n"),
+            "colorbalance: Unable to parse option value \"zz\""
+        );
+        assert_eq!(super::clean_ffmpeg_line("AVFilterGraph: No such filter: 'x'"), "No such filter: 'x'");
+        assert_eq!(super::clean_ffmpeg_line("Eval: oops"), "Eval: oops");
+    }
+}
+
 type GetProc = Arc<dyn Fn(&CStr) -> *const c_void + Send + Sync>;
 
 fn gpa(ctx: &GetProc, name: &str) -> *mut c_void {
@@ -127,6 +140,30 @@ pub struct Player {
     kick_at: Cell<Option<Instant>>,
     /// Further re-seeks after the first one: on a slow first paint one kick is not always enough.
     kicks_left: Cell<u8>,
+    /// A second handle that only receives mpv's error messages: a video filter that fails is only reported there.
+    log: Option<Mpv>,
+}
+
+/// What mpv said about the video filters since the last look.
+#[derive(Default)]
+pub struct FilterLog {
+    /// ffmpeg's own messages, without its `Parsed_name_0:` prefixes.
+    pub errors: Vec<String>,
+    /// mpv gave up on a filter graph.
+    pub failed: bool,
+}
+
+/// `Parsed_colorbalance_0: Unable to parse...` -> `colorbalance: Unable to parse...`; `AVFilterGraph: ` goes.
+fn clean_ffmpeg_line(t: &str) -> String {
+    let t = t.trim();
+    if let Some(r) = t.strip_prefix("AVFilterGraph: ") {
+        return r.to_string();
+    }
+    if let Some((who, rest)) = t.strip_prefix("Parsed_").and_then(|r| r.split_once(": ")) {
+        let name = who.rsplit_once('_').map_or(who, |(n, _)| n);
+        return format!("{name}: {rest}");
+    }
+    t.to_string()
 }
 
 impl Player {
@@ -187,6 +224,13 @@ impl Player {
         let egui_ctx = cc.egui_ctx.clone();
         render.set_update_callback(move || egui_ctx.request_repaint());
 
+        let log = mpv.create_client(Some("ffcut_log")).ok().filter(|l| {
+            let _ = l.disable_all_events();
+            let _ = l.enable_event(libmpv2::events::mpv_event_id::LogMessage);
+            // SAFETY: a valid client handle and a NUL-terminated level name
+            unsafe { libmpv2_sys::mpv_request_log_messages(l.ctx.as_ptr(), c"error".as_ptr()) >= 0 }
+        });
+
         Ok(Player {
             bridge: spawn_bridge(mpv),
             target: Cell::new(None),
@@ -200,7 +244,24 @@ impl Player {
             flip: Cell::new((false, false)),
             kick_at: Cell::new(None),
             kicks_left: Cell::new(0),
+            log,
         })
+    }
+
+    /// Drains mpv's error messages (call every frame: they queue up otherwise).
+    pub fn filter_log(&self) -> FilterLog {
+        let mut out = FilterLog::default();
+        let Some(log) = &self.log else { return out };
+        while let Some(ev) = log.wait_event(0.0) {
+            if let Ok(libmpv2::events::Event::LogMessage { prefix, text, .. }) = ev {
+                match prefix {
+                    "ffmpeg" => out.errors.push(clean_ffmpeg_line(text)),
+                    "lavfi" | "user_filter_wrapper" => out.failed = true,
+                    _ => {}
+                }
+            }
+        }
+        out
     }
 
     /// True for a moment after something changed: the UI keeps repainting so the new frame shows up.

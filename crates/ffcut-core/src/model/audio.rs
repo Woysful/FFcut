@@ -1,3 +1,4 @@
+use super::filter::FilterFx;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Time differences (seconds) below this are no edit at all: a trim of 0.4 ms is "untouched".
@@ -66,19 +67,22 @@ pub enum EffectKind {
     Norm(Normalize),
     DeEss(DeEsser),
     Denoise(Denoise),
+    /// Any ffmpeg audio filter, by name.
+    Filter(FilterFx),
 }
 
 impl Effect {
     pub fn new(kind: EffectKind) -> Self {
         Effect { on: true, kind }
     }
-    pub fn name(&self) -> &'static str {
-        match self.kind {
+    pub fn name(&self) -> &str {
+        match &self.kind {
             EffectKind::Eq(_) => "Equalizer",
             EffectKind::Comp(_) => "Compressor",
             EffectKind::Norm(_) => "Normalize",
             EffectKind::DeEss(_) => "De-esser",
             EffectKind::Denoise(_) => "Noise reduction",
+            EffectKind::Filter(f) => &f.name,
         }
     }
 }

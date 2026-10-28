@@ -96,6 +96,7 @@ pub(crate) fn effect_filters(t: &TrackEdit, idx: usize) -> Vec<String> {
             vec![format!("deesser=i={:.2}:m={:.2}:f={:.2}", d.intensity.clamp(0.0, 1.0), d.max.clamp(0.0, 1.0), d.freq.clamp(0.0, 1.0))]
         }
         EffectKind::Denoise(d) => vec![format!("afftdn=nr={:.1}:nf={:.1}:tn=1", d.reduction_db.clamp(0.01, 97.0), d.floor_db.clamp(-80.0, -20.0))],
+        EffectKind::Filter(f) => crate::filters::filter_text(f).into_iter().collect(),
     }
 }
 

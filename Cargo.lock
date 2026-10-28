@@ -671,7 +671,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "ffcut-app"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "dirs",
  "eframe",
@@ -679,6 +679,7 @@ dependencies = [
  "ffcut-core",
  "image",
  "libmpv2",
+ "libmpv2-sys",
  "open",
  "rfd",
  "serde",
@@ -689,7 +690,7 @@ dependencies = [
 
 [[package]]
 name = "ffcut-core"
-version = "2.7.0"
+version = "2.7.1"
 dependencies = [
  "serde",
  "serde_json",
