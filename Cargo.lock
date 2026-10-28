@@ -709,7 +709,7 @@ checksum = "b97b65636e5b9ef369943878ac74335ba1c55c1cb6adbf1e2c293c624248d693"
 
 [[package]]
 name = "ffcut-app"
-version = "2.7.1"
+version = "2.8.0"
 dependencies = [
  "dirs",
  "eframe",
@@ -730,7 +730,7 @@ dependencies = [
 
 [[package]]
 name = "ffcut-core"
-version = "2.7.1"
+version = "2.8.0"
 dependencies = [
  "libloading",
  "serde",
