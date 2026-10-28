@@ -8,6 +8,7 @@ use crate::catalog::Catalog;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, Pos2, RichText, Sense, Stroke};
 use ffcut_core::audiofx;
+use ffcut_core::builtin;
 use ffcut_core::filters::Media;
 use ffcut_core::plugins::PluginKind;
 use ffcut_core::{Compressor, DeEsser, Denoise, Effect, EffectKind, EqBand, EqKind, FilterFx, NormMode, Normalize, TrackEdit};
@@ -172,6 +173,61 @@ fn fx_tip(k: &EffectKind) -> Option<&'static str> {
     })
 }
 
+/// Headings of the audio "+ Add effect" menu, in order (the ready-made effects of `builtin` use the same).
+const GROUPS: [&str; 5] = ["Level & dynamics", "Tone", "Repair", "Space", "Character"];
+
+/// The audio effects of the "+ Add effect" menu: FFcut's own, then the ready-made ones, by heading.
+fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
+    use filter_ui::Entry;
+    let mut v: Vec<Entry<EffectKind>> = vec![
+        Entry {
+            group: GROUPS[0],
+            title: "Normalize — loudness (LUFS)",
+            desc: "Sets the loudness to a target, like streaming sites do",
+            keywords: "loudnorm normalise ebu r128 lufs loudness level",
+            make: Box::new(|| EffectKind::Norm(Normalize::new(NormMode::Loudness))),
+        },
+        Entry {
+            group: GROUPS[0],
+            title: "Normalize — peak level",
+            desc: "Raises the loudest peak to a level",
+            keywords: "normalise peak volume level maximum",
+            make: Box::new(|| EffectKind::Norm(Normalize::new(NormMode::Peak))),
+        },
+        Entry {
+            group: GROUPS[0],
+            title: "Compressor",
+            desc: "Evens out loud and quiet parts",
+            keywords: "acompressor dynamics squash compression",
+            make: Box::new(|| EffectKind::Comp(Compressor::default())),
+        },
+        Entry {
+            group: GROUPS[1],
+            title: "Equalizer",
+            desc: "Bands you drag on a curve",
+            keywords: "equalizer eq parametric lowpass highpass low-pass high-pass lowshelf highshelf shelf band",
+            make: Box::new(|| EffectKind::Eq(vec![EqBand { kind: EqKind::Peak, freq: 1000.0, gain: 0.0, q: 1.0, on: true }])),
+        },
+        Entry {
+            group: GROUPS[2],
+            title: "Noise reduction",
+            desc: "Takes out steady hiss, fan or hum",
+            keywords: "afftdn denoise noise hiss background",
+            make: Box::new(|| EffectKind::Denoise(Denoise::default())),
+        },
+        Entry {
+            group: GROUPS[2],
+            title: "De-esser",
+            desc: "Softens harsh “s” sounds of a voice",
+            keywords: "deesser sibilance voice s sh",
+            make: Box::new(|| EffectKind::DeEss(DeEsser::default())),
+        },
+    ];
+    for d in builtin::defs(Media::Audio) {
+        v.push(Entry { group: d.group, title: d.name, desc: d.desc, keywords: d.keywords, make: Box::new(move || EffectKind::Builtin(d.new_fx())) });
+    }
+    v
+}
 fn db_fmt(v: f64) -> String {
     format!("{v:.1}")
 }
@@ -232,46 +288,24 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
     }
 
     ui.horizontal(|ui| {
-        widgets::menu_button(ui, "+ Add effect", |ui| {
-            if ui.button("Equalizer").clicked() {
-                t.effects.push(Effect::new(EffectKind::Eq(vec![EqBand { kind: EqKind::Peak, freq: 1000.0, gain: 0.0, q: 1.0, on: true }])));
+        widgets::form_menu(ui, "+ Add effect", |ui| {
+            let plugins = |ui: &mut egui::Ui| {
+                widgets::form_submenu(ui, "Plugin", |ui| {
+                    if let Some(p) = plugin_ui::picker(ui, cat, &[PluginKind::Ladspa, PluginKind::Lv2]) {
+                        t.effects.push(Effect::new(EffectKind::Plugin(p)));
+                        ui.close();
+                    }
+                })
+                .on_hover_text("A LADSPA or LV2 plugin installed on this computer (ffmpeg runs it)");
+            };
+            let picked = filter_ui::add_menu(ui, &entries(), &GROUPS, cat, Media::Audio, plugins);
+            if let Some(p) = picked {
+                t.effects.push(Effect::new(match p {
+                    filter_ui::Pick::Effect(k) => k,
+                    filter_ui::Pick::Filter(name) => EffectKind::Filter(FilterFx::new(name)),
+                }));
                 ui.close();
             }
-            if ui.button("Compressor").clicked() {
-                t.effects.push(Effect::new(EffectKind::Comp(Compressor::default())));
-                ui.close();
-            }
-            if ui.button("De-esser").clicked() {
-                t.effects.push(Effect::new(EffectKind::DeEss(DeEsser::default())));
-                ui.close();
-            }
-            if ui.button("Noise reduction").clicked() {
-                t.effects.push(Effect::new(EffectKind::Denoise(Denoise::default())));
-                ui.close();
-            }
-            if ui.button("Normalize — loudness (LUFS)").clicked() {
-                t.effects.push(Effect::new(EffectKind::Norm(Normalize::new(NormMode::Loudness))));
-                ui.close();
-            }
-            if ui.button("Normalize — peak level").clicked() {
-                t.effects.push(Effect::new(EffectKind::Norm(Normalize::new(NormMode::Peak))));
-                ui.close();
-            }
-            ui.separator();
-            widgets::form_submenu(ui, "FFmpeg filter", |ui| {
-                if let Some(name) = filter_ui::picker(ui, cat, Media::Audio) {
-                    t.effects.push(Effect::new(EffectKind::Filter(FilterFx::new(name))));
-                    ui.close();
-                }
-            })
-            .on_hover_text("Any audio filter of your ffmpeg, with its settings");
-            widgets::form_submenu(ui, "Plugin", |ui| {
-                if let Some(p) = plugin_ui::picker(ui, cat, &[PluginKind::Ladspa, PluginKind::Lv2]) {
-                    t.effects.push(Effect::new(EffectKind::Plugin(p)));
-                    ui.close();
-                }
-            })
-            .on_hover_text("A LADSPA or LV2 plugin installed on this computer (ffmpeg runs it)");
         });
         if ui
             .add_enabled(t.has_fx() || !t.effects.is_empty(), egui::Button::new("Reset all"))

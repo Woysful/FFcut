@@ -66,6 +66,134 @@ fn offered(name: &str) -> bool {
     !SKIP.contains(&name) && !HW_SUFFIX.iter().any(|s| name.ends_with(s))
 }
 
+/// What FFcut's own controls already do: crop, resize, rotate, trim, fades, volume, frame rate, placement.
+const MAIN_UI: &[&str] = &["crop", "scale", "rotate", "transpose", "hflip", "vflip", "pad", "fps", "fade", "afade", "volume", "adelay", "trim", "atrim"];
+
+/// The filters behind the ready-made effects that are not in `builtin` (equalizer, compressor, colour...).
+const OWN_EFFECTS: &[&str] = &[
+    "equalizer",
+    "lowpass",
+    "highpass",
+    "lowshelf",
+    "highshelf",
+    "acompressor",
+    "deesser",
+    "afftdn",
+    "loudnorm",
+    "eq",
+    "curves",
+    "vignette",
+    "unsharp",
+    "cas",
+    "hqdn3d",
+    "deblock",
+    "deband",
+    "deflicker",
+    "drawtext",
+    "drawbox",
+];
+
+/// Filters that change the length, speed or frame count: the trim, the timeline and the preview count on
+/// every second and frame staying where it is.
+const RETIME: &[&str] = &[
+    "atempo",
+    "setpts",
+    "asetpts",
+    "asetrate",
+    "reverse",
+    "areverse",
+    "loop",
+    "aloop",
+    "apad",
+    "tpad",
+    "framerate",
+    "framestep",
+    "minterpolate",
+    "decimate",
+    "mpdecimate",
+    "select",
+    "aselect",
+    "silenceremove",
+    "thumbnail",
+    "shuffleframes",
+    "telecine",
+    "detelecine",
+    "pullup",
+    "fieldmatch",
+    "dejudder",
+    "separatefields",
+    "weave",
+    "doubleweave",
+    "tinterlace",
+    "interlace",
+    "repeatfields",
+    "palettegen",
+    "asetnsamples",
+    "aresample",
+    "settb",
+    "asettb",
+];
+
+/// Filters that only measure or draw a measurement (scopes, statistics, detectors), or are debugging aids:
+/// nothing to hear or see in an export.
+const ANALYSIS: &[&str] = &[
+    "astats",
+    "aspectralstats",
+    "drmeter",
+    "replaygain",
+    "ebur128",
+    "asr",
+    "signalstats",
+    "histogram",
+    "thistogram",
+    "waveform",
+    "vectorscope",
+    "oscilloscope",
+    "datascope",
+    "pixscope",
+    "ciescope",
+    "showpalette",
+    "drawgraph",
+    "adrawgraph",
+    "graphmonitor",
+    "agraphmonitor",
+    "bbox",
+    "blackframe",
+    "scdet",
+    "idet",
+    "entropy",
+    "vmafmotion",
+    "siti",
+    "mestimate",
+    "find_rect",
+    "readeia608",
+    "readvitc",
+    "vfrdet",
+    "bitplanenoise",
+    "vidstabtransform",
+    "dnn_classify",
+    "pixdesctest",
+    "codecview",
+    "latency",
+    "alatency",
+    "cue",
+    "acue",
+    "sidedata",
+    "asidedata",
+];
+
+/// Is filter `name` worth listing as a plain "FFmpeg filter"? Not when FFcut has controls for what it does
+/// (its main tools or a ready-made effect), when it changes the timing, or when it only measures.
+/// An effect made with a hidden filter still works: it is only not offered.
+pub fn in_picker(name: &str) -> bool {
+    !MAIN_UI.contains(&name)
+        && !OWN_EFFECTS.contains(&name)
+        && !crate::builtin::covers(name)
+        && !RETIME.contains(&name)
+        && !ANALYSIS.contains(&name)
+        && !name.ends_with("detect")
+}
+
 /// The one-in, one-out audio and video filters of `ffmpeg -filters`, in its order (alphabetical).
 pub fn parse_filter_list(text: &str) -> Vec<FilterInfo> {
     let mut out = Vec::new();
@@ -373,6 +501,16 @@ This filter has support for timeline through the 'enable' option.
         assert_eq!(h.options[6].min, Some(-(f32::MAX as f64)));
         let f = &h.options[7];
         assert_eq!((f.kind, f.choices.len(), f.choices[1].help.as_str()), (OptKind::Flags, 2, "second"));
+    }
+
+    #[test]
+    fn the_picker_leaves_out_what_ffcut_does_itself() {
+        for hidden in ["crop", "atempo", "equalizer", "aecho", "lut3d", "silencedetect", "cropdetect", "astats", "waveform", "setpts"] {
+            assert!(!in_picker(hidden), "{hidden}");
+        }
+        for shown in ["colorbalance", "acontrast", "pan", "stereotools", "colorchannelmixer", "bandreject", "nlmeans"] {
+            assert!(in_picker(shown), "{shown}");
+        }
     }
 
     #[test]

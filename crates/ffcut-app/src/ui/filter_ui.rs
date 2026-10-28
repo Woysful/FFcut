@@ -58,14 +58,7 @@ pub fn search_list(ui: &mut egui::Ui, id: egui::Id, rows: &[Row], noun: &str) ->
         ui.set_min_height(LIST_H);
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         for &i in &hits {
-            let row = &rows[i];
-            let mut job = LayoutJob::default();
-            job.append(row.title, 0.0, TextFormat { font_id: FontId::proportional(size::BODY), color: theme::TEXT_STRONG, ..Default::default() });
-            job.append(row.desc, 10.0, TextFormat { font_id: FontId::proportional(size::SMALL), color: theme::TEXT_DIM, ..Default::default() });
-            job.wrap = egui::text::TextWrapping::truncate_at_width(LIST_W - 16.0);
-            let r = ui.button(job);
-            let r = if row.desc.is_empty() { r } else { r.on_hover_text(row.desc) };
-            if r.clicked() {
+            if row(ui, rows[i].title, rows[i].desc).clicked() {
                 picked = Some(i);
             }
         }
@@ -80,13 +73,126 @@ pub fn search_list(ui: &mut egui::Ui, id: egui::Id, rows: &[Row], noun: &str) ->
     picked
 }
 
-/// The searchable list of `media` filters. Returns the picked name.
-pub fn picker(ui: &mut egui::Ui, cat: &Catalog, media: Media) -> Option<String> {
-    let list = loaded(ui, cat.filters_of(media), "ffmpeg's filters")?;
-    let rows: Vec<Row> = list.iter().map(|f: &FilterInfo| Row { title: &f.name, desc: &f.desc, extra: "" }).collect();
-    search_list(ui, egui::Id::new(("filter-search", media)), &rows, "filters").map(|i| list[i].name.clone())
+/// One entry of a list in "+ Add effect": the title in full colour, then a dim description, cut to the width.
+fn row(ui: &mut egui::Ui, title: &str, desc: &str) -> egui::Response {
+    let mut job = LayoutJob::default();
+    job.append(title, 0.0, TextFormat { font_id: FontId::proportional(size::BODY), color: theme::TEXT_STRONG, ..Default::default() });
+    job.append(desc, 10.0, TextFormat { font_id: FontId::proportional(size::SMALL), color: theme::TEXT_DIM, ..Default::default() });
+    job.wrap = egui::text::TextWrapping::truncate_at_width(LIST_W - 16.0);
+    let r = ui.button(job);
+    if desc.is_empty() {
+        r
+    } else {
+        r.on_hover_text(desc)
+    }
 }
 
+/// Every word of the query is in one of the texts (`words` are lower case).
+fn matches(texts: &[&str], words: &[String]) -> bool {
+    words.iter().all(|w| texts.iter().any(|t| t.to_lowercase().contains(w.as_str())))
+}
+
+/// A ready-made effect of the "+ Add effect" menu.
+pub struct Entry<'a, T> {
+    pub group: &'static str,
+    pub title: &'static str,
+    pub desc: &'static str,
+    /// Also searched, not shown (the ffmpeg filters behind it, other names).
+    pub keywords: &'static str,
+    pub make: Box<dyn Fn() -> T + 'a>,
+}
+
+/// What was picked in the "+ Add effect" menu.
+pub enum Pick<T> {
+    Effect(T),
+    /// An ffmpeg filter, by name.
+    Filter(String),
+}
+
+/// Height of the list of the "+ Add effect" menu.
+const MENU_H: f32 = 420.0;
+
+/// The inside of "+ Add effect": a search field, the ready-made effects under their `groups` headings, then
+/// the ffmpeg filters of `media` that FFcut has no controls for; `more` adds rows below the list (the
+/// plugins). The search looks at both lists. Enter takes the first entry.
+pub fn add_menu<T>(ui: &mut egui::Ui, entries: &[Entry<T>], groups: &[&str], cat: &Catalog, media: Media, more: impl FnOnce(&mut egui::Ui)) -> Option<Pick<T>> {
+    let id = egui::Id::new(("add-effect", media));
+    let frame = ui.ctx().cumulative_frame_nr();
+    // the menu was closed in between: start with an empty search, and type into it right away
+    let last: Option<u64> = ui.data(|d| d.get_temp(id.with("shown")));
+    let opened = !last.is_some_and(|l| l + 1 >= frame);
+    ui.data_mut(|d| d.insert_temp(id.with("shown"), frame));
+    let mut q: String = if opened { String::new() } else { ui.data(|d| d.get_temp(id)).unwrap_or_default() };
+    let search = ui.add(egui::TextEdit::singleline(&mut q).hint_text("Search effects and ffmpeg filters…").desired_width(LIST_W));
+    if opened {
+        search.request_focus();
+    }
+    let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+    let words: Vec<String> = q.split_whitespace().map(str::to_lowercase).collect();
+    let first = words.first().map_or("", String::as_str);
+
+    let hits: Vec<usize> =
+        (0..entries.len()).filter(|&i| matches(&[entries[i].title, entries[i].desc, entries[i].keywords, entries[i].group], &words)).collect();
+    let filters = cat.filters_of(media);
+    let mut found: Vec<&FilterInfo> = Vec::new();
+    if let Load::Ready(list) = &filters {
+        found = list.iter().filter(|f| ffcut_core::filters::in_picker(&f.name) && matches(&[&f.name, &f.desc], &words)).collect();
+        // names that start with the query first, the rest in ffmpeg's (alphabetical) order
+        found.sort_by_key(|f| !f.name.starts_with(first));
+    }
+    let mut picked: Option<Pick<T>> = None;
+    if enter {
+        picked = match (hits.first(), found.first()) {
+            (Some(&i), _) => Some(Pick::Effect((entries[i].make)())),
+            (None, Some(f)) => Some(Pick::Filter(f.name.clone())),
+            _ => None,
+        };
+    }
+    // a fixed height: the menu is then moved up to fit the window instead of shrinking the list
+    egui::ScrollArea::vertical().id_salt(id.with("list")).min_scrolled_height(MENU_H).max_height(MENU_H).show(ui, |ui| {
+        ui.set_width(LIST_W);
+        ui.set_min_height(MENU_H);
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+        for g in groups {
+            let in_group: Vec<usize> = hits.iter().copied().filter(|&i| entries[i].group == *g).collect();
+            if in_group.is_empty() {
+                continue;
+            }
+            widgets::menu_indent(ui, |ui| widgets::caption(ui, g));
+            for i in in_group {
+                if row(ui, entries[i].title, entries[i].desc).clicked() {
+                    picked = Some(Pick::Effect((entries[i].make)()));
+                }
+            }
+            ui.add_space(4.0);
+        }
+        match &filters {
+            Load::Ready(_) if !found.is_empty() => {
+                widgets::menu_indent(ui, |ui| widgets::caption(ui, &format!("FFmpeg filters · {}", found.len())))
+                    .on_hover_text("Any other filter of your ffmpeg, with a form made from the options it reports");
+                for f in &found {
+                    if row(ui, &f.name, &f.desc).clicked() {
+                        picked = Some(Pick::Filter(f.name.clone()));
+                    }
+                }
+            }
+            Load::Ready(_) => {}
+            l => {
+                loaded(ui, l.clone(), "ffmpeg's filters");
+            }
+        }
+        if hits.is_empty() && found.is_empty() && matches!(filters, Load::Ready(_)) {
+            widgets::hint(ui, "Nothing matches.");
+        }
+    });
+    ui.separator();
+    more(ui);
+    if picked.is_some() {
+        q.clear();
+    }
+    ui.data_mut(|d| d.insert_temp(id, q));
+    picked
+}
 // ------------------------------------------------------------------ the form
 
 pub(super) fn fnum(v: f64, int: bool) -> String {

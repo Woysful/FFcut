@@ -200,6 +200,12 @@ pub fn menu_button<R>(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, add
     menu_with(ui, label.into(), egui::PopupCloseBehavior::CloseOnClick, add)
 }
 
+/// A [`menu_button`] whose menu holds a form (a search field...): clicks inside it do not close it, only an
+/// entry that calls `ui.close()` or a click outside does.
+pub fn form_menu<R>(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::Response {
+    menu_with(ui, label.into(), egui::PopupCloseBehavior::CloseOnClickOutside, add)
+}
+
 fn menu_with<R>(ui: &mut egui::Ui, label: egui::WidgetText, close: egui::PopupCloseBehavior, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::Response {
     use egui::containers::menu::MenuConfig;
     let resp = ui.add(egui::Button::new(label));

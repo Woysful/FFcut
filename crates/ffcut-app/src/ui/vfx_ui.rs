@@ -463,73 +463,78 @@ fn caption_ui(ui: &mut egui::Ui, id: &str, c: &mut Caption, fonts: Option<&[Font
 
 // ------------------------------------------------------------------ window
 
-fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str, cat: &Catalog) -> bool {
-    let mut added = false;
-    let mut push = |ui: &mut egui::Ui, kind: VKind| {
-        fx.effects.push(VEffect::new(kind));
-        ui.close();
-        added = true;
+/// Headings of the video "+ Add effect" menu, in order (the ready-made effects of `builtin` use the same).
+const GROUPS: [&str; 5] = ["Colour", "Style", "Restoration", "Hide a part of the picture", "Text"];
+
+/// The video effects of the "+ Add effect" menu: FFcut's own, then the ready-made ones, by heading.
+fn entries(default_font: &str) -> Vec<filter_ui::Entry<'_, VKind>> {
+    use filter_ui::Entry;
+    let e = |group: &'static str, title: &'static str, desc: &'static str, keywords: &'static str, make: Box<dyn Fn() -> VKind>| Entry {
+        group,
+        title,
+        desc,
+        keywords,
+        make,
     };
-    widgets::caption(ui, "COLOUR");
-    if ui.button("Brightness / contrast / saturation / gamma").clicked() {
-        push(ui, VKind::Color(ColorAdj::default()));
+    let mut v = vec![
+        e(
+            GROUPS[0],
+            "Brightness / contrast / saturation / gamma",
+            "The basic picture controls",
+            "eq brightness contrast saturation gamma colour color",
+            Box::new(|| VKind::Color(ColorAdj::default())),
+        ),
+        e(GROUPS[0], "Curves", "Tone curves per channel", "curves tone rgb contrast", Box::new(|| VKind::Curves(Curves::default()))),
+        e(GROUPS[1], "Vignette", "Darkens the corners", "vignette dark corners edges", Box::new(|| VKind::Vignette(0.5))),
+        e(GROUPS[1], "Sharpen", "Crisper details", "unsharp cas sharpness detail", Box::new(|| VKind::Sharpen(1.0))),
+        e(GROUPS[2], "Denoise", "Smooths grain and noise", "hqdn3d noise grain denoise", Box::new(|| VKind::Denoise(0.5))),
+        e(GROUPS[2], "Deblock", "Softens the blocks of compressed video", "deblock blocks artifacts compression", Box::new(|| VKind::Deblock(0.5))),
+        e(GROUPS[2], "Deband", "Hides the steps in skies and gradients", "deband banding gradient", Box::new(|| VKind::Deband(0.5))),
+        e(GROUPS[2], "Deflicker", "Evens out pulsing brightness", "deflicker flicker brightness", Box::new(|| VKind::Deflicker(5))),
+        e(GROUPS[3], "Blur area", "A blurred rectangle", "blur censor face plate privacy area", Box::new(|| VKind::Area(Area::new(AreaShape::Blur)))),
+        e(GROUPS[3], "Pixelate area", "A mosaic rectangle", "pixelate pixelize mosaic censor area", Box::new(|| VKind::Area(Area::new(AreaShape::Pixelate)))),
+        e(
+            GROUPS[3],
+            "Cover area with a colour",
+            "A solid rectangle",
+            "drawbox cover box rectangle fill area",
+            Box::new(|| VKind::Area(Area::new(AreaShape::Fill))),
+        ),
+    ];
+    v.push(Entry {
+        group: GROUPS[4],
+        title: "Text",
+        desc: "A block of text on the picture",
+        keywords: "drawtext title caption subtitle words",
+        make: Box::new(move || VKind::Text(TextBlock { font: default_font.to_string(), ..Default::default() })),
+    });
+    for d in ffcut_core::builtin::defs(Media::Video) {
+        v.push(Entry { group: d.group, title: d.name, desc: d.desc, keywords: d.keywords, make: Box::new(move || VKind::Builtin(d.new_fx())) });
     }
-    if ui.button("Curves").clicked() {
-        push(ui, VKind::Curves(Curves::default()));
-    }
-    ui.separator();
-    widgets::caption(ui, "STYLE");
-    if ui.button("Vignette").clicked() {
-        push(ui, VKind::Vignette(0.5));
-    }
-    if ui.button("Sharpen").clicked() {
-        push(ui, VKind::Sharpen(1.0));
-    }
-    ui.separator();
-    widgets::caption(ui, "RESTORATION");
-    if ui.button("Denoise").clicked() {
-        push(ui, VKind::Denoise(0.5));
-    }
-    if ui.button("Deblock").clicked() {
-        push(ui, VKind::Deblock(0.5));
-    }
-    if ui.button("Deband").clicked() {
-        push(ui, VKind::Deband(0.5));
-    }
-    if ui.button("Deflicker").clicked() {
-        push(ui, VKind::Deflicker(5));
-    }
-    ui.separator();
-    widgets::caption(ui, "HIDE A PART OF THE PICTURE");
-    if ui.button("Blur area").clicked() {
-        push(ui, VKind::Area(Area::new(AreaShape::Blur)));
-    }
-    if ui.button("Pixelate area").clicked() {
-        push(ui, VKind::Area(Area::new(AreaShape::Pixelate)));
-    }
-    if ui.button("Cover area with a colour").clicked() {
-        push(ui, VKind::Area(Area::new(AreaShape::Fill)));
-    }
-    ui.separator();
-    if ui.button("Text").clicked() {
-        push(ui, VKind::Text(TextBlock { font: default_font.to_string(), ..Default::default() }));
-    }
-    ui.separator();
-    widgets::form_submenu(ui, "FFmpeg filter", |ui| {
-        if let Some(name) = filter_ui::picker(ui, cat, Media::Video) {
-            push(ui, VKind::Filter(FilterFx::new(name)));
-        }
-    })
-    .on_hover_text("Any video filter of your ffmpeg, with its settings");
-    widgets::form_submenu(ui, "Plugin", |ui| {
-        if let Some(p) = plugin_ui::picker(ui, cat, &[PluginKind::Frei0r]) {
-            push(ui, VKind::Plugin(p));
-        }
-    })
-    .on_hover_text("A frei0r plugin installed on this computer (ffmpeg runs it)");
-    added
+    v
 }
 
+fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str, cat: &Catalog) -> bool {
+    let before = fx.effects.len();
+    let plugins = |ui: &mut egui::Ui| {
+        widgets::form_submenu(ui, "Plugin", |ui| {
+            if let Some(p) = plugin_ui::picker(ui, cat, &[PluginKind::Frei0r]) {
+                fx.effects.push(VEffect::new(VKind::Plugin(p)));
+                ui.close();
+            }
+        })
+        .on_hover_text("A frei0r plugin installed on this computer (ffmpeg runs it)");
+    };
+    let picked = filter_ui::add_menu(ui, &entries(default_font), &GROUPS, cat, Media::Video, plugins);
+    if let Some(p) = picked {
+        fx.effects.push(VEffect::new(match p {
+            filter_ui::Pick::Effect(k) => k,
+            filter_ui::Pick::Filter(name) => VKind::Filter(FilterFx::new(name)),
+        }));
+        ui.close();
+    }
+    fx.effects.len() > before
+}
 impl App {
     /// Body of the "Video effects & text" sidebar section. While it is open the video shows the markers.
     pub fn vfx_body(&mut self, ui: &mut egui::Ui) {
@@ -596,7 +601,7 @@ impl App {
             widgets::hint(ui, "No effects yet.");
         }
         ui.horizontal(|ui| {
-            widgets::menu_button(ui, "+ Add effect", |ui| {
+            widgets::form_menu(ui, "+ Add effect", |ui| {
                 if add_menu(ui, &mut fx, &default_font, &cat) {
                     sel = Some(fx.effects.len() - 1);
                 }
