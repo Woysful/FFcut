@@ -1,6 +1,6 @@
 use super::icons::{icon_button, Icon};
 use super::meter::METER_W;
-use super::widgets::ComboExt;
+use super::widgets;
 use crate::app::{fmt_time, App, TlDrag};
 use crate::hotkeys::Action;
 use crate::theme;
@@ -158,7 +158,7 @@ impl App {
             if !self.multitrack && !audio && tracks.len() > 1 {
                 ui.add_space(12.0);
                 let cur = format!("Audio #{}", self.preview_audio + 1);
-                egui::ComboBox::from_id_salt("preview_audio").selected_text(cur).width(96.0).show_list(ui, |ui| {
+                widgets::Combo::from_id_salt("preview_audio").selected_text(cur).width(96.0).show_list(ui, |ui| {
                     for a in &tracks {
                         // applied by `sync_preview_audio`
                         ui.selectable_value(&mut self.preview_audio, a.index, super::audio_label(a));

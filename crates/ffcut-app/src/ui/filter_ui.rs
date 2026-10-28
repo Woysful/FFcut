@@ -1,7 +1,7 @@
 //! An "FFmpeg filter" effect: the searchable list it is picked from and its form, made from the options
 //! ffmpeg reports for the filter. Shared by the audio and the video stacks.
 
-use super::widgets::{self, ComboExt};
+use super::widgets;
 use crate::catalog::{Catalog, Load};
 use crate::theme::{self, size};
 use eframe::egui::{self, text::LayoutJob, FontId, RichText, TextFormat};
@@ -166,7 +166,7 @@ fn opt_control(ui: &mut egui::Ui, id: egui::Id, o: &OptInfo, shown: &str) -> (eg
     let int = o.kind == OptKind::Int;
     let resp = match o.kind {
         _ if !o.choices.is_empty() && o.kind != OptKind::Flags => {
-            egui::ComboBox::from_id_salt(id)
+            widgets::Combo::from_id_salt(id)
                 .selected_text(shown)
                 .width(w)
                 .height(320.0)

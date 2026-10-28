@@ -57,31 +57,101 @@ pub fn value_sized(ui: &mut egui::Ui, size: impl Into<egui::Vec2>, w: impl egui:
     .inner
 }
 
-/// Dropdown lists that close only when an entry is picked or the click lands outside: egui closes them on
-/// any click, so a click on the list's background or a heading used to drop the list.
-pub trait ComboExt {
-    fn show_list<R>(self, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<Option<R>>;
+/// Space between a dropdown button (or a menu's title) and its list.
+pub const MENU_GAP: f32 = 4.0;
+
+/// A dropdown list, drawn like egui's `ComboBox`, with [`MENU_GAP`] above its list. The list closes only
+/// when an entry is picked or the click lands outside: egui closes it on any click, so a click on the
+/// list's background or a heading used to drop the list.
+pub struct Combo {
+    id: egui::Id,
+    selected: egui::WidgetText,
+    width: Option<f32>,
+    height: Option<f32>,
 }
 
-impl ComboExt for egui::ComboBox {
-    fn show_list<R>(self, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<Option<R>> {
-        self.close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show_ui(ui, |ui| {
-            // plain text (headings) must not take clicks, so that a clicked widget is always an entry
-            ui.style_mut().interaction.selectable_labels = false;
-            let r = add(ui);
-            // an entry is click-only and in the list's own layer (the dropdown button is not, even where the
-            // list covers it); the popup's own background (its area senses clicks as "<popup id>/move"), the
-            // scroll bar (click + drag) and text fields keep the list open
-            let picked = ui.ctx().interaction_snapshot(|s| s.clicked).and_then(|id| ui.ctx().read_response(id));
-            if picked.is_some_and(|p| p.layer_id == ui.layer_id() && p.sense.senses_click() && !p.sense.senses_drag() && p.id != ui.layer_id().id.with("move"))
-            {
-                ui.close();
-            }
-            r
-        })
+impl Combo {
+    pub fn from_id_salt(salt: impl std::hash::Hash + std::fmt::Debug) -> Self {
+        Combo { id: egui::Id::new(salt), selected: egui::WidgetText::default(), width: None, height: None }
+    }
+    pub fn selected_text(mut self, t: impl Into<egui::WidgetText>) -> Self {
+        self.selected = t.into();
+        self
+    }
+    /// Width of the button (and the least width of the list).
+    pub fn width(mut self, w: f32) -> Self {
+        self.width = Some(w);
+        self
+    }
+    /// Most height of the list before it scrolls.
+    pub fn height(mut self, h: f32) -> Self {
+        self.height = Some(h);
+        self
+    }
+
+    pub fn show_list<R>(self, ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<Option<R>> {
+        let button_id = ui.make_persistent_id(self.id);
+        let popup_id = button_id.with("popup");
+        let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let resp = combo_button(ui, button_id, self.selected, self.width, open);
+        let height = self.height.unwrap_or_else(|| ui.spacing().combo_height);
+        let inner = egui::Popup::menu(&resp)
+            .id(popup_id)
+            .width(resp.rect.width())
+            .gap(MENU_GAP)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .style(egui::style::StyleModifier::default())
+            .show(|ui| {
+                ui.set_min_width(ui.available_width());
+                egui::ScrollArea::vertical()
+                    .max_height(height)
+                    .show(ui, |ui| {
+                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                        // plain text (headings) must not take clicks, so that a clicked widget is always an entry
+                        ui.style_mut().interaction.selectable_labels = false;
+                        let r = add(ui);
+                        // an entry is click-only and in the list's own layer (the dropdown button is not, even where
+                        // the list covers it); the popup's own background (its area senses clicks as "<popup id>/move"),
+                        // the scroll bar (click + drag) and text fields keep the list open
+                        let picked = ui.ctx().interaction_snapshot(|s| s.clicked).and_then(|id| ui.ctx().read_response(id));
+                        if picked.is_some_and(|p| {
+                            p.layer_id == ui.layer_id() && p.sense.senses_click() && !p.sense.senses_drag() && p.id != ui.layer_id().id.with("move")
+                        }) {
+                            ui.close();
+                        }
+                        r
+                    })
+                    .inner
+            })
+            .map(|r| r.inner);
+        egui::InnerResponse { inner, response: resp }
     }
 }
 
+/// The button of a [`Combo`]: the selected text and a down arrow on the right.
+fn combo_button(ui: &mut egui::Ui, id: egui::Id, text: egui::WidgetText, width: Option<f32>, open: bool) -> egui::Response {
+    let s = ui.spacing();
+    let (margin, icon_w, icon_gap, min_h) = (s.button_padding, s.icon_width, s.icon_spacing, s.interact_size.y);
+    let min_w = width.unwrap_or(s.combo_width);
+    let wrap = ui.wrap_mode();
+    let wrap_w = if wrap == egui::TextWrapMode::Extend { f32::INFINITY } else { ui.available_width() - 2.0 * margin.x - icon_gap - icon_w };
+    let galley = text.into_galley(ui, Some(wrap), wrap_w, egui::TextStyle::Button);
+    let size = egui::vec2((galley.size().x + icon_gap + icon_w + 2.0 * margin.x).max(min_w), (galley.size().y.max(icon_w) + 2.0 * margin.y).max(min_h));
+    let (_, rect) = ui.allocate_space(size);
+    let resp = ui.interact(rect, id, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let v = if open { &ui.visuals().widgets.open } else { ui.style().interact(&resp) };
+        let p = ui.painter();
+        p.add(egui::epaint::RectShape::new(rect.expand(v.expansion), v.corner_radius, v.weak_bg_fill, v.bg_stroke, egui::StrokeKind::Inside));
+        let inner = rect.shrink2(margin);
+        let icon = egui::Align2::RIGHT_CENTER.align_size_within_rect(egui::Vec2::splat(icon_w), inner).expand(v.expansion);
+        let tri = egui::Rect::from_center_size(icon.center(), egui::vec2(icon.width() * 0.7, icon.height() * 0.45));
+        p.add(egui::Shape::convex_polygon(vec![tri.left_top(), tri.right_top(), tri.center_bottom()], v.fg_stroke.color, egui::Stroke::NONE));
+        let at = egui::Align2::LEFT_CENTER.align_size_within_rect(galley.size(), inner).min;
+        p.galley(at, galley, v.text_color());
+    }
+    resp
+}
 /// What the right-click menu of a dropdown asked for, see [`default_menu`].
 pub struct DefaultAct<T> {
     /// Go back to this value.
@@ -124,12 +194,24 @@ pub fn num(ui: &mut egui::Ui, dv: egui::DragValue<'_>) -> egui::Response {
     value_sized(ui, [NUM_W, h], dv)
 }
 
-/// A menu button whose menu has the padding of [`theme::menu_style`] (outside the menu bar too).
+/// A menu button whose menu has the padding of [`theme::menu_style`] (outside the menu bar too) and sits
+/// [`MENU_GAP`] below the button.
 pub fn menu_button<R>(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::Response {
-    let config = egui::containers::menu::MenuConfig::new().style(theme::menu_style);
-    egui::containers::menu::MenuButton::new(label.into()).config(config).ui(ui, add).0
+    menu_with(ui, label.into(), egui::PopupCloseBehavior::CloseOnClick, add)
 }
 
+fn menu_with<R>(ui: &mut egui::Ui, label: egui::WidgetText, close: egui::PopupCloseBehavior, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::Response {
+    use egui::containers::menu::MenuConfig;
+    let resp = ui.add(egui::Button::new(label));
+    let config = MenuConfig::new().style(theme::menu_style).close_behavior(close);
+    egui::Popup::menu(&resp)
+        .gap(MENU_GAP)
+        .close_behavior(close)
+        .style(theme::menu_style)
+        .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
+        .show(add);
+    resp
+}
 /// A submenu that holds a form (a search field...): clicks inside it do not close the menu, only an entry
 /// that calls `ui.close()` or a click outside does.
 pub fn form_submenu<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::Response {

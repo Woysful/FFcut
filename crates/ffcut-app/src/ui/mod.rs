@@ -75,7 +75,7 @@ impl App {
             let bar = ui.max_rect();
             let config = egui::containers::menu::MenuConfig::new().style(theme::menu_style);
             egui::MenuBar::new().style(theme::menu_style).config(config).ui(ui, |ui| {
-                ui.menu_button("File", |ui| {
+                widgets::menu_button(ui, "File", |ui| {
                     if ui.button(format!("Open…   {}", self.keys(Action::Open))).clicked() {
                         ui.close();
                         self.open_dialog();
@@ -96,7 +96,7 @@ impl App {
                     }
                 });
 
-                ui.menu_button("Edit", |ui| {
+                widgets::menu_button(ui, "Edit", |ui| {
                     let ctx = ui.ctx().clone();
                     if ui.add_enabled(self.clip.is_some() && self.hist.can_undo(), egui::Button::new(format!("Undo   {}", self.keys(Action::Undo)))).clicked() {
                         ui.close();
@@ -108,7 +108,7 @@ impl App {
                     }
                 });
 
-                ui.menu_button("Help", |ui| {
+                widgets::menu_button(ui, "Help", |ui| {
                     widgets::menu_indent(ui, |ui| widgets::hint(ui, "Keyboard shortcuts (change them in Settings → Hotkeys)"));
                     widgets::menu_indent(ui, |ui| {
                         egui::Grid::new("help-keys").num_columns(2).spacing([14.0, 2.0]).show(ui, |ui| {
@@ -134,7 +134,7 @@ impl App {
 
                 // right (next to the sidebar): presets, and the "lamp" when a newer release exists
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.menu_button("Presets", |ui| self.presets_menu(ui));
+                    widgets::menu_button(ui, "Presets", |ui| self.presets_menu(ui));
                     if let Some(r) = &self.updates.found {
                         let b = egui::Button::new(RichText::new(format!("● Update {}", r.version)).color(theme::ACCENT)).frame(false);
                         if ui.add(b).on_hover_text("A new version of FFcut is available. Click for details.").clicked() {

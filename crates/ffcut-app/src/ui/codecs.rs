@@ -1,6 +1,6 @@
 //! Grouped codec drop-downs, shared by the sidebar and the presets editor.
 
-use super::widgets::ComboExt;
+use super::widgets;
 use crate::theme;
 use eframe::egui;
 use ffcut_core::probe::Encoders;
@@ -94,7 +94,7 @@ pub fn video_codec_combo(
     width: f32,
 ) -> egui::Response {
     let has = |n: &str| enc.as_ref().is_none_or(|e| e.video.iter().any(|v| v == n));
-    egui::ComboBox::from_id_salt(id)
+    widgets::Combo::from_id_salt(id)
         .selected_text(video_text(value))
         .width(width)
         .height(460.0)
@@ -120,7 +120,7 @@ pub fn audio_codec_combo(
     width: f32,
 ) -> egui::Response {
     let has = |n: &str| enc.as_ref().is_none_or(|e| e.audio.iter().any(|v| v == n));
-    egui::ComboBox::from_id_salt(id)
+    widgets::Combo::from_id_salt(id)
         .selected_text(audio_text(value))
         .width(width)
         .height(460.0)

@@ -76,11 +76,11 @@ fn control(ui: &mut egui::Ui, id: egui::Id, kind: PluginKind, c: &Control, shown
         }
         CtlKind::Choice => {
             let label = c.choices.iter().find(|(v, _)| same_value(v, shown)).map_or(shown, |(_, l)| l.as_str());
-            egui::ComboBox::from_id_salt(id)
+            widgets::Combo::from_id_salt(id)
                 .selected_text(label)
                 .width(ui.available_width().max(80.0))
                 .height(320.0)
-                .show_ui(ui, |ui| {
+                .show_list(ui, |ui| {
                     for (v, l) in &c.choices {
                         if ui.selectable_label(same_value(v, shown), if l.is_empty() { v } else { l }).clicked() {
                             out = Some(v.clone());
