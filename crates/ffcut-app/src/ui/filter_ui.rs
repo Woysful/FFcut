@@ -12,45 +12,61 @@ use std::hash::Hash;
 const LIST_W: f32 = 360.0;
 const LIST_H: f32 = 320.0;
 
-/// The searchable list of `media` filters, for a submenu of "+ Add effect". Returns the picked name.
-pub fn picker(ui: &mut egui::Ui, cat: &Catalog, media: Media) -> Option<String> {
-    let list = match cat.filters_of(media) {
-        Load::Ready(l) => l,
+/// A spinner with a word, or the error, while a list is not in: `None` until it is.
+pub fn loaded<T>(ui: &mut egui::Ui, l: Load<T>, what: &str) -> Option<std::sync::Arc<T>> {
+    match l {
+        Load::Ready(v) => Some(v),
         Load::Loading => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(RichText::new("Reading ffmpeg's filters…").color(theme::TEXT_LABEL));
+                ui.label(RichText::new(format!("Reading {what}…")).color(theme::TEXT_LABEL));
             });
-            return None;
+            None
         }
         Load::Failed(e) => {
-            widgets::error(ui, format!("Could not read the filters: {e}"));
-            return None;
+            widgets::error(ui, format!("Could not read {what}: {e}"));
+            None
         }
-    };
-    let id = egui::Id::new(("filter-search", media));
+    }
+}
+
+/// One row of a [`search_list`].
+pub struct Row<'a> {
+    pub title: &'a str,
+    pub desc: &'a str,
+    /// Also searched, not shown (a plugin's file, say).
+    pub extra: &'a str,
+}
+
+/// A search box over a list with a fixed size, for a submenu of "+ Add effect". Returns the picked row.
+pub fn search_list(ui: &mut egui::Ui, id: egui::Id, rows: &[Row], noun: &str) -> Option<usize> {
     let mut q: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
-    let r = ui.add(egui::TextEdit::singleline(&mut q).hint_text(format!("Search {} filters…", list.len())).desired_width(LIST_W));
+    let r = ui.add(egui::TextEdit::singleline(&mut q).hint_text(format!("Search {} {noun}…", rows.len())).desired_width(LIST_W));
     if q.is_empty() && !r.has_focus() {
         r.request_focus();
     }
     let ql = q.trim().to_lowercase();
-    let mut hits: Vec<&FilterInfo> = list.iter().filter(|f| ql.is_empty() || f.name.contains(&ql) || f.desc.to_lowercase().contains(&ql)).collect();
-    // names that start with the query first, the rest in ffmpeg's (alphabetical) order
-    hits.sort_by_key(|f| !f.name.starts_with(&ql));
+    let low = |s: &str| s.to_lowercase();
+    let mut hits: Vec<usize> =
+        (0..rows.len()).filter(|&i| ql.is_empty() || [rows[i].title, rows[i].desc, rows[i].extra].iter().any(|s| low(s).contains(&ql))).collect();
+    // titles that start with the query first, the rest in the order given
+    hits.sort_by_key(|&i| !low(rows[i].title).starts_with(&ql));
     let mut picked = None;
     // a fixed height: the menu is then moved up to fit the window instead of shrinking the list
     egui::ScrollArea::vertical().min_scrolled_height(LIST_H).max_height(LIST_H).show(ui, |ui| {
         ui.set_width(LIST_W);
         ui.set_min_height(LIST_H);
         ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-        for f in &hits {
+        for &i in &hits {
+            let row = &rows[i];
             let mut job = LayoutJob::default();
-            job.append(&f.name, 0.0, TextFormat { font_id: FontId::proportional(size::BODY), color: theme::TEXT_STRONG, ..Default::default() });
-            job.append(&f.desc, 10.0, TextFormat { font_id: FontId::proportional(size::SMALL), color: theme::TEXT_DIM, ..Default::default() });
+            job.append(row.title, 0.0, TextFormat { font_id: FontId::proportional(size::BODY), color: theme::TEXT_STRONG, ..Default::default() });
+            job.append(row.desc, 10.0, TextFormat { font_id: FontId::proportional(size::SMALL), color: theme::TEXT_DIM, ..Default::default() });
             job.wrap = egui::text::TextWrapping::truncate_at_width(LIST_W - 16.0);
-            if ui.button(job).on_hover_text(&f.desc).clicked() {
-                picked = Some(f.name.clone());
+            let r = ui.button(job);
+            let r = if row.desc.is_empty() { r } else { r.on_hover_text(row.desc) };
+            if r.clicked() {
+                picked = Some(i);
             }
         }
         if hits.is_empty() {
@@ -64,9 +80,16 @@ pub fn picker(ui: &mut egui::Ui, cat: &Catalog, media: Media) -> Option<String> 
     picked
 }
 
+/// The searchable list of `media` filters. Returns the picked name.
+pub fn picker(ui: &mut egui::Ui, cat: &Catalog, media: Media) -> Option<String> {
+    let list = loaded(ui, cat.filters_of(media), "ffmpeg's filters")?;
+    let rows: Vec<Row> = list.iter().map(|f: &FilterInfo| Row { title: &f.name, desc: &f.desc, extra: "" }).collect();
+    search_list(ui, egui::Id::new(("filter-search", media)), &rows, "filters").map(|i| list[i].name.clone())
+}
+
 // ------------------------------------------------------------------ the form
 
-fn fnum(v: f64, int: bool) -> String {
+pub(super) fn fnum(v: f64, int: bool) -> String {
     if int {
         return format!("{}", v.round() as i64);
     }

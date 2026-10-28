@@ -18,6 +18,17 @@ use ffcut_app::{audiomix, layout, update};
 use eframe::egui;
 
 fn main() -> eframe::Result {
+    let args: Vec<std::ffi::OsString> = std::env::args_os().collect();
+    if args.get(1).is_some_and(|a| a == "--probe-plugins") {
+        std::process::exit(ffcut_core::plugins::probe_main(&args[2..]));
+    }
+    let settings = settings::Settings::load();
+    // ffmpeg and the player (in this process) find frei0r and LV2 plugins through these; set before any thread starts
+    let dirs = settings.plugin_dirs();
+    for (k, v) in dirs.env() {
+        std::env::set_var(k, v);
+    }
+
     // flags: --version, --x11, --wayland ; the first other argument is a file to open
     let mut open = None;
     let mut force: Option<String> = std::env::var("FFCUT_DISPLAY").ok().filter(|v| !v.is_empty());
@@ -33,7 +44,7 @@ fn main() -> eframe::Result {
             _ => {}
         }
     }
-    let pref = force.unwrap_or_else(|| settings::Settings::load().display_server);
+    let pref = force.unwrap_or(settings.display_server);
     let backend = display::resolve(&pref);
 
     let icon = image::load_from_memory(include_bytes!("../../../packaging/ffcut.png")).ok().map(|i| {

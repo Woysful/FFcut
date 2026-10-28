@@ -318,7 +318,7 @@ impl App {
             .map(|o| String::from_utf8_lossy(&o.stdout).lines().next().unwrap_or("").to_string())
             .unwrap_or_default();
 
-        self.catalog = crate::catalog::Catalog::new(self.ffmpeg.clone(), ctx);
+        self.catalog = crate::catalog::Catalog::new(self.ffmpeg.clone(), self.settings.plugin_dirs(), ctx);
         // the encoder list takes a moment: fetch it off the UI thread
         *self.encoders.lock().unwrap() = None;
         if let Some(ff) = self.ffmpeg.clone() {

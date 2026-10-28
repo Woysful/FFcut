@@ -84,10 +84,21 @@ pub fn parse_filter_list(text: &str) -> Vec<FilterInfo> {
     out
 }
 
+/// Which of the plugin hosts (`ladspa`, `lv2`, `frei0r`) are in `ffmpeg -filters`.
+pub fn parse_plugin_hosts(text: &str) -> Vec<String> {
+    text.lines().filter_map(|l| l.split_whitespace().nth(1)).filter(|n| ["ladspa", "lv2", "frei0r"].contains(n)).map(str::to_string).collect()
+}
+
+/// Runs `ffmpeg -filters`: the offered filters and the plugin hosts.
+pub fn list_filters_and_hosts(ffmpeg: &Path) -> Result<(Vec<FilterInfo>, Vec<String>), Error> {
+    let out = run_capture("ffmpeg", command(ffmpeg).args(["-hide_banner", "-filters"]))?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok((parse_filter_list(&text), parse_plugin_hosts(&text)))
+}
+
 /// Runs `ffmpeg -filters`.
 pub fn list_filters(ffmpeg: &Path) -> Result<Vec<FilterInfo>, Error> {
-    let out = run_capture("ffmpeg", command(ffmpeg).args(["-hide_banner", "-filters"]))?;
-    Ok(parse_filter_list(&String::from_utf8_lossy(&out.stdout)))
+    list_filters_and_hosts(ffmpeg).map(|(f, _)| f)
 }
 
 // ------------------------------------------------------------------ options of one filter
@@ -315,6 +326,7 @@ mod tests {
         assert_eq!(names, ["acompressor", "adynamicequalizer", "colorbalance"]);
         assert_eq!(l[0].media, Media::Audio);
         assert_eq!(l[2], FilterInfo { name: "colorbalance".into(), desc: "Adjust the color balance.".into(), media: Media::Video });
+        assert_eq!(parse_plugin_hosts(LIST), ["ladspa", "frei0r"]);
     }
 
     const HELP: &str = "Filter acompressor

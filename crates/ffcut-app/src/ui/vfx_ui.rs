@@ -1,14 +1,15 @@
 //! The "Video effects & text" sidebar section (colour, curves, style, restoration, covered areas, text,
 //! captions) and the markers it draws on the video.
 
-use super::filter_ui;
 use super::widgets::{self, ComboExt, StackAct, StackEntry};
+use super::{filter_ui, plugin_ui};
 use crate::app::App;
 use crate::catalog::Catalog;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, StrokeKind};
 use ffcut_core::filters::Media;
 use ffcut_core::fonts::Font;
+use ffcut_core::plugins::PluginKind;
 use ffcut_core::videofx::*;
 use ffcut_core::FilterFx;
 
@@ -252,6 +253,7 @@ fn effect_body(ui: &mut egui::Ui, k: usize, e: &mut VEffect, cx: &mut Ctx) {
             filter_ui::body(ui, ("vfilter", k), f, cx.cat);
             widgets::hint(ui, "Applied with the colour effects. A filter that resizes or retimes the picture moves the crop, areas and text.");
         }
+        VKind::Plugin(p) => plugin_ui::body(ui, ("vplugin", k), p, cx.cat),
         VKind::Color(c) => {
             widgets::grid(("color", k)).show(ui, |ui| {
                 ui.label("Brightness");
@@ -517,6 +519,12 @@ fn add_menu(ui: &mut egui::Ui, fx: &mut VideoFx, default_font: &str, cat: &Catal
         }
     })
     .on_hover_text("Any video filter of your ffmpeg, with its settings");
+    widgets::form_submenu(ui, "Plugin", |ui| {
+        if let Some(p) = plugin_ui::picker(ui, cat, &[PluginKind::Frei0r]) {
+            push(ui, VKind::Plugin(p));
+        }
+    })
+    .on_hover_text("A frei0r plugin installed on this computer (ffmpeg runs it)");
     added
 }
 
@@ -563,6 +571,7 @@ impl App {
         for (k, e) in fx.effects.iter_mut().enumerate() {
             let desc = match &e.kind {
                 VKind::Filter(f) => cat.desc(&f.name),
+                VKind::Plugin(p) => cat.plugin_desc(p),
                 _ => None,
             };
             let name = e.name().to_string();
@@ -603,7 +612,7 @@ impl App {
         if let Some(e) = &self.vfx.error {
             widgets::error(ui, format!("The preview could not apply this: {e}"));
             let missing = ["No such filter", "Could not find module", "not found"].iter().any(|m| e.contains(m));
-            if missing && fx.effects.iter().any(|e| e.on && matches!(e.kind, VKind::Filter(_))) {
+            if missing && fx.effects.iter().any(|e| e.on && matches!(e.kind, VKind::Filter(_) | VKind::Plugin(_))) {
                 widgets::hint(ui, "The preview uses the player's own ffmpeg, which may lack a filter that yours has: the export can still work.");
             }
         }

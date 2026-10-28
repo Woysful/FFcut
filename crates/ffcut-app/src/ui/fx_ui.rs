@@ -2,13 +2,14 @@
 //! shown in the sidebar and in the audio presets editor.
 
 use super::widgets::{self, ComboExt, StackAct, StackEntry};
-use super::{field, filter_ui, grid};
+use super::{field, filter_ui, grid, plugin_ui};
 use crate::app::App;
 use crate::catalog::Catalog;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Color32, Pos2, RichText, Sense, Stroke};
 use ffcut_core::audiofx;
 use ffcut_core::filters::Media;
+use ffcut_core::plugins::PluginKind;
 use ffcut_core::{Compressor, DeEsser, Denoise, Effect, EffectKind, EqBand, EqKind, FilterFx, NormMode, Normalize, TrackEdit};
 
 const MAX_BANDS: usize = 8;
@@ -166,7 +167,7 @@ fn fx_tip(k: &EffectKind) -> Option<&'static str> {
         EffectKind::DeEss(_) => "Softens harsh “s” and “sh” sounds in voice recordings. Raise Intensity until they stop stinging.",
         EffectKind::Denoise(_) => "Takes steady background noise (hiss, fan, hum) out of the sound. It follows the noise while you play.",
         EffectKind::Norm(_) => "Measures the clip as it reaches this point of the stack and sets the level for you. The track volume stays on top.",
-        EffectKind::Filter(_) => return None,
+        EffectKind::Filter(_) | EffectKind::Plugin(_) => return None,
     })
 }
 
@@ -212,6 +213,7 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
     for (k, e) in t.effects.iter_mut().enumerate() {
         let desc = match &e.kind {
             EffectKind::Filter(f) => cat.desc(&f.name),
+            EffectKind::Plugin(p) => cat.plugin_desc(p),
             _ => None,
         };
         let name = e.name().to_string();
@@ -262,6 +264,13 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
                 }
             })
             .on_hover_text("Any audio filter of your ffmpeg, with its settings");
+            widgets::form_submenu(ui, "Plugin", |ui| {
+                if let Some(p) = plugin_ui::picker(ui, cat, &[PluginKind::Ladspa, PluginKind::Lv2]) {
+                    t.effects.push(Effect::new(EffectKind::Plugin(p)));
+                    ui.close();
+                }
+            })
+            .on_hover_text("A LADSPA or LV2 plugin installed on this computer (ffmpeg runs it)");
         });
         if ui
             .add_enabled(t.has_fx() || !t.effects.is_empty(), egui::Button::new("Reset all"))
@@ -289,6 +298,7 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
 fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Option<(usize, usize)>, meas: &[(Option<String>, bool)], cat: &Catalog) {
     match kind {
         EffectKind::Filter(f) => filter_ui::body(ui, ("afilter", k), f, cat),
+        EffectKind::Plugin(p) => plugin_ui::body(ui, ("aplugin", k), p, cat),
         EffectKind::Eq(bands) => {
             let mut band_sel = (*sel).filter(|s| s.0 == k).map(|s| s.1);
             eq_plot(ui, bands, &mut band_sel);

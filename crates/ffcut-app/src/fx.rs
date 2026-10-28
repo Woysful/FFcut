@@ -143,7 +143,10 @@ impl App {
             let r = ffcut_core::run::command(&ffmpeg).args(&args).stdin(Stdio::null()).output();
             let state = match r {
                 Ok(o) if o.status.success() => Render::Ready(out),
-                Ok(o) => Render::Failed(String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("ffmpeg failed").to_string()),
+                Ok(o) => Render::Failed(match ffcut_core::run::crash_text(&o.status) {
+                    Some(c) => c.to_string(),
+                    None => String::from_utf8_lossy(&o.stderr).lines().last().unwrap_or("ffmpeg failed").to_string(),
+                }),
                 Err(e) => Render::Failed(e.to_string()),
             };
             renders.lock().unwrap().insert(key, state);

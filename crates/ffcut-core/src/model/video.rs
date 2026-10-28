@@ -2,6 +2,7 @@
 //! `videofx` turns them into ffmpeg filters (and re-exports everything here).
 
 use super::filter::FilterFx;
+use super::plugin::PluginFx;
 use serde::{Deserialize, Serialize};
 
 pub type Rgb = [u8; 3];
@@ -44,6 +45,8 @@ pub enum VKind {
     Text(TextBlock),
     /// Any ffmpeg video filter, by name (applied with the pixel effects).
     Filter(FilterFx),
+    /// A frei0r plugin (applied with the pixel effects).
+    Plugin(PluginFx),
 }
 
 impl VEffect {
@@ -67,6 +70,7 @@ impl VEffect {
             },
             VKind::Text(_) => "Text",
             VKind::Filter(f) => &f.name,
+            VKind::Plugin(p) => p.title(),
         }
     }
     /// Drawn on the rotated frame (areas, text) rather than on the decoded picture.

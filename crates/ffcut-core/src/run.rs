@@ -2,6 +2,7 @@
 
 use crate::error::Error;
 use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Output, Stdio};
@@ -39,11 +40,18 @@ pub struct Job {
     pub events: Receiver<Event>,
 }
 
+static CHILD_ENV: Mutex<Vec<(&'static str, OsString)>> = Mutex::new(Vec::new());
+
+/// Variables every tool started by [`command`] gets from now on (the plugin folders).
+pub fn set_child_env(vars: Vec<(&'static str, OsString)>) {
+    *lock(&CHILD_ENV) = vars;
+}
+
 /// `Command::new` that never flashes a console window on Windows (GUI app spawning ffmpeg/ffprobe).
 /// Every external tool must be started through this.
 pub fn command<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
-    #[allow(unused_mut)]
     let mut cmd = Command::new(program);
+    cmd.envs(lock(&CHILD_ENV).iter().map(|(k, v)| (k, v)));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -78,6 +86,28 @@ fn stamp(p: &Path) -> Stamp {
 fn written(before: &Stamp, after: &Stamp) -> bool {
     after.is_some() && before != after
 }
+
+/// Says so when the process did not exit but crashed (a plugin in the filters, most of the time).
+pub fn crash_text(status: &ExitStatus) -> Option<&'static str> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        // segmentation fault, bus error, illegal instruction, floating point error, abort
+        status.signal().filter(|s| [11, 7, 4, 8, 6].contains(s)).map(|_| CRASHED)
+    }
+    #[cfg(windows)]
+    {
+        // NTSTATUS error codes (0xC0000005 access violation and the like)
+        status.code().filter(|c| (*c as u32) >= 0xC000_0000).map(|_| CRASHED)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = status;
+        None
+    }
+}
+
+const CRASHED: &str = "ffmpeg crashed (a plugin among the effects may be the cause)";
 
 /// The exit status decides: a job that succeeded is finished even if a cancel came too late to stop it.
 fn outcome(success: bool, cancelled: bool, stderr_tail: impl FnOnce() -> String) -> Event {
@@ -158,8 +188,12 @@ impl Job {
                 }
             }
             // stdout closed => the process is exiting (or was killed)
-            let success = wait_exit(&slot).is_some_and(|s| s.success());
-            let tail = err_thread.join().unwrap_or_default();
+            let status = wait_exit(&slot);
+            let success = status.is_some_and(|s| s.success());
+            let mut tail = err_thread.join().unwrap_or_default();
+            if let Some(c) = status.as_ref().and_then(crash_text) {
+                tail.push_back(c.to_string());
+            }
             if !success {
                 for (path, was) in &before {
                     if written(was, &stamp(path)) {
@@ -249,6 +283,15 @@ mod tests {
             last = p.feed(l, Some(10.0)).or(last);
         }
         assert_eq!(last, Some(Event::Progress { percent: Some(25.0), out_time: 2.5, speed: Some(1.5), fps: Some(25.0) }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_crash_is_told_apart() {
+        let st = |sh: &str| Command::new("sh").args(["-c", sh]).status().unwrap();
+        assert!(crash_text(&st("kill -SEGV $$")).is_some());
+        assert!(crash_text(&st("kill -TERM $$")).is_none());
+        assert!(crash_text(&st("exit 1")).is_none());
     }
 
     #[test]

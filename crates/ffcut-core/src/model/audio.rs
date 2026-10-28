@@ -1,4 +1,5 @@
 use super::filter::FilterFx;
+use super::plugin::PluginFx;
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Time differences (seconds) below this are no edit at all: a trim of 0.4 ms is "untouched".
@@ -69,6 +70,8 @@ pub enum EffectKind {
     Denoise(Denoise),
     /// Any ffmpeg audio filter, by name.
     Filter(FilterFx),
+    /// A LADSPA or LV2 plugin.
+    Plugin(PluginFx),
 }
 
 impl Effect {
@@ -83,6 +86,7 @@ impl Effect {
             EffectKind::DeEss(_) => "De-esser",
             EffectKind::Denoise(_) => "Noise reduction",
             EffectKind::Filter(f) => &f.name,
+            EffectKind::Plugin(p) => p.title(),
         }
     }
 }

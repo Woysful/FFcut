@@ -5,7 +5,7 @@ use crate::app::App;
 use crate::theme::{self, radius, size};
 use eframe::egui::{self, vec2, Align, Color32, Layout, RichText};
 
-const PAGES: [&str; 5] = ["General", "Interface", "Hotkeys", "Updates", "About"];
+const PAGES: [&str; 6] = ["General", "Interface", "Plugins", "Hotkeys", "Updates", "About"];
 
 fn dim(t: impl Into<String>) -> RichText {
     RichText::new(t.into()).size(size::HINT).color(theme::TEXT_DIM)
@@ -44,8 +44,9 @@ impl App {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.settings_tab {
                     0 => self.page_general(ui),
                     1 => self.page_interface(ui),
-                    2 => self.page_hotkeys(ui),
-                    3 => self.page_updates(ui),
+                    2 => self.page_plugins(ui),
+                    3 => self.page_hotkeys(ui),
+                    4 => self.page_updates(ui),
                     _ => self.page_about(ui),
                 });
             });
@@ -320,6 +321,143 @@ impl App {
                 ui.add_space(4.0);
                 ui.label(dim("Esc always leaves the video fullscreen. Letters and arrows are ignored while a text field is being edited; Open, Export and the fullscreen keys always work."));
             },
+        );
+    }
+
+    fn plugin_folders_changed(&mut self, ctx: &egui::Context) {
+        self.settings.save();
+        let dirs = self.settings.plugin_dirs();
+        dirs.apply_to_children();
+        self.catalog = crate::catalog::Catalog::new(self.ffmpeg.clone(), dirs, ctx);
+    }
+
+    fn page_plugins(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        card(
+            ui,
+            "Plugin folders",
+            Some("LADSPA and LV2 plugins (audio) and frei0r plugins (video) are found in the usual folders of this system. Add a folder to search it first, with its subfolders."),
+            |ui| {
+                let mut remove = None;
+                for (i, d) in self.settings.plugin_folders.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        if ui.small_button("✕").on_hover_text("Stop searching this folder").clicked() {
+                            remove = Some(i);
+                        }
+                        let missing = !std::path::Path::new(d).is_dir();
+                        ui.label(RichText::new(d).color(if missing { theme::WARN } else { theme::TEXT_STRONG }));
+                        if missing {
+                            ui.label(dim("(not found)"));
+                        }
+                    });
+                }
+                if let Some(i) = remove {
+                    self.settings.plugin_folders.remove(i);
+                    self.plugin_folders_changed(&ctx);
+                }
+                let id = egui::Id::new("plugin-folder-input");
+                let mut typed: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+                let mut add = None;
+                ui.horizontal(|ui| {
+                    let r = ui.add(egui::TextEdit::singleline(&mut typed).hint_text("a folder").desired_width(ui.available_width() - 150.0));
+                    if (ui.add_enabled(!typed.trim().is_empty(), egui::Button::new("Add")).clicked() || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && !typed.trim().is_empty() {
+                        add = Some(std::mem::take(&mut typed).trim().to_string());
+                    }
+                    if ui.button("Browse…").clicked() {
+                        add = rfd::FileDialog::new().pick_folder().map(|p| p.to_string_lossy().into_owned());
+                    }
+                });
+                ui.data_mut(|d| d.insert_temp(id, typed));
+                if let Some(a) = add.filter(|a| !self.settings.plugin_folders.contains(a)) {
+                    self.settings.plugin_folders.push(a);
+                    self.plugin_folders_changed(&ctx);
+                }
+                // the player reads the frei0r and LV2 folders of the environment FFcut started with
+                let stale = self.settings.plugin_dirs().env().iter().any(|(k, v)| std::env::var_os(k).as_ref() != Some(v));
+                if stale {
+                    ui.add_space(6.0);
+                    ui.label(dim("The export uses the new folders now; the video preview after a restart."));
+                    if ui.button("Restart now").clicked() {
+                        let open = self.clip.as_ref().map(|c| c.path.clone());
+                        if crate::display::restart(open.as_deref()) {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    }
+                }
+            },
+        );
+
+        card(ui, "Found", None, |ui| {
+            let scan = match self.catalog.plugins() {
+                crate::catalog::Load::Ready(s) => s,
+                crate::catalog::Load::Loading => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(dim("Looking for plugins…"));
+                    });
+                    return;
+                }
+                crate::catalog::Load::Failed(e) => {
+                    ui.colored_label(theme::ERR, e);
+                    return;
+                }
+            };
+            use ffcut_core::plugins::PluginKind;
+            egui::Grid::new("plugin-counts").num_columns(3).spacing([18.0, 6.0]).show(ui, |ui| {
+                for kind in [PluginKind::Ladspa, PluginKind::Lv2, PluginKind::Frei0r] {
+                    let all = scan.plugins.iter().filter(|p| p.kind == kind);
+                    let (n, usable) = (all.clone().count(), all.filter(|p| p.usable()).count());
+                    ui.label(RichText::new(kind.label()).strong());
+                    ui.label(format!("{usable} usable{}", if n > usable { format!(" (of {n})") } else { String::new() }));
+                    match self.catalog.lacks_host(kind) {
+                        Some(true) => ui.colored_label(theme::WARN, "your ffmpeg was built without it"),
+                        _ => ui.label(dim(if kind == PluginKind::Frei0r { "video effects" } else { "audio effects" })),
+                    };
+                    ui.end_row();
+                }
+            });
+            ui.add_space(6.0);
+            if ui.button("Search again").on_hover_text("After installing or removing plugins").clicked() {
+                self.catalog.rescan_plugins();
+            }
+            let not_usable: Vec<_> = scan.plugins.iter().filter(|p| !p.usable()).collect();
+            if !not_usable.is_empty() {
+                egui::CollapsingHeader::new(format!("Not usable as effects ({})", not_usable.len())).id_salt("plugins-unusable").show(ui, |ui| {
+                    for p in not_usable {
+                        ui.label(
+                            RichText::new(format!("{} ({}): {}", p.name, p.kind.label(), p.problem.as_deref().unwrap_or("")))
+                                .size(size::HINT)
+                                .color(theme::TEXT_LABEL),
+                        )
+                        .on_hover_text(p.file.display().to_string());
+                    }
+                });
+            }
+            if !scan.errors.is_empty() {
+                egui::CollapsingHeader::new(format!("Could not be read ({})", scan.errors.len())).id_salt("plugins-errors").show(ui, |ui| {
+                    for (f, e) in &scan.errors {
+                        ui.label(RichText::new(format!("{}: {e}", f.display())).size(size::HINT).color(theme::WARN));
+                    }
+                });
+            }
+            egui::CollapsingHeader::new("Folders searched").id_salt("plugins-dirs").show(ui, |ui| {
+                let d = self.settings.plugin_dirs();
+                for (label, list) in [("LADSPA", &d.ladspa), ("LV2", &d.lv2), ("frei0r", &d.frei0r)] {
+                    let found: Vec<String> = list.iter().filter(|p| p.is_dir()).map(|p| p.display().to_string()).collect();
+                    ui.label(
+                        RichText::new(format!("{label}: {}", if found.is_empty() { "none".into() } else { found.join(", ") }))
+                            .size(size::HINT)
+                            .color(theme::TEXT_LABEL),
+                    );
+                }
+            });
+        });
+
+        card(
+            ui,
+            "Other formats",
+            Some("VST, VST3, CLAP, AU and OFX plugins cannot be used: ffmpeg has no host for them. Many effects exist as LV2 too (LSP, x42, Calf, ZAM)."),
+            |_| {},
         );
     }
 

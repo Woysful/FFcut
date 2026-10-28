@@ -70,6 +70,8 @@ pub struct Settings {
     pub muted: bool,
     /// The user's own defaults for the output dropdowns (right-click a dropdown → "Use as default").
     pub defaults: Defaults,
+    /// Folders with LADSPA, LV2 or frei0r plugins, searched before the usual ones.
+    pub plugin_folders: Vec<String>,
 }
 
 /// Output choices the user made the default; `None` = the built-in one.
@@ -117,6 +119,12 @@ impl Settings {
     }
     pub fn scroll_key(&self) -> ModKey {
         self.scroll_mod.unwrap_or(ModKey::Shift)
+    }
+
+    /// Where plugins are looked for: the user's folders, then the usual ones.
+    pub fn plugin_dirs(&self) -> ffcut_core::plugins::Dirs {
+        let mine: Vec<PathBuf> = self.plugin_folders.iter().map(|f| f.trim()).filter(|f| !f.is_empty()).map(PathBuf::from).collect();
+        ffcut_core::plugins::Dirs::new(&mine)
     }
 
     fn file() -> PathBuf {

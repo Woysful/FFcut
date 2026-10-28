@@ -5,8 +5,21 @@ use eframe::egui;
 use ffcut_core::fonts::Font;
 use ffcut_core::videofx::{self, PreviewChain};
 use ffcut_core::Rotation;
+use std::collections::HashMap;
+use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// A graph tried in ffmpeg before the player gets it.
+#[derive(Clone)]
+enum Trial {
+    Running,
+    Passed,
+    Failed(String),
+}
+
+/// How long a trial may take before the plugin is taken for hung.
+const TRIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
 pub struct VfxState {
     /// The effects window is open.
@@ -32,6 +45,9 @@ pub struct VfxState {
     pub error: Option<String>,
     /// ffmpeg's messages since the chain was applied (mpv reports a failed graph only in its log).
     log: Vec<String>,
+    /// Graphs with a frei0r plugin, run once in ffmpeg first: a plugin that crashes takes down the process
+    /// it runs in, and the player runs in this one.
+    trials: Arc<Mutex<HashMap<String, Trial>>>,
 }
 
 impl Default for VfxState {
@@ -51,6 +67,47 @@ impl Default for VfxState {
             hw_copy: false,
             error: None,
             log: Vec::new(),
+            trials: Default::default(),
+        }
+    }
+}
+
+/// Runs `graph` over a few frames of a test picture of the frame's size.
+fn trial(ffmpeg: &std::path::Path, graph: &str, w: u32, h: u32) -> Trial {
+    let src = format!("testsrc2=size={}x{}:rate=25", w.max(16), h.max(16));
+    let child = ffcut_core::run::command(ffmpeg)
+        .args(["-v", "error", "-nostdin", "-f", "lavfi", "-i", &src, "-vf", graph, "-frames:v", "3", "-f", "null", "-"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(c) => c,
+        Err(e) => return Trial::Failed(format!("cannot start ffmpeg: {e}")),
+    };
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(st)) => {
+                if st.success() {
+                    return Trial::Passed;
+                }
+                if let Some(c) = ffcut_core::run::crash_text(&st) {
+                    return Trial::Failed(c.to_string());
+                }
+                let mut err = String::new();
+                if let Some(mut e) = child.stderr.take() {
+                    let _ = std::io::Read::read_to_string(&mut e, &mut err);
+                }
+                return Trial::Failed(err.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("ffmpeg failed").to_string());
+            }
+            Ok(None) if start.elapsed() > TRIAL_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Trial::Failed("a plugin did not finish its first frames".into());
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Trial::Failed(e.to_string()),
         }
     }
 }
@@ -134,7 +191,31 @@ impl App {
             ctx.request_repaint_after(Duration::from_millis(100));
             return;
         }
-        let want = self.vfx.want.clone();
+        let mut want = self.vfx.want.clone();
+        let mut trial_error = None;
+        if let (Some(c), Some(ff)) = (&want, &self.ffmpeg) {
+            if c.graph.contains("frei0r=") {
+                let state = self.vfx.trials.lock().unwrap().get(&c.graph).cloned();
+                match state {
+                    None => {
+                        self.vfx.trials.lock().unwrap().insert(c.graph.clone(), Trial::Running);
+                        let (trials, ctx, ff, graph) = (self.vfx.trials.clone(), ctx.clone(), ff.clone(), c.graph.clone());
+                        std::thread::spawn(move || {
+                            let r = trial(&ff, &graph, fw, fh);
+                            trials.lock().unwrap().insert(graph, r);
+                            ctx.request_repaint();
+                        });
+                        return;
+                    }
+                    Some(Trial::Running) => return,
+                    Some(Trial::Passed) => {}
+                    Some(Trial::Failed(e)) => {
+                        trial_error = Some(format!("a plugin failed when tried in ffmpeg, so the preview plays without the effects: {e}"));
+                        want = None;
+                    }
+                }
+            }
+        }
         let keep = self.player.real_time();
         // a software filter cannot take frames that live in GPU memory: decode into system memory while it runs
         let result = match &want {
@@ -154,11 +235,11 @@ impl App {
                 r
             }
         };
-        self.vfx.error = result.err().map(|e| format!("{e}"));
+        self.vfx.error = trial_error.or(result.err().map(|e| format!("{e}")));
         self.vfx.log.clear();
         self.vfx.rotates = want.as_ref().is_some_and(|c| c.rotates);
         self.vfx.bars = if self.vfx.rotates { videofx::bars(&self.s.vfx, fw) } else { (0, 0) };
-        self.vfx.applied = Some(want);
+        self.vfx.applied = Some(self.vfx.want.clone());
         self.apply_preview_transform();
         // mpv answers a filter change with a seek of its own: put the playhead back (see `watch_audio_jump`)
         self.player.seek(keep);

@@ -692,6 +692,7 @@ dependencies = [
 name = "ffcut-core"
 version = "2.7.1"
 dependencies = [
+ "libloading",
  "serde",
  "serde_json",
  "ttf-parser",

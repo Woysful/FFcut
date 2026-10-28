@@ -25,6 +25,7 @@ mod fmtnum;
 pub mod fonts;
 mod hash;
 pub mod model;
+pub mod plugins;
 pub mod presets;
 pub mod preview;
 pub mod probe;

@@ -8,6 +8,7 @@ mod filter_ui;
 mod fx_ui;
 mod icons;
 mod meter;
+mod plugin_ui;
 mod presets;
 mod settings_ui;
 mod side;
