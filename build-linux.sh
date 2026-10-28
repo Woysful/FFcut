@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Builds FFcut for Linux.
-#   ./build-linux.sh              -> dist/FFcut-<ver>-x86_64.AppImage  (+ dist/ffcut-linux.tar.gz)
+#   ./build-linux.sh              -> dist/FFcut-<ver>-x86_64.AppImage  (+ .zsync, + dist/ffcut-linux.tar.gz)
 #   BUNDLE_FFMPEG=1 ./build-linux.sh   also put ffmpeg+ffprobe from this machine inside the AppImage
+#   UPDATE_INFO='' ./build-linux.sh    no update information (forks); or set your own string
+#
+# The AppImage carries update information pointing at the GitHub releases of the repository in
+# Cargo.toml, so Gear Lever / AppImageUpdate can update it. Upload BOTH files of dist/ to the release:
+# FFcut-<ver>-x86_64.AppImage and FFcut-<ver>-x86_64.AppImage.zsync (needs zsyncmake: package "zsync").
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -12,6 +17,14 @@ APPDIR="$DIST/AppDir"
 TOOLS="$DIST/.tools"
 
 command -v cargo >/dev/null || { echo "Rust not found. Install: https://rustup.rs"; exit 1; }
+
+# gh-releases-zsync|owner|repo|latest|file glob  (https://github.com/AppImage/AppImageSpec, "update information")
+REPO="$(grep -m1 '^repository' Cargo.toml | cut -d'"' -f2 | sed -n 's#^https://github.com/\([^/]*\)/\([^/]*\)/*$#\1|\2#p')"
+UPDATE_INFO="${UPDATE_INFO-${REPO:+gh-releases-zsync|$REPO|latest|FFcut-*-$ARCH.AppImage.zsync}}"
+if [ -n "$UPDATE_INFO" ] && ! command -v zsyncmake >/dev/null; then
+  echo "zsyncmake not found: it makes the .zsync file Gear Lever / AppImageUpdate need. Install the 'zsync' package,"
+  echo "or build without update information: UPDATE_INFO='' $0"; exit 1
+fi
 
 if command -v pkg-config >/dev/null && ! pkg-config --exists mpv; then
   echo "libmpv development files not found. Install: libmpv-dev (Debian/Ubuntu), mpv (Arch), mpv-devel (Fedora)"; exit 1
@@ -59,9 +72,18 @@ if [ ! -x "$TOOL" ]; then
 fi
 # --appimage-extract-and-run: works without FUSE (containers, CI)
 OUT="$DIST/FFcut-$VERSION-$ARCH.AppImage"
+UPD=(); [ -n "$UPDATE_INFO" ] && UPD=(-u "$UPDATE_INFO")
+rm -f "$OUT" "$OUT.zsync"
 for try in 1 2 3; do   # appimagetool downloads its runtime from GitHub; retry on hiccups
-  ARCH="$ARCH" "$TOOL" --appimage-extract-and-run "$APPDIR" "$OUT" && [ -x "$OUT" ] && break
+  # appimagetool calls zsyncmake without -o, which writes the .zsync into the current folder: run it from dist/
+  ( cd "$DIST" && ARCH="$ARCH" "../$TOOL" --appimage-extract-and-run "${UPD[@]}" AppDir "$(basename "$OUT")" ) && [ -x "$OUT" ] && break
   echo "attempt $try failed, retrying..."; sleep 3
 done
 [ -x "$OUT" ] || { echo "AppImage was NOT created (see errors above). tar.gz is in $DIST/"; exit 1; }
-echo "Done: $OUT"
+if [ -n "$UPDATE_INFO" ]; then
+  [ -f "$OUT.zsync" ] || { echo "$OUT.zsync was NOT created (see errors above)"; exit 1; }
+  echo "Update information: $UPDATE_INFO"
+  echo "Done: $OUT and $OUT.zsync (upload both to the release)"
+else
+  echo "Done: $OUT"
+fi
