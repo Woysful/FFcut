@@ -13,7 +13,7 @@ mod undo;
 mod vfx;
 
 // compiled once, in the library (its integration tests use them too)
-use ffcut_app::{audiomix, layout, update};
+use ffcut_app::{audiomix, install, layout, update};
 
 use eframe::egui;
 
@@ -22,6 +22,7 @@ fn main() -> eframe::Result {
     if args.get(1).is_some_and(|a| a == "--probe-plugins") {
         std::process::exit(ffcut_core::plugins::probe_main(&args[2..]));
     }
+    install::cleanup_in_background();
     let settings = settings::Settings::load();
     // ffmpeg and the player (in this process) find frei0r and LV2 plugins through these; set before any thread starts
     let dirs = settings.plugin_dirs();

@@ -26,6 +26,8 @@ pub struct Updates {
     /// Result line of the last manual "Check now" (Settings / About).
     pub msg: Option<String>,
     pub manual: bool,
+    /// The update being installed (or installed, or failed) by "Update now".
+    pub install: Option<crate::install::Shared>,
 }
 
 /// The saved presets and where they live.

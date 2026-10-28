@@ -24,6 +24,7 @@ pub use widgets::{card, ctx_menu, field, grid, num};
 
 use crate::app::{App, Status};
 use crate::hotkeys::{chords, Action};
+use crate::install::Stage;
 use crate::theme::{self, size};
 use eframe::egui::{self, vec2, Align, Layout, Rect, RichText};
 use ffcut_core::presets::Preset;
@@ -314,6 +315,7 @@ impl App {
             return;
         }
         let rel = self.updates.found.clone();
+        let stage = self.updates.install.as_ref().map(|s| s.lock().unwrap_or_else(|e| e.into_inner()).clone());
         let open = os_window(ctx, "update", "Update available", [500.0, 420.0], |ui| {
             let Some(r) = &rel else {
                 ui.label("You have the latest version.");
@@ -328,19 +330,71 @@ impl App {
                 });
             }
             ui.add_space(8.0);
+            let busy = matches!(stage, Some(Stage::Download { .. } | Stage::Unpack | Stage::Replace));
+            let installed = matches!(stage, Some(Stage::Done(_)));
+            let installable = r.asset.as_ref().zip(crate::install::location());
             ui.horizontal(|ui| {
-                if ui.add(widgets::primary_button("Open the release page")).clicked() {
+                if let Some((a, (dir, _))) = &installable {
+                    let tip = format!("Downloads {} ({:.1} MB), checks it and replaces the program files in {}", a.name, a.size as f64 / 1e6, dir.display());
+                    if ui.add_enabled(!busy && !installed, widgets::primary_button("Update now")).on_hover_text(tip).clicked() {
+                        let c = ui.ctx().clone();
+                        self.updates.install = Some(crate::install::start((*a).clone(), move || c.request_repaint()));
+                    }
+                    if ui.button("Open the release page").clicked() {
+                        let _ = open::that(&r.page);
+                    }
+                } else if ui.add(widgets::primary_button("Open the release page")).clicked() {
                     let _ = open::that(&r.page);
                 }
-                if ui.button("Skip this version").on_hover_text("Hide the lamp until an even newer version appears").clicked() {
+                let skip = ui.add_enabled(!busy && !installed, egui::Button::new("Skip this version"));
+                if skip.on_hover_text("Hide the lamp until an even newer version appears").clicked() {
                     self.settings.skipped_version = r.version.clone();
                     self.settings.save();
                     self.updates.found = None;
                     self.dialogs.update = false;
                 }
             });
+            ui.add_space(6.0);
+            match &stage {
+                Some(Stage::Download { done, total }) => {
+                    let part = if *total > 0 { *done as f32 / *total as f32 } else { 0.0 };
+                    let text = format!("Downloading… {:.1} of {:.1} MB", *done as f64 / 1e6, *total as f64 / 1e6);
+                    ui.add(egui::ProgressBar::new(part).text(text));
+                }
+                Some(Stage::Unpack) => {
+                    ui.add(egui::ProgressBar::new(1.0).text("Unpacking…"));
+                }
+                Some(Stage::Replace) => {
+                    ui.add(egui::ProgressBar::new(1.0).text("Replacing the files…"));
+                }
+                Some(Stage::Done(exe)) => {
+                    ui.label(RichText::new(format!("FFcut {} is installed. It starts the next time you open FFcut.", r.version)).color(theme::OK));
+                    let exporting = self.job.is_some();
+                    let b = ui.add_enabled(!exporting, widgets::primary_button("Restart now"));
+                    if b.on_disabled_hover_text("Wait until the export ends").clicked() {
+                        let open = self.clip.as_ref().map(|c| c.path.clone());
+                        if crate::install::restart(exe, open.as_deref()) {
+                            ui.ctx().send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Close);
+                        }
+                    }
+                }
+                Some(Stage::Failed(e)) => {
+                    widgets::error(ui, e);
+                }
+                None => {}
+            }
+            if busy {
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+            }
             ui.add_space(4.0);
-            widgets::hint(ui, "Windows: download the zip from the release page and replace the old folder.\nLinux: download the new AppImage (or let GearLever / AppImageUpdate do it).");
+            let how = if installable.is_some() {
+                "\"Update now\" downloads the new version, checks its checksum and replaces the files of this folder. Your settings and presets stay."
+            } else if cfg!(windows) {
+                "Download the zip from the release page and replace the old folder."
+            } else {
+                "Download the new AppImage from the release page, or let Gear Lever / AppImageUpdate update it."
+            };
+            widgets::hint(ui, how);
         });
         if !open {
             self.dialogs.update = false;
