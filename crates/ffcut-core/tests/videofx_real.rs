@@ -273,10 +273,16 @@ fn preview_chain_runs_in_ffmpeg_too() {
     }
     // the preview uses the same graph (absolute times): it must be a valid -vf
     let fx = with(vec![VKind::Sharpen(1.0), VKind::Area(Area::new(AreaShape::Blur)), VKind::Text(TextBlock { font: font(), ..Default::default() })]);
-    let p = preview_chain(&fx, 90, true, false, H, W).unwrap();
-    let st =
-        Command::new("ffmpeg").args(["-v", "error", "-y", "-i"]).arg(input()).args(["-vf", &p.graph, "-frames:v", "3", "-f", "null", "-"]).output().unwrap();
-    assert!(st.status.success(), "{}\n{}", p.graph, String::from_utf8_lossy(&st.stderr));
+    for div in [1, 2, 4] {
+        let p = preview_chain(&fx, 90, true, false, H, W, div).unwrap();
+        let st = Command::new("ffmpeg")
+            .args(["-v", "error", "-y", "-i"])
+            .arg(input())
+            .args(["-vf", &p.graph, "-frames:v", "3", "-f", "null", "-"])
+            .output()
+            .unwrap();
+        assert!(st.status.success(), "{}\n{}", p.graph, String::from_utf8_lossy(&st.stderr));
+    }
 }
 
 #[test]

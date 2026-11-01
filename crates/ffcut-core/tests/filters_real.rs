@@ -57,7 +57,7 @@ fn a_video_filter_with_awkward_text_runs() {
     f.set("expansion", Some("none".into()));
     f.set("fontsize", Some("20".into()));
     let fx = VideoFx { effects: vec![VEffect::new(VKind::Filter(f)), VEffect::new(VKind::Filter(FilterFx::new("negate")))], ..Default::default() };
-    let chain = videofx::preview_chain(&fx, 0, false, false, 160, 120).unwrap();
+    let chain = videofx::preview_chain(&fx, 0, false, false, 160, 120, 1).unwrap();
     assert!(chain.graph.ends_with(",negate"), "{}", chain.graph);
     let r = Command::new(&ff)
         .args(["-v", "error", "-f", "lavfi", "-i", "testsrc=size=160x120:duration=1", "-vf", &chain.graph, "-frames:v", "1", "-f", "null", "-"])

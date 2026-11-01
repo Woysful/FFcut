@@ -160,7 +160,7 @@ fn frei0r_plugin_reads_and_runs() {
     let mut fx = glow.new_fx();
     fx.set("0", Some("0.8".into()));
     let vfx = VideoFx { effects: vec![VEffect::new(VKind::Plugin(fx))], ..Default::default() };
-    let chain = videofx::preview_chain(&vfx, 0, false, false, 160, 120).unwrap();
+    let chain = videofx::preview_chain(&vfx, 0, false, false, 160, 120, 1).unwrap();
     run(&ff, "testsrc=size=160x120:duration=1", None, Some(&chain.graph)).unwrap_or_else(|e| panic!("{}: {e}", chain.graph));
 
     // every kind of parameter, with its default written out

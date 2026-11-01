@@ -50,7 +50,28 @@ impl App {
         }
     }
 
-    /// [loop, time]   [crop, ⏮ ◀ ▶ ▶| ⏭, tracks]   [audio track, volume]
+    /// The size the video preview runs at while effects are on: smaller keeps heavy effects real-time.
+    fn preview_quality(&mut self, ui: &mut egui::Ui) {
+        let label = |d: u32| match d {
+            2 => "1/2",
+            4 => "1/4",
+            _ => "Full",
+        };
+        let cur = self.settings.preview_div();
+        let tip = "Preview quality: the size the video preview runs at while video effects are on. \
+                   A smaller one keeps heavy effects playing smoothly. The export always uses the full size.";
+        let r = widgets::Combo::from_id_salt("preview_div").selected_text(label(cur)).width(64.0).show_list(ui, |ui| {
+            for (d, what) in [(1, "Full size"), (2, "1/2 of the size"), (4, "1/4 of the size")] {
+                if ui.selectable_label(cur == d, what).clicked() && cur != d {
+                    self.settings.preview_div = d;
+                    self.settings.save();
+                }
+            }
+        });
+        r.response.on_hover_text(tip);
+    }
+
+    /// [loop, time]   [crop, ⏮ ◀ ▶ ▶| ⏭, tracks]   [audio track, preview quality, volume]
     fn controls(&mut self, ui: &mut egui::Ui) {
         let dur = self.dur();
         let t = self.player.time();
@@ -153,6 +174,10 @@ impl App {
             if ui.add(egui::Button::new(icon).selected(self.muted)).clicked() {
                 self.muted = !self.muted;
                 self.player.set_mute(self.muted);
+            }
+            if !audio {
+                ui.add_space(12.0);
+                self.preview_quality(ui);
             }
             let tracks = self.clip.as_ref().map(|c| c.info.audio.clone()).unwrap_or_default();
             if !self.multitrack && !audio && tracks.len() > 1 {

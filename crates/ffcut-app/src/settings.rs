@@ -72,6 +72,8 @@ pub struct Settings {
     pub defaults: Defaults,
     /// Folders with LADSPA, LV2 or frei0r plugins, searched before the usual ones.
     pub plugin_folders: Vec<String>,
+    /// The video preview with effects on runs at 1/N of the size: 1 (full), 2 or 4.
+    pub preview_div: u32,
 }
 
 /// Output choices the user made the default; `None` = the built-in one.
@@ -119,6 +121,14 @@ impl Settings {
     }
     pub fn scroll_key(&self) -> ModKey {
         self.scroll_mod.unwrap_or(ModKey::Shift)
+    }
+
+    /// 1, 2 or 4, see `preview_div`.
+    pub fn preview_div(&self) -> u32 {
+        match self.preview_div {
+            2 | 4 => self.preview_div,
+            _ => 1,
+        }
     }
 
     /// Where plugins are looked for: the user's folders, then the usual ones.

@@ -177,7 +177,7 @@ impl App {
         }
         self.watch_filter_log();
         let (fw, fh) = self.frame_dims();
-        let want = videofx::preview_chain(&self.s.vfx, self.total_rotation(), self.s.flip_h, self.s.flip_v, fw, fh);
+        let want = videofx::preview_chain(&self.s.vfx, self.total_rotation(), self.s.flip_h, self.s.flip_v, fw, fh, self.settings.preview_div());
         if want != self.vfx.want {
             self.vfx.want = want;
             self.vfx.changed_at = Instant::now();

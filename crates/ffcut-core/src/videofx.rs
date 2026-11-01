@@ -329,12 +329,21 @@ pub struct PreviewChain {
 }
 
 /// `rot_deg` = clockwise degrees the picture is turned in total (container + user), `(w, h)` = the frame
-/// the user sees (rotated, uncropped). `None` = nothing to show.
-pub fn preview_chain(fx: &VideoFx, rot_deg: i64, flip_h: bool, flip_v: bool, w: u32, h: u32) -> Option<PreviewChain> {
+/// the user sees (rotated, uncropped), `div` = 1, 2 or 4: the preview runs at that fraction of the size,
+/// so heavy effects keep up while playing. `None` = nothing to show.
+pub fn preview_chain(fx: &VideoFx, rot_deg: i64, flip_h: bool, flip_v: bool, w: u32, h: u32, div: u32) -> Option<PreviewChain> {
     if !fx.is_active() {
         return None;
     }
-    let mut f = pixel_filters(fx);
+    let mut f = Vec::new();
+    let (w, h) = if div > 1 {
+        f.push(format!("scale=w='max(2,trunc(iw/{div}/2)*2)':h='max(2,trunc(ih/{div}/2)*2)':flags=bilinear"));
+        let small = |n: u32| (n / div / 2 * 2).max(2);
+        (small(w), small(h))
+    } else {
+        (w, h)
+    };
+    f.extend(pixel_filters(fx));
     let rotates = fx.has_overlay() || fx.has_captions();
     if rotates {
         f.extend(orient_filters(rot_deg, flip_h, flip_v));
@@ -357,7 +366,7 @@ mod tests {
         let f = fx(vec![VKind::Color(ColorAdj::default()), VKind::Curves(Curves::default()), VKind::Sharpen(0.0), VKind::Denoise(0.0)]);
         assert!(!f.is_active());
         assert!(pixel_filters(&f).is_empty());
-        assert!(preview_chain(&f, 0, false, false, 100, 100).is_none());
+        assert!(preview_chain(&f, 0, false, false, 100, 100, 1).is_none());
     }
 
     #[test]
@@ -434,10 +443,21 @@ mod tests {
     #[test]
     fn preview_rotates_only_when_it_draws_overlays() {
         let f = fx(vec![VKind::Sharpen(1.0)]);
-        let p = preview_chain(&f, 90, false, false, 100, 200).unwrap();
+        let p = preview_chain(&f, 90, false, false, 100, 200, 1).unwrap();
         assert!(!p.rotates && !p.graph.contains("transpose"));
         let f = fx(vec![VKind::Sharpen(1.0), VKind::Area(Area::new(AreaShape::Fill))]);
-        let p = preview_chain(&f, 90, true, false, 100, 200).unwrap();
+        let p = preview_chain(&f, 90, true, false, 100, 200, 1).unwrap();
         assert!(p.rotates && p.graph.starts_with("unsharp") && p.graph.contains("transpose=1,hflip,drawbox"), "{}", p.graph);
+    }
+
+    #[test]
+    fn a_smaller_preview_scales_first_and_draws_at_its_size() {
+        let a = Area { shape: AreaShape::Fill, x: 0.25, y: 0.5, w: 0.5, h: 0.25, ..Area::new(AreaShape::Fill) };
+        let f = fx(vec![VKind::Sharpen(1.0), VKind::Area(a)]);
+        let p = preview_chain(&f, 0, false, false, 1281, 720, 2).unwrap();
+        assert!(p.graph.starts_with("scale=w='max(2,trunc(iw/2/2)*2)':h='max(2,trunc(ih/2/2)*2)':flags=bilinear,unsharp"), "{}", p.graph);
+        // 1281 / 2 = 640 wide, 360 high
+        assert!(p.graph.contains("drawbox=x=160:y=180:w=320:h=90:"), "{}", p.graph);
+        assert!(!preview_chain(&f, 0, false, false, 1281, 720, 1).unwrap().graph.contains("scale"));
     }
 }
