@@ -105,6 +105,8 @@ pub fn apply(ctx: &egui::Context) {
     v.widgets.inactive.weak_bg_fill = BUTTON;
     v.widgets.hovered.weak_bg_fill = BUTTON_HOVER;
     v.widgets.active.weak_bg_fill = ACCENT.gamma_multiply(0.6);
+    // egui offsets it down and to the right; dropdowns and menus get it evenly around them
+    v.popup_shadow.offset = [0, 0];
     ctx.set_visuals(v);
     ctx.global_style_mut(|s| {
         s.spacing.item_spacing = egui::vec2(8.0, 6.0);
