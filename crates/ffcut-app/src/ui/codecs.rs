@@ -10,7 +10,7 @@ type Item = (&'static str, &'static str); // (ffmpeg encoder, label)
 
 const V_CPU: &[Item] = &[
     ("libx264", "H.264 (x264)"),
-    ("libx265", "H.265 / HEVC (x265)"),
+    ("libx265", "HEVC (x265)"),
     ("libsvtav1", "AV1 (SVT-AV1)"),
     ("libaom-av1", "AV1 (libaom)"),
     ("libvpx-vp9", "VP9"),
@@ -23,11 +23,11 @@ const V_CPU: &[Item] = &[
     ("ffv1", "FFV1 (lossless)"),
     ("huffyuv", "HuffYUV (lossless)"),
 ];
-const V_NVENC: &[Item] = &[("h264_nvenc", "H.264"), ("hevc_nvenc", "H.265 / HEVC"), ("av1_nvenc", "AV1")];
-const V_AMF: &[Item] = &[("h264_amf", "H.264"), ("hevc_amf", "H.265 / HEVC"), ("av1_amf", "AV1")];
-const V_QSV: &[Item] = &[("h264_qsv", "H.264"), ("hevc_qsv", "H.265 / HEVC"), ("av1_qsv", "AV1"), ("vp9_qsv", "VP9"), ("mpeg2_qsv", "MPEG-2")];
+const V_NVENC: &[Item] = &[("h264_nvenc", "H.264"), ("hevc_nvenc", "HEVC"), ("av1_nvenc", "AV1")];
+const V_AMF: &[Item] = &[("h264_amf", "H.264"), ("hevc_amf", "HEVC"), ("av1_amf", "AV1")];
+const V_QSV: &[Item] = &[("h264_qsv", "H.264"), ("hevc_qsv", "HEVC"), ("av1_qsv", "AV1"), ("vp9_qsv", "VP9"), ("mpeg2_qsv", "MPEG-2")];
 const V_VAAPI: &[Item] =
-    &[("h264_vaapi", "H.264"), ("hevc_vaapi", "H.265 / HEVC"), ("av1_vaapi", "AV1"), ("vp9_vaapi", "VP9"), ("vp8_vaapi", "VP8"), ("mpeg2_vaapi", "MPEG-2")];
+    &[("h264_vaapi", "H.264"), ("hevc_vaapi", "HEVC"), ("av1_vaapi", "AV1"), ("vp9_vaapi", "VP9"), ("vp8_vaapi", "VP8"), ("mpeg2_vaapi", "MPEG-2")];
 
 const A_LOSSY: &[Item] =
     &[("aac", "AAC"), ("libopus", "Opus"), ("libmp3lame", "MP3"), ("libvorbis", "Vorbis"), ("ac3", "AC-3"), ("eac3", "E-AC-3"), ("mp2", "MP2")];
