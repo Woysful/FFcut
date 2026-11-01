@@ -181,6 +181,7 @@ fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
     use filter_ui::Entry;
     let mut v: Vec<Entry<EffectKind>> = vec![
         Entry {
+            key: "norm-loudness".into(),
             group: GROUPS[0],
             title: "Normalize — loudness (LUFS)",
             desc: "Sets the loudness to a target, like streaming sites do",
@@ -188,6 +189,7 @@ fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
             make: Box::new(|| EffectKind::Norm(Normalize::new(NormMode::Loudness))),
         },
         Entry {
+            key: "norm-peak".into(),
             group: GROUPS[0],
             title: "Normalize — peak level",
             desc: "Raises the loudest peak to a level",
@@ -195,6 +197,7 @@ fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
             make: Box::new(|| EffectKind::Norm(Normalize::new(NormMode::Peak))),
         },
         Entry {
+            key: "comp".into(),
             group: GROUPS[0],
             title: "Compressor",
             desc: "Evens out loud and quiet parts",
@@ -202,6 +205,7 @@ fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
             make: Box::new(|| EffectKind::Comp(Compressor::default())),
         },
         Entry {
+            key: "eq".into(),
             group: GROUPS[1],
             title: "Equalizer",
             desc: "Bands you drag on a curve",
@@ -209,6 +213,7 @@ fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
             make: Box::new(|| EffectKind::Eq(vec![EqBand { kind: EqKind::Peak, freq: 1000.0, gain: 0.0, q: 1.0, on: true }])),
         },
         Entry {
+            key: "denoise".into(),
             group: GROUPS[2],
             title: "Noise reduction",
             desc: "Takes out steady hiss, fan or hum",
@@ -216,6 +221,7 @@ fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
             make: Box::new(|| EffectKind::Denoise(Denoise::default())),
         },
         Entry {
+            key: "deesser".into(),
             group: GROUPS[2],
             title: "De-esser",
             desc: "Softens harsh “s” sounds of a voice",
@@ -224,7 +230,14 @@ fn entries() -> Vec<filter_ui::Entry<'static, EffectKind>> {
         },
     ];
     for d in builtin::defs(Media::Audio) {
-        v.push(Entry { group: d.group, title: d.name, desc: d.desc, keywords: d.keywords, make: Box::new(move || EffectKind::Builtin(d.new_fx())) });
+        v.push(Entry {
+            key: format!("builtin:{}", d.id),
+            group: d.group,
+            title: d.name,
+            desc: d.desc,
+            keywords: d.keywords,
+            make: Box::new(move || EffectKind::Builtin(d.new_fx())),
+        });
     }
     v
 }
@@ -242,11 +255,13 @@ struct FxCtx {
     /// show the fades card (not for a preset, which has no clip)
     fades: bool,
     cat: Catalog,
+    /// The favorites of "+ Add effect" (`Settings::favorite_effects`).
+    favs: Vec<String>,
 }
 
 /// The effects stack of one track (fades, effects, add menu): shared by the sidebar and the presets editor.
 fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
-    let FxCtx { rendering, render_err, meas, sel, fades, cat } = c;
+    let FxCtx { rendering, render_err, meas, sel, fades, cat, favs } = c;
     let (rendering, render_err) = (*rendering, render_err.clone());
     let len = (t.trim_end - t.trim_start).max(0.1);
     ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
@@ -289,20 +304,12 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
 
     ui.horizontal(|ui| {
         widgets::form_menu(ui, "+ Add effect", |ui| {
-            let plugins = |ui: &mut egui::Ui| {
-                widgets::form_submenu(ui, "Plugin", |ui| {
-                    if let Some(p) = plugin_ui::picker(ui, cat, &[PluginKind::Ladspa, PluginKind::Lv2]) {
-                        t.effects.push(Effect::new(EffectKind::Plugin(p)));
-                        ui.close();
-                    }
-                })
-                .on_hover_text("A LADSPA or LV2 plugin installed on this computer (ffmpeg runs it)");
-            };
-            let picked = filter_ui::add_menu(ui, &entries(), &GROUPS, cat, Media::Audio, plugins);
+            let picked = filter_ui::add_menu(ui, &entries(), &GROUPS, cat, Media::Audio, &[PluginKind::Ladspa, PluginKind::Lv2], favs);
             if let Some(p) = picked {
                 t.effects.push(Effect::new(match p {
                     filter_ui::Pick::Effect(k) => k,
                     filter_ui::Pick::Filter(name) => EffectKind::Filter(FilterFx::new(name)),
+                    filter_ui::Pick::Plugin(p) => EffectKind::Plugin(p),
                 }));
                 ui.close();
             }
@@ -482,7 +489,15 @@ impl App {
             })
             .collect();
         let sel = self.fx.eq_sel.filter(|s| matches!(t0.effects.get(s.0).map(|e| &e.kind), Some(EffectKind::Eq(_))));
-        FxCtx { rendering: self.preview_rendering(t0), render_err: self.preview_error(t0), meas, sel, fades: true, cat: self.catalog.clone() }
+        FxCtx {
+            rendering: self.preview_rendering(t0),
+            render_err: self.preview_error(t0),
+            meas,
+            sel,
+            fades: true,
+            cat: self.catalog.clone(),
+            favs: self.settings.favorite_effects.clone(),
+        }
     }
 
     /// The effects of track `i` in the sidebar.
@@ -496,15 +511,28 @@ impl App {
             self.s.tracks[i] = t;
         }
         self.fx.eq_sel = c.sel;
+        if c.favs != self.settings.favorite_effects {
+            self.settings.favorite_effects = c.favs;
+            self.settings.save();
+        }
     }
 }
 
 /// The effect stack of an audio preset, edited with the same cards as a track (no clip, so no measuring or fades).
-pub fn preset_effects(ui: &mut egui::Ui, fx: &mut Vec<ffcut_core::Effect>, cat: &Catalog) -> bool {
+pub fn preset_effects(ui: &mut egui::Ui, fx: &mut Vec<ffcut_core::Effect>, cat: &Catalog, favs: &mut Vec<String>) -> bool {
     let mut t = TrackEdit::original(0, "preset".into(), 3600.0);
     t.effects = fx.clone();
-    let mut c = FxCtx { rendering: false, render_err: None, meas: vec![(None, false); t.effects.len()], sel: None, fades: false, cat: cat.clone() };
+    let mut c = FxCtx {
+        rendering: false,
+        render_err: None,
+        meas: vec![(None, false); t.effects.len()],
+        sel: None,
+        fades: false,
+        cat: cat.clone(),
+        favs: std::mem::take(favs),
+    };
     fx_body(ui, &mut t, &mut c);
+    *favs = c.favs;
     let changed = t.effects != *fx;
     if changed {
         *fx = t.effects;

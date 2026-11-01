@@ -6,6 +6,7 @@ use crate::catalog::{Catalog, Load};
 use crate::theme::{self, size};
 use eframe::egui::{self, text::LayoutJob, FontId, RichText, TextFormat};
 use ffcut_core::filters::{FilterFx, FilterInfo, Media, OptInfo, OptKind};
+use ffcut_core::plugins::{PluginFx, PluginInfo, PluginKind};
 use std::hash::Hash;
 
 /// Width of the filter list in the "+ Add effect" menu.
@@ -36,10 +37,20 @@ pub struct Row<'a> {
     pub desc: &'a str,
     /// Also searched, not shown (a plugin's file, say).
     pub extra: &'a str,
+    /// A favorite (filled star); `None` = the row has no star.
+    pub fav: Option<bool>,
 }
 
-/// A search box over a list with a fixed size, for a submenu of "+ Add effect". Returns the picked row.
-pub fn search_list(ui: &mut egui::Ui, id: egui::Id, rows: &[Row], noun: &str) -> Option<usize> {
+/// What a click on a row of a list in "+ Add effect" was for.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum RowAct {
+    Pick,
+    /// The star: add to / remove from the favorites.
+    Star,
+}
+
+/// A search box over a list with a fixed size, for a submenu of "+ Add effect". Returns the clicked row.
+pub fn search_list(ui: &mut egui::Ui, id: egui::Id, rows: &[Row], noun: &str) -> Option<(usize, RowAct)> {
     let mut q: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
     let r = ui.add(egui::TextEdit::singleline(&mut q).hint_text(format!("Search {} {noun}…", rows.len())).desired_width(LIST_W));
     if q.is_empty() && !r.has_focus() {
@@ -51,39 +62,91 @@ pub fn search_list(ui: &mut egui::Ui, id: egui::Id, rows: &[Row], noun: &str) ->
         (0..rows.len()).filter(|&i| ql.is_empty() || [rows[i].title, rows[i].desc, rows[i].extra].iter().any(|s| low(s).contains(&ql))).collect();
     // titles that start with the query first, the rest in the order given
     hits.sort_by_key(|&i| !low(rows[i].title).starts_with(&ql));
-    let mut picked = None;
+    let mut clicked = None;
     // a fixed height: the menu is then moved up to fit the window instead of shrinking the list
     egui::ScrollArea::vertical().min_scrolled_height(LIST_H).max_height(LIST_H).show(ui, |ui| {
         ui.set_width(LIST_W);
         ui.set_min_height(LIST_H);
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
         for &i in &hits {
-            if row(ui, rows[i].title, rows[i].desc).clicked() {
-                picked = Some(i);
+            if let Some(a) = row(ui, rows[i].title, rows[i].desc, rows[i].fav) {
+                clicked = Some((i, a));
             }
         }
         if hits.is_empty() {
             widgets::hint(ui, "Nothing matches.");
         }
     });
-    if picked.is_some() {
+    if clicked.is_some_and(|(_, a)| a == RowAct::Pick) {
         q.clear();
     }
     ui.data_mut(|d| d.insert_temp(id, q));
-    picked
+    clicked
 }
 
-/// One entry of a list in "+ Add effect": the title in full colour, then a dim description, cut to the width.
-fn row(ui: &mut egui::Ui, title: &str, desc: &str) -> egui::Response {
+/// Width of the star at the right of a row.
+const STAR_W: f32 = 24.0;
+
+/// One entry of a list in "+ Add effect": the title in full colour, then a dim description, cut to the
+/// width. With `fav`, a star at the right end (shown while the pointer is on the row, and always for a
+/// favorite) adds it to the favorites or takes it out.
+fn row(ui: &mut egui::Ui, title: &str, desc: &str, fav: Option<bool>) -> Option<RowAct> {
+    let pad = ui.spacing().button_padding;
+    let w = ui.available_width();
+    let star_w = if fav.is_some() { STAR_W } else { 0.0 };
     let mut job = LayoutJob::default();
     job.append(title, 0.0, TextFormat { font_id: FontId::proportional(size::BODY), color: theme::TEXT_STRONG, ..Default::default() });
     job.append(desc, 10.0, TextFormat { font_id: FontId::proportional(size::SMALL), color: theme::TEXT_DIM, ..Default::default() });
-    job.wrap = egui::text::TextWrapping::truncate_at_width(LIST_W - 16.0);
-    let r = ui.button(job);
-    if desc.is_empty() {
-        r
+    job.wrap = egui::text::TextWrapping::truncate_at_width(w - 2.0 * pad.x - star_w);
+    let galley = ui.painter().layout_job(job);
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, galley.size().y + 2.0 * pad.y), egui::Sense::click());
+    // added after the row, so it is the one on top that takes the click
+    let star = fav.map(|on| {
+        (on, ui.interact(egui::Rect::from_min_max(egui::pos2(rect.right() - star_w, rect.top()), rect.max), resp.id.with("star"), egui::Sense::click()))
+    });
+    let hovered = resp.hovered() || star.as_ref().is_some_and(|(_, s)| s.hovered());
+    if ui.is_rect_visible(rect) {
+        let v = &ui.visuals().widgets.hovered;
+        if hovered {
+            ui.painter().rect_filled(rect, v.corner_radius, v.weak_bg_fill);
+        }
+        ui.painter().galley(egui::pos2(rect.left() + pad.x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT_STRONG);
+        if let Some((on, s)) = &star {
+            if *on || hovered {
+                let color = match (*on, s.hovered()) {
+                    (true, _) => theme::ACCENT,
+                    (false, true) => theme::TEXT_STRONG,
+                    (false, false) => theme::TEXT_DIM,
+                };
+                paint_star(ui.painter(), s.rect.center(), 6.5, *on, color);
+            }
+        }
+    }
+    let resp = if desc.is_empty() { resp } else { resp.on_hover_text(desc) };
+    if let Some((on, s)) = star {
+        if s.on_hover_text(if on { "Remove from the favorites" } else { "Add to the favorites: it shows at the top of this menu" }).clicked() {
+            return Some(RowAct::Star);
+        }
+    }
+    resp.clicked().then_some(RowAct::Pick)
+}
+
+/// A five-pointed star of outer radius `r`: filled, or an outline.
+fn paint_star(p: &egui::Painter, c: egui::Pos2, r: f32, filled: bool, color: egui::Color32) {
+    let pt = |i: usize, rad: f32| {
+        let a = -std::f32::consts::FRAC_PI_2 + i as f32 * std::f32::consts::PI / 5.0;
+        c + rad * egui::vec2(a.cos(), a.sin())
+    };
+    let outer: Vec<egui::Pos2> = (0..5).map(|i| pt(2 * i, r)).collect();
+    let inner: Vec<egui::Pos2> = (0..5).map(|i| pt(2 * i + 1, r * 0.45)).collect();
+    if filled {
+        // the outline is concave, which egui does not fill: the inner pentagon and the five points
+        p.add(egui::Shape::convex_polygon(inner.clone(), color, egui::Stroke::NONE));
+        for i in 0..5 {
+            p.add(egui::Shape::convex_polygon(vec![outer[i], inner[i], inner[(i + 4) % 5]], color, egui::Stroke::NONE));
+        }
     } else {
-        r.on_hover_text(desc)
+        let path: Vec<egui::Pos2> = (0..5).flat_map(|i| [outer[i], inner[i]]).collect();
+        p.add(egui::Shape::closed_line(path, egui::Stroke::new(1.2, color)));
     }
 }
 
@@ -94,6 +157,8 @@ fn matches(texts: &[&str], words: &[String]) -> bool {
 
 /// A ready-made effect of the "+ Add effect" menu.
 pub struct Entry<'a, T> {
+    /// Names it in the favorites (stable, unlike the title).
+    pub key: String,
     pub group: &'static str,
     pub title: &'static str,
     pub desc: &'static str,
@@ -107,15 +172,61 @@ pub enum Pick<T> {
     Effect(T),
     /// An ffmpeg filter, by name.
     Filter(String),
+    Plugin(PluginFx),
 }
 
 /// Height of the list of the "+ Add effect" menu.
 const MENU_H: f32 = 420.0;
 
-/// The inside of "+ Add effect": a search field, the ready-made effects under their `groups` headings, then
-/// the ffmpeg filters of `media` that FFcut has no controls for; `more` adds rows below the list (the
-/// plugins). The search looks at both lists. Enter takes the first entry.
-pub fn add_menu<T>(ui: &mut egui::Ui, entries: &[Entry<T>], groups: &[&str], cat: &Catalog, media: Media, more: impl FnOnce(&mut egui::Ui)) -> Option<Pick<T>> {
+fn media_key(m: Media) -> &'static str {
+    match m {
+        Media::Audio => "audio",
+        Media::Video => "video",
+    }
+}
+
+/// How the favorites (`Settings::favorite_effects`) name an entry, a filter and a plugin.
+fn effect_key(m: Media, key: &str) -> String {
+    format!("{}:effect:{key}", media_key(m))
+}
+fn filter_key(m: Media, name: &str) -> String {
+    format!("{}:filter:{name}", media_key(m))
+}
+pub(super) fn plugin_key(p: &PluginInfo) -> String {
+    let m = if p.kind == PluginKind::Frei0r { Media::Video } else { Media::Audio };
+    format!("{}:plugin:{}:{}:{}", media_key(m), p.kind.label(), p.id, p.label)
+}
+
+/// Adds `key` to the favorites, or takes it out.
+pub(super) fn toggle_fav(favs: &mut Vec<String>, key: String) {
+    match favs.iter().position(|k| *k == key) {
+        Some(i) => {
+            favs.remove(i);
+        }
+        None => favs.push(key),
+    }
+}
+
+/// An entry of the "Favorites" group.
+enum Fav<'a> {
+    Effect(usize),
+    Filter(&'a FilterInfo),
+    Plugin(&'a PluginInfo),
+}
+
+/// The inside of "+ Add effect": a search field, the favorites, the ready-made effects under their
+/// `groups` headings, then the ffmpeg filters of `media` that FFcut has no controls for, then the
+/// `plugins` submenu. The search looks at all of them; Enter takes the first entry. A star on a row
+/// moves it to the favorites at the top (`favs`, kept in the settings).
+pub fn add_menu<T>(
+    ui: &mut egui::Ui,
+    entries: &[Entry<T>],
+    groups: &[&str],
+    cat: &Catalog,
+    media: Media,
+    plugins: &[PluginKind],
+    favs: &mut Vec<String>,
+) -> Option<Pick<T>> {
     let id = egui::Id::new(("add-effect", media));
     let frame = ui.ctx().cumulative_frame_nr();
     // the menu was closed in between: start with an empty search, and type into it right away
@@ -130,21 +241,52 @@ pub fn add_menu<T>(ui: &mut egui::Ui, entries: &[Entry<T>], groups: &[&str], cat
     let enter = search.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
     let words: Vec<String> = q.split_whitespace().map(str::to_lowercase).collect();
     let first = words.first().map_or("", String::as_str);
+    let is_fav = |key: &str| favs.iter().any(|k| k == key);
 
-    let hits: Vec<usize> =
-        (0..entries.len()).filter(|&i| matches(&[entries[i].title, entries[i].desc, entries[i].keywords, entries[i].group], &words)).collect();
+    let entry_keys: Vec<String> = entries.iter().map(|e| effect_key(media, &e.key)).collect();
+    let hits: Vec<usize> = (0..entries.len())
+        .filter(|&i| !is_fav(&entry_keys[i]) && matches(&[entries[i].title, entries[i].desc, entries[i].keywords, entries[i].group], &words))
+        .collect();
     let filters = cat.filters_of(media);
-    let mut found: Vec<&FilterInfo> = Vec::new();
-    if let Load::Ready(list) = &filters {
-        found = list.iter().filter(|f| ffcut_core::filters::in_picker(&f.name) && matches(&[&f.name, &f.desc], &words)).collect();
-        // names that start with the query first, the rest in ffmpeg's (alphabetical) order
-        found.sort_by_key(|f| !f.name.starts_with(first));
-    }
+    let list: &[FilterInfo] = if let Load::Ready(l) = &filters { l } else { &[] };
+    let mut found: Vec<&FilterInfo> = list
+        .iter()
+        .filter(|f| ffcut_core::filters::in_picker(&f.name) && !is_fav(&filter_key(media, &f.name)) && matches(&[&f.name, &f.desc], &words))
+        .collect();
+    // names that start with the query first, the rest in ffmpeg's (alphabetical) order
+    found.sort_by_key(|f| !f.name.starts_with(first));
+    let scan = if let Load::Ready(s) = cat.plugins() { Some(s) } else { None };
+    let usable: Vec<&PluginInfo> = scan.as_ref().map(|s| s.plugins.iter().filter(|p| p.usable() && plugins.contains(&p.kind)).collect()).unwrap_or_default();
+
+    // the favorites in the order they were starred; one whose effect, filter or plugin is gone is skipped
+    let fav_rows: Vec<(Fav, String)> = favs
+        .iter()
+        .filter_map(|k| {
+            let f = if let Some(i) = entry_keys.iter().position(|e| e == k) {
+                let e = &entries[i];
+                matches(&[e.title, e.desc, e.keywords, e.group], &words).then_some(Fav::Effect(i))
+            } else if let Some(f) = list.iter().find(|f| filter_key(media, &f.name) == *k) {
+                matches(&[&f.name, &f.desc], &words).then_some(Fav::Filter(f))
+            } else {
+                let p = usable.iter().find(|p| plugin_key(p) == *k)?;
+                matches(&[&p.name, &p.desc, p.kind.label()], &words).then_some(Fav::Plugin(p))
+            }?;
+            Some((f, k.clone()))
+        })
+        .collect();
+    let pick_fav = |f: &Fav| match f {
+        Fav::Effect(i) => Pick::Effect((entries[*i].make)()),
+        Fav::Filter(f) => Pick::Filter(f.name.clone()),
+        Fav::Plugin(p) => Pick::Plugin(p.new_fx()),
+    };
+
     let mut picked: Option<Pick<T>> = None;
+    let mut star: Option<String> = None;
     if enter {
-        picked = match (hits.first(), found.first()) {
-            (Some(&i), _) => Some(Pick::Effect((entries[i].make)())),
-            (None, Some(f)) => Some(Pick::Filter(f.name.clone())),
+        picked = match (fav_rows.first(), hits.first(), found.first()) {
+            (Some((f, _)), _, _) => Some(pick_fav(f)),
+            (None, Some(&i), _) => Some(Pick::Effect((entries[i].make)())),
+            (None, None, Some(f)) => Some(Pick::Filter(f.name.clone())),
             _ => None,
         };
     }
@@ -152,7 +294,23 @@ pub fn add_menu<T>(ui: &mut egui::Ui, entries: &[Entry<T>], groups: &[&str], cat
     egui::ScrollArea::vertical().id_salt(id.with("list")).min_scrolled_height(MENU_H).max_height(MENU_H).show(ui, |ui| {
         ui.set_width(LIST_W);
         ui.set_min_height(MENU_H);
-        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
+        if !fav_rows.is_empty() {
+            widgets::menu_indent(ui, |ui| widgets::caption(ui, "Favorites"));
+            for (f, key) in &fav_rows {
+                let (title, desc): (&str, String) = match f {
+                    Fav::Effect(i) => (entries[*i].title, entries[*i].desc.to_string()),
+                    Fav::Filter(f) => (&f.name, format!("ffmpeg filter · {}", f.desc)),
+                    Fav::Plugin(p) if p.desc.is_empty() => (&p.name, p.kind.label().to_string()),
+                    Fav::Plugin(p) => (&p.name, format!("{} · {}", p.kind.label(), p.desc)),
+                };
+                match row(ui, title, &desc, Some(true)) {
+                    Some(RowAct::Pick) => picked = Some(pick_fav(f)),
+                    Some(RowAct::Star) => star = Some(key.clone()),
+                    None => {}
+                }
+            }
+            ui.add_space(4.0);
+        }
         for g in groups {
             let in_group: Vec<usize> = hits.iter().copied().filter(|&i| entries[i].group == *g).collect();
             if in_group.is_empty() {
@@ -160,8 +318,10 @@ pub fn add_menu<T>(ui: &mut egui::Ui, entries: &[Entry<T>], groups: &[&str], cat
             }
             widgets::menu_indent(ui, |ui| widgets::caption(ui, g));
             for i in in_group {
-                if row(ui, entries[i].title, entries[i].desc).clicked() {
-                    picked = Some(Pick::Effect((entries[i].make)()));
+                match row(ui, entries[i].title, entries[i].desc, Some(false)) {
+                    Some(RowAct::Pick) => picked = Some(Pick::Effect((entries[i].make)())),
+                    Some(RowAct::Star) => star = Some(entry_keys[i].clone()),
+                    None => {}
                 }
             }
             ui.add_space(4.0);
@@ -171,8 +331,10 @@ pub fn add_menu<T>(ui: &mut egui::Ui, entries: &[Entry<T>], groups: &[&str], cat
                 widgets::menu_indent(ui, |ui| widgets::caption(ui, &format!("FFmpeg filters · {}", found.len())))
                     .on_hover_text("Any other filter of your ffmpeg, with a form made from the options it reports");
                 for f in &found {
-                    if row(ui, &f.name, &f.desc).clicked() {
-                        picked = Some(Pick::Filter(f.name.clone()));
+                    match row(ui, &f.name, &f.desc, Some(false)) {
+                        Some(RowAct::Pick) => picked = Some(Pick::Filter(f.name.clone())),
+                        Some(RowAct::Star) => star = Some(filter_key(media, &f.name)),
+                        None => {}
                     }
                 }
             }
@@ -181,18 +343,32 @@ pub fn add_menu<T>(ui: &mut egui::Ui, entries: &[Entry<T>], groups: &[&str], cat
                 loaded(ui, l.clone(), "ffmpeg's filters");
             }
         }
-        if hits.is_empty() && found.is_empty() && matches!(filters, Load::Ready(_)) {
+        if fav_rows.is_empty() && hits.is_empty() && found.is_empty() && matches!(filters, Load::Ready(_)) {
             widgets::hint(ui, "Nothing matches.");
         }
     });
     ui.separator();
-    more(ui);
+    let tip = if plugins.contains(&PluginKind::Frei0r) {
+        "A frei0r plugin installed on this computer (ffmpeg runs it)"
+    } else {
+        "A LADSPA or LV2 plugin installed on this computer (ffmpeg runs it)"
+    };
+    widgets::form_submenu(ui, "Plugin", |ui| {
+        if let Some(p) = super::plugin_ui::picker(ui, cat, plugins, favs) {
+            picked = Some(Pick::Plugin(p));
+        }
+    })
+    .on_hover_text(tip);
+    if let Some(k) = star {
+        toggle_fav(favs, k);
+    }
     if picked.is_some() {
         q.clear();
     }
     ui.data_mut(|d| d.insert_temp(id, q));
     picked
 }
+
 // ------------------------------------------------------------------ the form
 
 pub(super) fn fnum(v: f64, int: bool) -> String {

@@ -1,7 +1,7 @@
 //! A plugin effect (LADSPA, LV2, frei0r): the searchable list it is picked from and its form, made from the
 //! controls the plugin declares. Shared by the audio and the video stacks.
 
-use super::filter_ui::{fnum, loaded, search_list, Row};
+use super::filter_ui::{fnum, loaded, plugin_key, search_list, toggle_fav, Row, RowAct};
 use super::widgets;
 use crate::catalog::{Catalog, Load};
 use crate::theme::{self, size};
@@ -9,8 +9,9 @@ use eframe::egui::{self, RichText};
 use ffcut_core::plugins::{same_value, Control, CtlKind, PluginFx, PluginInfo, PluginKind};
 use std::hash::Hash;
 
-/// The searchable list of the usable plugins of these kinds. Returns the new effect.
-pub fn picker(ui: &mut egui::Ui, cat: &Catalog, kinds: &[PluginKind]) -> Option<PluginFx> {
+/// The searchable list of the usable plugins of these kinds, with a star for the favorites. Returns the new
+/// effect.
+pub fn picker(ui: &mut egui::Ui, cat: &Catalog, kinds: &[PluginKind], favs: &mut Vec<String>) -> Option<PluginFx> {
     let scan = loaded(ui, cat.plugins(), "the plugins")?;
     for k in kinds.iter().filter(|k| cat.lacks_host(**k) == Some(true)) {
         widgets::warn(ui, format!("Your ffmpeg was built without {} support: these plugins cannot run.", k.label()));
@@ -32,9 +33,16 @@ pub fn picker(ui: &mut egui::Ui, cat: &Catalog, kinds: &[PluginKind]) -> Option<
         })
         .collect();
     let extras: Vec<String> = list.iter().map(|p| format!("{} {} {}", p.id, p.label, p.file.display())).collect();
-    let rows: Vec<Row> = list.iter().enumerate().map(|(i, p)| Row { title: &p.name, desc: &descs[i], extra: &extras[i] }).collect();
-    let picked = search_list(ui, egui::Id::new(("plugin-search", kinds)), &rows, "plugins");
-    picked.map(|i| list[i].new_fx())
+    let keys: Vec<String> = list.iter().map(|p| plugin_key(p)).collect();
+    let rows: Vec<Row> =
+        list.iter().enumerate().map(|(i, p)| Row { title: &p.name, desc: &descs[i], extra: &extras[i], fav: Some(favs.contains(&keys[i])) }).collect();
+    match search_list(ui, egui::Id::new(("plugin-search", kinds)), &rows, "plugins")? {
+        (i, RowAct::Pick) => Some(list[i].new_fx()),
+        (i, RowAct::Star) => {
+            toggle_fav(favs, keys[i].clone());
+            None
+        }
+    }
 }
 
 fn ctl_tip(p: &PluginInfo, c: &Control) -> String {

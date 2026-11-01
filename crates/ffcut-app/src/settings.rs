@@ -74,6 +74,9 @@ pub struct Settings {
     pub plugin_folders: Vec<String>,
     /// The video preview with effects on runs at 1/N of the size: 1 (full), 2 or 4.
     pub preview_div: u32,
+    /// Entries of "+ Add effect" starred by the user, shown at its top in this order (`audio:effect:eq`,
+    /// `video:filter:hue`, `audio:plugin:LV2:<uri>:`...).
+    pub favorite_effects: Vec<String>,
 }
 
 /// Output choices the user made the default; `None` = the built-in one.
