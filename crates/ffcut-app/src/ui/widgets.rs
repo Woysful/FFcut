@@ -207,16 +207,25 @@ pub fn form_menu<R>(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>, add: 
 }
 
 fn menu_with<R>(ui: &mut egui::Ui, label: egui::WidgetText, close: egui::PopupCloseBehavior, add: impl FnOnce(&mut egui::Ui) -> R) -> egui::Response {
-    use egui::containers::menu::MenuConfig;
     let resp = ui.add(egui::Button::new(label));
+    menu_on(&resp, close, add);
+    resp
+}
+
+/// A [`form_menu`] that opens from a button the caller drew (an icon button...).
+pub fn form_menu_for<R>(resp: &egui::Response, add: impl FnOnce(&mut egui::Ui) -> R) {
+    menu_on(resp, egui::PopupCloseBehavior::CloseOnClickOutside, add);
+}
+
+fn menu_on<R>(resp: &egui::Response, close: egui::PopupCloseBehavior, add: impl FnOnce(&mut egui::Ui) -> R) {
+    use egui::containers::menu::MenuConfig;
     let config = MenuConfig::new().style(theme::menu_style).close_behavior(close);
-    egui::Popup::menu(&resp)
+    egui::Popup::menu(resp)
         .gap(MENU_GAP)
         .close_behavior(close)
         .style(theme::menu_style)
         .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(MenuConfig::MENU_CONFIG_TAG, config))
         .show(add);
-    resp
 }
 /// A submenu that holds a form (a search field...): clicks inside it do not close the menu, only an entry
 /// that calls `ui.close()` or a click outside does.

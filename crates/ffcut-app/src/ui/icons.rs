@@ -13,6 +13,8 @@ pub enum Icon {
     Loop,
     Tracks,
     Crop,
+    /// Three dots: the controls that did not fit.
+    More,
 }
 
 fn tri(c: Pos2, s: f32, right: bool, col: Color32) -> Shape {
@@ -58,6 +60,12 @@ fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
             let pts = |v: [(f32, f32); 3]| Shape::line(v.iter().map(|(x, y)| pos2(c.x + s * x, c.y + s * y)).collect(), st);
             p.add(pts([(-0.25, -0.65), (-0.25, 0.25), (0.65, 0.25)]));
             p.add(pts([(0.25, 0.65), (0.25, -0.25), (-0.65, -0.25)]))
+        }
+        Icon::More => {
+            for dx in [-0.6, 0.0, 0.6] {
+                p.add(Shape::circle_filled(pos2(c.x + s * dx, c.y), s * 0.17, col));
+            }
+            p.add(Shape::Noop)
         }
         Icon::Loop => {
             // an arc with an arrow head: repeat

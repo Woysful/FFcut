@@ -190,7 +190,9 @@ impl App {
         if self.clip.is_none() {
             return;
         }
-        egui::Panel::right("sidebar").default_size(360.0).size_range(320.0..=600.0).frame(egui::Frame::NONE.fill(theme::PANEL)).show(ui, |ui| {
+        // the video and the transport bar under it keep at least 600 px
+        let max = (ui.ctx().content_rect().width() - 600.0).clamp(320.0, 600.0);
+        egui::Panel::right("sidebar").default_size(360.0).size_range(320.0..=max).frame(egui::Frame::NONE.fill(theme::PANEL)).show(ui, |ui| {
             egui::Panel::bottom("sidebar-footer")
                 .frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin { left: 14, right: 14, top: 10, bottom: 12 }))
                 .show(ui, |ui| self.export_footer(ui));

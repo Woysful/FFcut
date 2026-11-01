@@ -5,6 +5,7 @@ use crate::app::{fmt_time, App, TlDrag};
 use crate::hotkeys::Action;
 use crate::theme;
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, FontId, Layout, Rect, RichText, Sense, Stroke, StrokeKind, UiBuilder};
+use ffcut_core::AudioStream;
 
 /// Width of the left column of the multi-track view (track name and controls).
 pub const HEADER_W: f32 = 180.0;
@@ -52,35 +53,97 @@ impl App {
 
     /// The size the video preview runs at while effects are on: smaller keeps heavy effects real-time.
     fn preview_quality(&mut self, ui: &mut egui::Ui) {
-        let label = |d: u32| match d {
-            2 => "1/2",
-            4 => "1/4",
-            _ => "Full",
-        };
-        let cur = self.settings.preview_div();
-        let tip = "Preview quality: the size the video preview runs at while video effects are on. \
-                   A smaller one keeps heavy effects playing smoothly. The export always uses the full size.";
-        let r = widgets::Combo::from_id_salt("preview_div").selected_text(label(cur)).width(64.0).show_list(ui, |ui| {
-            for (d, what) in [(1, "Full size"), (2, "1/2 of the size"), (4, "1/4 of the size")] {
-                if ui.selectable_label(cur == d, what).clicked() && cur != d {
-                    self.settings.preview_div = d;
-                    self.settings.save();
-                }
-            }
+        let r = widgets::Combo::from_id_salt("preview_div").selected_text(quality_label(self.settings.preview_div())).width(64.0).show_list(ui, |ui| {
+            self.quality_items(ui);
         });
-        r.response.on_hover_text(tip);
+        r.response.on_hover_text(QUALITY_TIP);
+    }
+
+    fn quality_items(&mut self, ui: &mut egui::Ui) {
+        let cur = self.settings.preview_div();
+        for (d, what) in [(1, "Full size"), (2, "1/2 of the size"), (4, "1/4 of the size")] {
+            if ui.selectable_label(cur == d, what).clicked() && cur != d {
+                self.settings.preview_div = d;
+                self.settings.save();
+            }
+        }
+    }
+
+    fn audio_items(&mut self, ui: &mut egui::Ui, tracks: &[AudioStream]) {
+        for a in tracks {
+            // applied by `sync_preview_audio`
+            ui.selectable_value(&mut self.preview_audio, a.index, super::audio_label(a));
+        }
+    }
+
+    fn volume_slider(&mut self, ui: &mut egui::Ui) {
+        let mut vol = self.volume;
+        if ui.add(egui::Slider::new(&mut vol, 0.0..=130.0).show_value(false).trailing_fill(true)).changed() {
+            self.volume = vol;
+            self.player.set_volume(vol as f64);
+        }
     }
 
     /// [loop, time]   [crop, ⏮ ◀ ▶ ▶| ⏭, tracks]   [audio track, preview quality, volume]
+    ///
+    /// When the bar is narrow the sides give way in steps: the volume slider gets shorter, the time drops
+    /// the duration, the audio track and the preview quality move into a "⋯" menu, then the slider too.
+    /// The centre moves off the middle before anything has to go.
     fn controls(&mut self, ui: &mut egui::Ui) {
         let dur = self.dur();
         let t = self.player.time();
         let h = 30.0;
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
         let audio = self.audio_mode();
-        let centre = Rect::from_center_size(rect.center(), vec2(if audio { 210.0 } else { 320.0 }, h));
-        let left = Rect::from_min_max(rect.min, pos2((centre.left() - 10.0).max(rect.left()), rect.max.y));
-        let right = Rect::from_min_max(pos2((centre.right() + 10.0).min(rect.right()), rect.min.y), rect.max);
+        let tracks = self.clip.as_ref().map(|c| c.info.audio.clone()).unwrap_or_default();
+        let show_tracks = !self.multitrack && !audio && tracks.len() > 1;
+        let show_quality = !audio;
+
+        let fps = self.clip.as_ref().map_or(0.0, |c| c.info.fps);
+        let frames = |x: f64| (x * fps).round() as i64;
+        let in_frames = self.settings.show_frames && fps > 0.0;
+        let (cur, total) = if in_frames { (frames(t).to_string(), frames(dur).to_string()) } else { (fmt_time(t), fmt_time(dur)) };
+
+        // ---- what fits
+        let sp = ui.spacing().item_spacing.x;
+        let font = FontId::monospace(13.0);
+        let text_w = |s: String, f: FontId| ui.painter().layout_no_wrap(s, f, Color32::WHITE).size().x;
+        // measured on the duration: the current time never gets wider, so the layout does not flicker while playing
+        let long_w = text_w(format!("{total} / {total}"), font.clone());
+        let short_w = text_w(total.clone(), font);
+        let mute_w = text_w("🔊".into(), egui::TextStyle::Button.resolve(ui.style())) + 2.0 * ui.spacing().button_padding.x;
+        let extras = show_tracks || show_quality;
+        let left_need = |short: bool| 34.0 + sp + 6.0 + if short { short_w } else { long_w } + 4.0;
+        let right_need = |fit: &Fit| {
+            let mut w = mute_w + sp;
+            if !fit.vol_in_more {
+                w += fit.vol_w + sp;
+            }
+            if fit.more {
+                w += 12.0 + 34.0 + sp;
+            } else {
+                w += if show_quality { 12.0 + 64.0 + sp } else { 0.0 } + if show_tracks { 12.0 + 96.0 + sp } else { 0.0 };
+            }
+            w + 4.0
+        };
+        let cw = if audio { 210.0 } else { 304.0 };
+        let gap = 10.0;
+        let steps = [
+            Fit { short_time: false, vol_w: 92.0, more: false, vol_in_more: false },
+            Fit { short_time: false, vol_w: 60.0, more: false, vol_in_more: false },
+            Fit { short_time: true, vol_w: 60.0, more: false, vol_in_more: false },
+            Fit { short_time: true, vol_w: 60.0, more: extras, vol_in_more: false },
+            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true },
+        ];
+        let fits = |f: &Fit| left_need(f.short_time) + cw + right_need(f) + 2.0 * gap <= rect.width();
+        let fit = steps.iter().find(|f| fits(f)).unwrap_or(&steps[steps.len() - 1]);
+        let (lneed, rneed) = (left_need(fit.short_time), right_need(fit));
+        let mid = rect.center().x - cw / 2.0;
+        let (lo, hi) = (rect.left() + lneed + gap, rect.right() - rneed - gap - cw);
+        let cx = if lo <= hi { mid.clamp(lo, hi) } else { mid };
+        let centre = Rect::from_min_size(pos2(cx, rect.top()), vec2(cw, h));
+        let left = Rect::from_min_max(rect.min, pos2((centre.left() - gap).max(rect.left()), rect.max.y));
+        let right = Rect::from_min_max(pos2((centre.right() + gap).min(rect.right()), rect.min.y), rect.max);
         let lay = |l: Layout, r: Rect| UiBuilder::new().max_rect(r).layout(l);
 
         // ---- left: loop + time (click the time to switch to frame numbers)
@@ -91,12 +154,17 @@ impl App {
                 self.sync_loop();
             }
             ui.add_space(6.0);
-            let fps = self.clip.as_ref().map_or(0.0, |c| c.info.fps);
-            let frames = |x: f64| (x * fps).round() as i64;
             let as_time = format!("{} / {}", fmt_time(t), fmt_time(dur));
             let as_frames = format!("{} / {}", frames(t), frames(dur));
-            let (shown, other, unit) = if self.settings.show_frames && fps > 0.0 { (as_frames, as_time, "frames") } else { (as_time, as_frames, "time") };
-            let tip = if fps > 0.0 { format!("Showing {unit}. Click to switch.\n{other}") } else { "No frame rate known: showing time".to_string() };
+            let shown = if fit.short_time { cur.clone() } else { format!("{cur} / {total}") };
+            let unit = if in_frames { "frames" } else { "time" };
+            let tip = if fps <= 0.0 {
+                format!("No frame rate known: showing time\n{as_time}")
+            } else if fit.short_time {
+                format!("Showing {unit}. Click to switch.\n{as_time}\nFrame {as_frames}")
+            } else {
+                format!("Showing {unit}. Click to switch.\n{}", if in_frames { as_time } else { as_frames })
+            };
             let r = ui
                 .add(egui::Label::new(RichText::new(shown).monospace().size(13.0)).sense(Sense::click()))
                 .on_hover_text(tip)
@@ -106,7 +174,6 @@ impl App {
                 self.settings.save();
             }
         });
-
         // ---- centre: crop | media buttons | tracks
         ui.scope_builder(lay(Layout::left_to_right(Align::Center), centre), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
@@ -161,38 +228,67 @@ impl App {
             }
         });
 
-        // ---- right: preview audio track (hidden in track view) + volume
+        // ---- right: preview audio track (hidden in track view), preview quality, volume
         ui.scope_builder(lay(Layout::right_to_left(Align::Center), right), |ui| {
             ui.set_clip_rect(right);
-            ui.spacing_mut().slider_width = 92.0;
-            let mut vol = self.volume;
-            if ui.add(egui::Slider::new(&mut vol, 0.0..=130.0).show_value(false).trailing_fill(true)).changed() {
-                self.volume = vol;
-                self.player.set_volume(vol as f64);
+            if !fit.vol_in_more {
+                ui.spacing_mut().slider_width = fit.vol_w;
+                self.volume_slider(ui);
             }
             let icon = if self.muted { "🔇" } else { "🔊" };
-            if ui.add(egui::Button::new(icon).selected(self.muted)).clicked() {
+            if ui.add(egui::Button::new(icon).selected(self.muted)).on_hover_text("Mute").clicked() {
                 self.muted = !self.muted;
                 self.player.set_mute(self.muted);
             }
-            if !audio {
+            if fit.more {
                 ui.add_space(12.0);
-                self.preview_quality(ui);
-            }
-            let tracks = self.clip.as_ref().map(|c| c.info.audio.clone()).unwrap_or_default();
-            if !self.multitrack && !audio && tracks.len() > 1 {
-                ui.add_space(12.0);
-                let cur = format!("Audio #{}", self.preview_audio + 1);
-                widgets::Combo::from_id_salt("preview_audio").selected_text(cur).width(96.0).show_list(ui, |ui| {
-                    for a in &tracks {
-                        // applied by `sync_preview_audio`
-                        ui.selectable_value(&mut self.preview_audio, a.index, super::audio_label(a));
+                let what: Vec<&str> = [(show_tracks, "audio track"), (show_quality, "preview quality"), (fit.vol_in_more, "volume")]
+                    .into_iter()
+                    .filter_map(|(on, w)| on.then_some(w))
+                    .collect();
+                let more = icon_button(ui, vec2(34.0, 28.0), Icon::More, false, None).on_hover_text(format!("More: {}", what.join(", ")));
+                widgets::form_menu_for(&more, |ui| {
+                    let head = |ui: &mut egui::Ui, s: &str| widgets::menu_indent(ui, |ui| ui.label(RichText::new(s).strong()));
+                    let mut first = true;
+                    let mut sep = |ui: &mut egui::Ui| {
+                        if !std::mem::take(&mut first) {
+                            ui.separator();
+                        }
+                    };
+                    if fit.vol_in_more {
+                        sep(ui);
+                        head(ui, "Volume");
+                        widgets::menu_indent(ui, |ui| {
+                            ui.spacing_mut().slider_width = 140.0;
+                            self.volume_slider(ui);
+                        });
+                    }
+                    if show_tracks {
+                        sep(ui);
+                        head(ui, "Audio track");
+                        self.audio_items(ui, &tracks);
+                    }
+                    if show_quality {
+                        sep(ui);
+                        head(ui, "Preview quality").on_hover_text(QUALITY_TIP);
+                        self.quality_items(ui);
                     }
                 });
+            } else {
+                if show_quality {
+                    ui.add_space(12.0);
+                    self.preview_quality(ui);
+                }
+                if show_tracks {
+                    ui.add_space(12.0);
+                    let cur = format!("Audio #{}", self.preview_audio + 1);
+                    widgets::Combo::from_id_salt("preview_audio").selected_text(cur).width(96.0).show_list(ui, |ui| {
+                        self.audio_items(ui, &tracks);
+                    });
+                }
             }
         });
     }
-
     /// Track with trim handles. Click/drag = seek; drag a handle = move trim start/end.
     pub(super) fn timeline(&mut self, ui: &mut egui::Ui, height: f32) {
         let dur = self.dur().max(0.001);
@@ -355,4 +451,24 @@ fn short_time(t: f64) -> String {
     } else {
         format!("{m}:{s:02}")
     }
+}
+
+const QUALITY_TIP: &str = "Preview quality: the size the video preview runs at while video effects are on. \
+                           A smaller one keeps heavy effects playing smoothly. The export always uses the full size.";
+
+fn quality_label(div: u32) -> &'static str {
+    match div {
+        2 => "1/2",
+        4 => "1/4",
+        _ => "Full",
+    }
+}
+
+/// One step of [`App::controls`] giving way on a narrow bar.
+struct Fit {
+    short_time: bool,
+    vol_w: f32,
+    /// The audio track and the preview quality sit in the "⋯" menu.
+    more: bool,
+    vol_in_more: bool,
 }
