@@ -719,12 +719,18 @@ dependencies = [
  "libmpv2",
  "libmpv2-sys",
  "open",
+ "raw-window-handle",
  "rfd",
  "serde",
  "serde_json",
  "sha2",
  "ureq",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
+ "wayland-protocols-plasma",
  "winit",
+ "x11rb",
  "zip",
 ]
 

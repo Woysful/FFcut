@@ -27,7 +27,14 @@ open = "5"
 image = { version = "0.25", default-features = false, features = ["png"] }
 zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2"] }
 sha2 = "0.10"
+raw-window-handle = "0.6"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 # same winit as eframe uses (0.30.x): needed to choose X11 / Wayland explicitly
 winit = { version = "0.30", default-features = false, features = ["x11", "wayland"] }
+# blur behind the window (the same versions winit uses): a window property on X11, a protocol on Wayland
+x11rb = "0.13"
+wayland-client = "0.31"
+wayland-backend = { version = "0.3", features = ["client_system"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols-plasma = { version = "0.3", features = ["client"] }

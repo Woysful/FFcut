@@ -84,6 +84,8 @@ pub struct Settings {
     /// Opacity of the main window's surfaces, and of menus, tooltips and dialogs (30..=100 % and 50..=100 %); `None` = opaque.
     pub window_opacity: Option<f32>,
     pub popup_opacity: Option<f32>,
+    /// Ask the desktop to blur what is behind the see-through window.
+    pub window_blur: bool,
 }
 
 /// Output choices the user made the default; `None` = the built-in one.
@@ -194,6 +196,7 @@ mod tests {
         assert_eq!(s.theme(), crate::theme::Kind::Standard);
         assert_eq!(s.accent(), None);
         assert_eq!((s.window_alpha(), s.popup_alpha()), (1.0, 1.0));
+        assert!(!s.window_blur);
     }
 
     #[test]

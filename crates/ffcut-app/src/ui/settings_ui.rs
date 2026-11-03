@@ -117,7 +117,8 @@ impl App {
 
     fn page_appearance(&mut self, ui: &mut egui::Ui) {
         use theme::Kind;
-        let before = (self.settings.theme.clone(), self.settings.accents.clone(), self.settings.window_opacity, self.settings.popup_opacity);
+        let before =
+            (self.settings.theme.clone(), self.settings.accents.clone(), self.settings.window_opacity, self.settings.popup_opacity, self.settings.window_blur);
         card(ui, "Theme", Some("The look of the whole interface. It changes at once."), |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
@@ -177,6 +178,23 @@ impl App {
                     }
                     ui.end_row();
                 });
+                ui.add_space(8.0);
+                let see_through = self.settings.window_alpha() < 1.0;
+                ui.add_enabled(see_through, egui::Checkbox::new(&mut self.settings.window_blur, "Blur what is behind the window"))
+                    .on_hover_text("FFcut only asks for it: the desktop decides how strong the blur is")
+                    .on_disabled_hover_text("Make the window see-through first");
+                if self.settings.window_blur && see_through {
+                    let what = match self.blur.via() {
+                        Some(via) => format!("Your desktop takes the request ({via}). How strong the blur is, is set in its own settings."),
+                        None if cfg!(all(unix, not(target_os = "macos"))) => {
+                            "This desktop does not take blur requests from apps. Some blur see-through windows \
+                                                                               by their own rules (picom, Hyprland, SwayFX); GNOME does not blur."
+                                .to_string()
+                        }
+                        None => "Blur is not available on this system.".to_string(),
+                    };
+                    ui.label(dim(what));
+                }
                 if !self.transparent && self.settings.window_alpha() < 1.0 {
                     ui.add_space(6.0);
                     ui.label(dim("The window can only become see-through when FFcut starts."));
@@ -197,8 +215,11 @@ impl App {
             },
         );
 
-        if (self.settings.theme.clone(), self.settings.accents.clone(), self.settings.window_opacity, self.settings.popup_opacity) != before {
+        if (self.settings.theme.clone(), self.settings.accents.clone(), self.settings.window_opacity, self.settings.popup_opacity, self.settings.window_blur)
+            != before
+        {
             self.settings.apply_look(ui.ctx());
+            self.sync_blur(ui.ctx());
             self.appearance_dirty = true;
         }
         // not on every step of a drag: once the pointer is let go

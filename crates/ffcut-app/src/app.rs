@@ -193,9 +193,19 @@ pub struct App {
     pub transparent: bool,
     /// Settings → Appearance changed and is not saved yet (it is saved once the pointer is let go).
     pub appearance_dirty: bool,
+    /// The request to the desktop to blur what is behind the window.
+    pub blur: crate::blur::Blur,
 }
 
 impl App {
+    /// Asks for the blur behind the window when it is on and the window is see-through, takes it back otherwise.
+    pub fn sync_blur(&mut self, ctx: &egui::Context) {
+        let on = self.settings.window_blur && self.transparent && self.settings.window_alpha() < 1.0;
+        self.blur.set(on);
+        // the request applies with the next frame
+        ctx.request_repaint();
+    }
+
     pub fn new(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>, backend: Backend) -> Result<Self, String> {
         let settings = Settings::load();
         theme::install_fonts(&cc.egui_ctx);
@@ -256,8 +266,10 @@ impl App {
             pending_open: open,
             transparent: settings.window_alpha() < 1.0,
             appearance_dirty: false,
+            blur: crate::blur::Blur::new(cc),
             settings,
         };
+        app.sync_blur(&cc.egui_ctx);
         app.locate_tools(&cc.egui_ctx);
         if !app.settings.no_update_check && std::env::var_os("FFCUT_NO_UPDATE").is_none() {
             app.start_update_check(&cc.egui_ctx, false);
