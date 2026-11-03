@@ -178,7 +178,7 @@ pub fn body(ui: &mut egui::Ui, id: impl Hash + Copy + std::fmt::Debug, fx: &mut 
         widgets::hint(ui, &fx.id);
         for (k, v) in fx.params.clone() {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{k} = {v}")).color(theme::TEXT_LABEL));
+                ui.label(RichText::new(format!("{k} = {v}")).color(theme::text_label()));
                 if ui.small_button("✕").on_hover_text("Remove this value").clicked() {
                     fx.set(&k, None);
                 }
@@ -204,7 +204,7 @@ pub fn body(ui: &mut egui::Ui, id: impl Hash + Copy + std::fmt::Debug, fx: &mut 
         widgets::grid(("plugin", id)).show(ui, |ui| {
             for c in &p.controls {
                 let set = fx.get(&c.key).is_some();
-                let label = RichText::new(&c.name).color(if set { theme::TEXT_STRONG } else { theme::TEXT_LABEL });
+                let label = RichText::new(&c.name).color(if set { theme::text_strong() } else { theme::text_label() });
                 ui.add(egui::Label::new(label).truncate()).on_hover_text(ctl_tip(&p, c));
                 let shown = p.value(fx, c);
                 let (resp, new) = control(ui, egui::Id::new(("plugin-ctl", id, &c.key)), p.kind, c, &shown);
@@ -227,14 +227,14 @@ pub fn body(ui: &mut egui::Ui, id: impl Hash + Copy + std::fmt::Debug, fx: &mut 
     let unknown: Vec<(String, String)> = fx.params.iter().filter(|(k, _)| p.control(k).is_none()).cloned().collect();
     for (k, v) in unknown {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{k} = {v}")).color(theme::WARN)).on_hover_text("not a control of this plugin");
+            ui.label(RichText::new(format!("{k} = {v}")).color(theme::warn())).on_hover_text("not a control of this plugin");
             if ui.small_button("✕").on_hover_text("Remove this value").clicked() {
                 fx.set(&k, None);
             }
         });
     }
     ui.horizontal(|ui| {
-        ui.label(RichText::new(format!("{} · {}", p.kind.label(), p.file.display())).size(size::HINT).color(theme::TEXT_DIM)).on_hover_text(&p.id);
+        ui.label(RichText::new(format!("{} · {}", p.kind.label(), p.file.display())).size(size::HINT).color(theme::text_dim())).on_hover_text(&p.id);
         if fx.params != p.new_fx().params && ui.small_button("Reset").on_hover_text("Every control back to the plugin's default").clicked() {
             p.reset(fx);
         }

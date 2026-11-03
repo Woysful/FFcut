@@ -8,7 +8,7 @@ use super::{audio_label, codecs};
 use crate::app::{fmt_time, parse_time, App, AUDIO_EXPORT, CONTAINERS};
 use crate::hotkeys::Action;
 use crate::theme::{self, size};
-use eframe::egui::{self, pos2, vec2, Color32, DragValue, RichText, Sense, Stroke};
+use eframe::egui::{self, pos2, vec2, Align2, Color32, DragValue, RichText, Sense, Stroke};
 use ffcut_core::*;
 
 pub const SPEEDS: [&str; 9] = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
@@ -66,6 +66,8 @@ pub struct SideState {
     pub reveal: Option<Section>,
     /// The audio track whose effects the sidebar shows.
     pub fx_track: Option<usize>,
+    /// Sections drawn so far in this frame (their numbers in the brutalist theme).
+    pub n: usize,
 }
 
 /// A time value as a time code, or as a frame number when `fps` is given.
@@ -153,23 +155,35 @@ impl App {
         let t = ui.ctx().animate_bool(resp.id, open);
         let p = ui.painter();
         if resp.hovered() {
-            p.rect_filled(rect.expand2(vec2(4.0, 0.0)), 6.0, Color32::from_white_alpha(6));
+            p.rect_filled(rect.expand2(vec2(4.0, 0.0)), theme::radius::of(6.0), Color32::from_white_alpha(6));
         }
-        let col = if resp.hovered() { theme::TEXT_STRONG } else { theme::TEXT };
-        chevron(p, pos2(rect.left() + 6.0, rect.center().y), t, theme::TEXT_DIM);
-        let title = p.layout_no_wrap(s.title().to_string(), egui::FontId::proportional(size::TITLE), col);
-        let title_w = title.size().x;
-        p.galley(pos2(rect.left() + 18.0, rect.center().y - title.size().y / 2.0), title, col);
+        let col = if resp.hovered() { theme::text_strong() } else { theme::text() };
+        chevron(p, pos2(rect.left() + 6.0, rect.center().y), t, theme::text_dim());
+        self.side.n += 1;
+        let mut x = rect.left() + 18.0;
+        if theme::kind() == theme::Kind::Brutalist {
+            // numbered like the sheets of a drawing
+            let r =
+                p.text(pos2(x, rect.center().y), Align2::LEFT_CENTER, format!("{:02}", self.side.n), egui::FontId::monospace(size::SMALL), theme::text_dim());
+            x = r.right() + 8.0;
+        }
+        let title = p.layout_no_wrap(theme::title(s.title()), theme::display(size::TITLE), col);
+        let mut title_w = x - rect.left() - 18.0 + title.size().x;
+        p.galley(pos2(x, rect.center().y - title.size().y / 2.0), title, col);
+        if theme::kind() == theme::Kind::Y2k && open {
+            super::deco::star(p, pos2(rect.left() + 18.0 + title_w + 10.0, rect.center().y), 5.0, theme::accent());
+            title_w += 18.0;
+        }
         if let Some(sum) = summary.filter(|s| !s.is_empty()) {
             // the summary takes what the title leaves, cut at the left so its end (the newest part) stays
             let room = rect.width() - title_w - 34.0;
             if room > 30.0 {
                 let job = egui::text::LayoutJob {
                     wrap: egui::text::TextWrapping::truncate_at_width(room),
-                    ..egui::text::LayoutJob::simple_singleline(sum, egui::FontId::proportional(size::HINT), theme::TEXT_DIM)
+                    ..egui::text::LayoutJob::simple_singleline(sum, egui::FontId::proportional(size::HINT), theme::text_dim())
                 };
                 let g = ui.fonts_mut(|f| f.layout_job(job));
-                p.galley(pos2(rect.right() - g.size().x - 2.0, rect.center().y - g.size().y / 2.0), g, theme::TEXT_DIM);
+                p.galley(pos2(rect.right() - g.size().x - 2.0, rect.center().y - g.size().y / 2.0), g, theme::text_dim());
             }
         }
         if open != self.is_open(s) {
@@ -182,7 +196,7 @@ impl App {
             ui.add_space(10.0);
         }
         let y = ui.cursor().top();
-        ui.painter().hline(rect.left()..=rect.right(), y, Stroke::new(1.0, theme::LINE_FAINT));
+        ui.painter().hline(rect.left()..=rect.right(), y, Stroke::new(1.0, theme::line_faint()));
         ui.add_space(1.0);
     }
 
@@ -192,10 +206,11 @@ impl App {
         }
         // the video and the transport bar under it keep at least 600 px
         let max = (ui.ctx().content_rect().width() - 600.0).clamp(320.0, 600.0);
-        egui::Panel::right("sidebar").default_size(360.0).size_range(320.0..=max).frame(egui::Frame::NONE.fill(theme::PANEL)).show(ui, |ui| {
+        egui::Panel::right("sidebar").default_size(360.0).size_range(320.0..=max).frame(egui::Frame::NONE.fill(theme::panel())).show(ui, |ui| {
             egui::Panel::bottom("sidebar-footer")
-                .frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin { left: 14, right: 14, top: 10, bottom: 12 }))
+                .frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(egui::Margin { left: 14, right: 14, top: 10, bottom: 12 }))
                 .show(ui, |ui| self.export_footer(ui));
+            self.side.n = 0;
             egui::CentralPanel::default().frame(egui::Frame::NONE).show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                     egui::Frame::NONE.inner_margin(egui::Margin { left: 14, right: 16, top: 6, bottom: 8 }).show(ui, |ui| {
@@ -253,7 +268,7 @@ impl App {
         self.section(ui, Section::File, Some(sum), |a, ui| {
             let Some(c) = &a.clip else { return };
             let i = &c.info;
-            ui.add(egui::Label::new(RichText::new(c.path.file_name().unwrap_or_default().to_string_lossy()).strong().color(theme::TEXT_STRONG)).wrap());
+            ui.add(egui::Label::new(RichText::new(c.path.file_name().unwrap_or_default().to_string_lossy()).strong().color(theme::text_strong())).wrap());
             ui.add_space(2.0);
             let mut rows = Vec::new();
             if !i.audio_only {
@@ -268,12 +283,12 @@ impl App {
             }
             widgets::grid("file-info").spacing([8.0, 3.0]).show(ui, |ui| {
                 for (k, v) in rows {
-                    ui.label(RichText::new(k).color(theme::TEXT_LABEL));
+                    ui.label(RichText::new(k).color(theme::text_label()));
                     ui.label(v);
                     ui.end_row();
                 }
                 for (n, a) in i.audio.iter().enumerate() {
-                    ui.label(RichText::new(if n == 0 { "Audio" } else { "" }).color(theme::TEXT_LABEL));
+                    ui.label(RichText::new(if n == 0 { "Audio" } else { "" }).color(theme::text_label()));
                     ui.label(audio_label(a));
                     ui.end_row();
                 }
@@ -471,11 +486,11 @@ impl App {
         let mut pick = None;
         for (i, t) in self.s.tracks.iter().enumerate() {
             let selected = sel == Some(i) && self.s.tracks.len() > 1;
-            let stroke = if selected { Stroke::new(1.5, theme::ACCENT) } else { Stroke::new(1.0, theme::LINE) };
+            let stroke = if selected { Stroke::new(1.5, theme::accent()) } else { Stroke::new(1.0, theme::line()) };
             // the row's click sense is registered before its contents, so the checkbox stays on top of it
             let row = egui::UiBuilder::new().sense(Sense::click());
             let r = ui.scope_builder(row, |ui| {
-                let frame = widgets::box_frame().stroke(stroke).inner_margin(egui::Margin::symmetric(8, 3)).corner_radius(theme::radius::WIDGET);
+                let frame = widgets::box_frame().stroke(stroke).inner_margin(egui::Margin::symmetric(8, 3)).corner_radius(theme::radius::widget());
                 frame.show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
@@ -487,11 +502,12 @@ impl App {
                         let ext = matches!(t.source, TrackSource::External { .. });
                         let name = format!("{}{}", if ext { "+ " } else { "" }, t.label);
                         // not selectable: a selectable label takes the click, and the row would not be picked
-                        let label = egui::Label::new(RichText::new(name).color(if dim { theme::TEXT_OFF } else { theme::TEXT })).truncate().selectable(false);
+                        let label =
+                            egui::Label::new(RichText::new(name).color(if dim { theme::text_off() } else { theme::text() })).truncate().selectable(false);
                         ui.add(label).on_hover_text(&t.label);
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if t.has_fx() && !t.deleted {
-                                widgets::badge(ui, "FX", theme::ACCENT);
+                                widgets::badge(ui, "FX", theme::accent());
                             }
                             let state = if t.deleted {
                                 ""
@@ -505,7 +521,7 @@ impl App {
                                 ""
                             };
                             if !state.is_empty() {
-                                widgets::badge(ui, state, theme::WARN).on_hover_text("Changed on the track view (S / M buttons)");
+                                widgets::badge(ui, state, theme::warn()).on_hover_text("Changed on the track view (S / M buttons)");
                             }
                         });
                     });
@@ -532,7 +548,7 @@ impl App {
         ui.add_space(8.0);
         if self.s.tracks.len() > 1 {
             let name = self.s.tracks[cur].label.clone();
-            ui.label(RichText::new(format!("Track {} · {name}", cur + 1)).strong().color(theme::TEXT_LABEL))
+            ui.label(RichText::new(format!("Track {} · {name}", cur + 1)).strong().color(theme::text_label()))
                 .on_hover_text("Click a track above to edit its fades and effects");
         }
         self.fx_presets_row(ui, cur);

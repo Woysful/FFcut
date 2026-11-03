@@ -5,6 +5,7 @@ mod audio_view;
 mod builtin_ui;
 mod codecs;
 mod command;
+mod deco;
 mod filter_ui;
 mod fx_ui;
 mod icons;
@@ -137,7 +138,7 @@ impl App {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     widgets::menu_button(ui, "Presets", |ui| self.presets_menu(ui));
                     if let Some(r) = &self.updates.found {
-                        let b = egui::Button::new(RichText::new(format!("● Update {}", r.version)).color(theme::ACCENT)).frame(false);
+                        let b = egui::Button::new(RichText::new(format!("● Update {}", r.version)).color(theme::accent())).frame(false);
                         if ui.add(b).on_hover_text("A new version of FFcut is available. Click for details.").clicked() {
                             self.dialogs.update = true;
                         }
@@ -149,7 +150,7 @@ impl App {
                     let text = crate::layout::info_line(&c.path, &c.info, &self.settings.info_items, &self.settings.path_sep);
                     let w = (bar.width() - 2.0 * 230.0).max(100.0);
                     let r = Rect::from_center_size(bar.center(), vec2(w, bar.height()));
-                    ui.put(r, egui::Label::new(RichText::new(text).color(theme::TEXT_LABEL)).truncate());
+                    ui.put(r, egui::Label::new(RichText::new(text).color(theme::text_label())).truncate());
                 }
             });
         });
@@ -282,7 +283,7 @@ impl App {
             return;
         }
         let open = os_window(ctx, "about", "About FFcut", [460.0, 240.0], |ui| {
-            ui.label(RichText::new(format!("FFcut {}", crate::update::VERSION)).size(size::PAGE).strong());
+            ui.label(theme::heading(&format!("FFcut {}", crate::update::VERSION), size::PAGE));
             ui.label("A small native ffmpeg front end: trim, crop, rotate, re-encode, audio tracks.");
             ui.add_space(4.0);
             if crate::update::configured() {
@@ -303,7 +304,7 @@ impl App {
                 self.start_update_check(ui.ctx(), true);
             }
             if let Some(m) = &self.updates.msg {
-                ui.label(RichText::new(m).color(theme::TEXT_LABEL));
+                ui.label(RichText::new(m).color(theme::text_label()));
             }
         });
         if self.updates.found.is_some() && ui.button("Show the new version…").clicked() {
@@ -322,7 +323,7 @@ impl App {
                 ui.label("You have the latest version.");
                 return;
             };
-            ui.label(RichText::new(format!("FFcut {} is out", r.version)).size(size::HEADING).strong());
+            ui.label(theme::heading(&format!("FFcut {} is out", r.version), size::HEADING));
             ui.weak(format!("You have {}.", crate::update::VERSION));
             if !r.notes.is_empty() {
                 ui.add_space(6.0);
@@ -369,7 +370,7 @@ impl App {
                     ui.add(egui::ProgressBar::new(1.0).text("Replacing the files…"));
                 }
                 Some(Stage::Done(exe)) => {
-                    ui.label(RichText::new(format!("FFcut {} is installed. It starts the next time you open FFcut.", r.version)).color(theme::OK));
+                    ui.label(RichText::new(format!("FFcut {} is installed. It starts the next time you open FFcut.", r.version)).color(theme::ok()));
                     let exporting = self.job.is_some();
                     let b = ui.add_enabled(!exporting, widgets::primary_button("Restart now"));
                     if b.on_disabled_hover_text("Wait until the export ends").clicked() {
@@ -423,12 +424,17 @@ pub fn os_window_raw(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2],
         .with_min_inner_size([size[0].min(480.0), size[1].min(300.0)])
         .with_app_id("ffcut")
         .with_minimize_button(false)
-        .with_maximize_button(false);
+        .with_maximize_button(false)
+        .with_transparent(theme::popup_alpha() < 1.0);
     ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(("ffcut-dialog", id)), builder, |ui, _class| {
         if ui.input(|i| i.viewport().close_requested() || i.key_pressed(egui::Key::Escape)) {
             open = false;
         }
-        body(ui);
+        // a dialog is see-through as much as the menus, not as the main window
+        theme::dialog_scope(|| {
+            ui.visuals_mut().panel_fill = theme::panel();
+            body(ui)
+        });
     });
     open
 }

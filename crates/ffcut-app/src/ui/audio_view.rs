@@ -78,7 +78,7 @@ impl App {
                 self.settings.zoom_key().label(),
                 self.settings.scroll_key().label()
             );
-            ui.add(egui::Label::new(RichText::new(hint).size(11.5).color(theme::TEXT_OFF)).truncate());
+            ui.add(egui::Label::new(RichText::new(hint).size(11.5).color(theme::text_off())).truncate());
         });
 
         // ---- layout
@@ -257,7 +257,7 @@ impl App {
 
         // ---- painting
         let p = ui.painter_at(body.expand(2.0));
-        p.rect_filled(wave_r, 6.0, theme::TRACK);
+        p.rect_filled(wave_r, theme::radius::of(6.0), theme::track());
 
         // ruler
         let step = tick_step(px_per_s);
@@ -266,8 +266,8 @@ impl App {
             let tt = k * step;
             let x = x_of(tt, t0, span);
             if x >= wave_r.left() - 0.5 && x <= wave_r.right() + 0.5 {
-                p.line_segment([pos2(x, ruler.bottom() - 6.0), pos2(x, ruler.bottom())], Stroke::new(1.0, theme::TEXT_OFF));
-                p.text(pos2(x + 3.0, ruler.center().y - 2.0), Align2::LEFT_CENTER, short_time(tt, step), FontId::monospace(10.5), theme::TEXT_DIM);
+                p.line_segment([pos2(x, ruler.bottom() - 6.0), pos2(x, ruler.bottom())], Stroke::new(1.0, theme::text_off()));
+                p.text(pos2(x + 3.0, ruler.center().y - 2.0), Align2::LEFT_CENTER, short_time(tt, step), FontId::monospace(10.5), theme::text_dim());
                 p.line_segment([pos2(x, wave_r.top()), pos2(x, wave_r.bottom())], Stroke::new(1.0, Color32::from_white_alpha(10)));
             }
             k += 1.0;
@@ -333,7 +333,7 @@ impl App {
                         let h = (a * half).clamp(0.5, half);
                         p.line_segment(
                             [pos2(x + 0.5, mid - h), pos2(x + 0.5, mid + h)],
-                            Stroke::new(1.0, if inside { theme::OK } else { Color32::from_gray(80) }),
+                            Stroke::new(1.0, if inside { theme::ok() } else { Color32::from_gray(80) }),
                         );
                     }
                 }
@@ -344,7 +344,7 @@ impl App {
                         Align2::CENTER_CENTER,
                         if failed { "no waveform" } else { "reading waveform…" },
                         FontId::proportional(13.0),
-                        theme::TEXT_DIM,
+                        theme::text_dim(),
                     );
                 }
             }
@@ -362,7 +362,7 @@ impl App {
         }
         for x in [xs, xe] {
             if x >= wave_r.left() - 1.0 && x <= wave_r.right() + 1.0 {
-                p.rect_filled(Rect::from_center_size(pos2(x, mid), vec2(4.0, wave_r.height() - 8.0)), 2.0, theme::ACCENT);
+                p.rect_filled(Rect::from_center_size(pos2(x, mid), vec2(4.0, wave_r.height() - 8.0)), 2.0, theme::accent());
             }
         }
 
@@ -406,11 +406,11 @@ impl App {
             if last.x < xe {
                 pts.push(pos2(xe, last.y));
             }
-            p.add(egui::Shape::line(pts, Stroke::new(1.8, theme::WARN)));
+            p.add(egui::Shape::line(pts, Stroke::new(1.8, theme::warn())));
             for (k, pt) in t.envelope.iter().enumerate() {
                 let q = env_xy(pt);
                 if q.x >= wave_r.left() - 6.0 && q.x <= wave_r.right() + 6.0 {
-                    p.circle(q, 4.5, theme::WARN, Stroke::new(1.0, Color32::BLACK));
+                    p.circle(q, 4.5, theme::warn(), Stroke::new(1.0, Color32::BLACK));
                     if resp.hover_pos().is_some_and(|h| h.distance(q) <= 10.0) || matches!(self.trk_drag, Some((_, TrkDrag::EnvPt(d))) if d == k) {
                         p.text(
                             q + vec2(8.0, -8.0),
@@ -431,13 +431,17 @@ impl App {
         }
 
         // overview strip
-        p.rect_filled(ovw, 4.0, Color32::from_gray(38));
+        p.rect_filled(ovw, theme::radius::of(4.0), theme::track());
         let ox = |t: f64| ovw.left() + (t / dur) as f32 * ovw.width();
-        p.rect_filled(Rect::from_min_max(pos2(ox(self.trim_start), ovw.top()), pos2(ox(self.trim_end), ovw.bottom())), 4.0, theme::ACCENT.gamma_multiply(0.35));
+        p.rect_filled(
+            Rect::from_min_max(pos2(ox(self.trim_start), ovw.top()), pos2(ox(self.trim_end), ovw.bottom())),
+            4.0,
+            theme::accent().gamma_multiply(0.35),
+        );
         p.rect_stroke(
             Rect::from_min_max(pos2(ox(t0), ovw.top()), pos2(ox(t0 + span).max(ox(t0) + 6.0), ovw.bottom())),
             4.0,
-            Stroke::new(1.5, theme::TEXT),
+            Stroke::new(1.5, theme::text()),
             egui::StrokeKind::Inside,
         );
         p.line_segment([pos2(ox(self.player.time()), ovw.top()), pos2(ox(self.player.time()), ovw.bottom())], Stroke::new(1.5, Color32::WHITE));

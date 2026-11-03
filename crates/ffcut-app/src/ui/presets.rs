@@ -31,7 +31,7 @@ fn preset_card(
     edit: impl FnOnce(&mut egui::Ui),
 ) -> Option<CardAct> {
     let mut act = None;
-    widgets::box_frame().corner_radius(radius::PANEL).inner_margin(egui::Margin::same(14)).show(ui, |ui| {
+    super::deco::show_box(widgets::box_frame().corner_radius(radius::panel()).inner_margin(egui::Margin::same(14)), ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             match rename {
@@ -46,7 +46,7 @@ fn preset_card(
                     }
                 }
                 None => {
-                    ui.label(RichText::new(name).strong().size(size::HEADING - 2.0).color(theme::TEXT_STRONG));
+                    ui.label(RichText::new(name).strong().size(size::HEADING - 2.0).color(theme::text_strong()));
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -66,7 +66,7 @@ fn preset_card(
                 }
             });
         });
-        ui.add(egui::Label::new(RichText::new(summary).size(size::HINT).color(theme::TEXT_DIM)).truncate());
+        ui.add(egui::Label::new(RichText::new(summary).size(size::HINT).color(theme::text_dim())).truncate());
         egui::CollapsingHeader::new(RichText::new("Edit").size(size::BODY)).id_salt(("edit", name)).show(ui, edit);
     });
     ui.add_space(8.0);
@@ -173,7 +173,7 @@ fn part_editor(
                 _ => String::new(),
             };
             ui.horizontal(|ui| {
-                ui.add(egui::Label::new(RichText::new(text).size(size::HINT).color(theme::TEXT_LABEL)).truncate());
+                ui.add(egui::Label::new(RichText::new(text).size(size::HINT).color(theme::text_label())).truncate());
                 if ui.small_button("Update from current").on_hover_text("Replace with what is set up in the editor now").clicked() {
                     p.fill(part, cur.0, cur.1);
                     changed = true;
@@ -211,9 +211,9 @@ impl App {
         }
         let (mut export_all, mut import) = (false, false);
         let open = super::os_window_raw(ctx, "presets", "Presets", [700.0, 600.0], |ui| {
-            egui::Panel::top("presets_head").frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(18, 12))).show(ui, |ui| {
+            egui::Panel::top("presets_head").frame(egui::Frame::NONE.fill(theme::bg()).inner_margin(egui::Margin::symmetric(18, 12))).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Presets").size(size::PAGE).strong());
+                    ui.label(theme::heading("Presets", size::PAGE));
                     ui.add_space(8.0);
                     for (tab, label, n) in
                         [(PresetsTab::Export, "Export", self.presets.export.len()), (PresetsTab::Audio, "Audio effects", self.presets.fx.len())]
@@ -231,7 +231,7 @@ impl App {
                     }
                 });
             });
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin::symmetric(18, 14))).show(ui, |ui| {
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(egui::Margin::symmetric(18, 14))).show(ui, |ui| {
                 if let Some(m) = &self.presets_ui.msg {
                     widgets::warn(ui, m.clone());
                     ui.add_space(6.0);
@@ -325,7 +325,7 @@ impl App {
                             if on {
                                 edited |= part_editor(ui, &name, part, &mut p, &enc, (&cur_container, &cur));
                             } else {
-                                ui.label(RichText::new("not included").color(theme::TEXT_OFF));
+                                ui.label(RichText::new("not included").color(theme::text_off()));
                             }
                             ui.end_row();
                         }

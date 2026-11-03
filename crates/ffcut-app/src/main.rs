@@ -45,6 +45,8 @@ fn main() -> eframe::Result {
             _ => {}
         }
     }
+    // a window is see-through only if made so; the opacity can change later, this cannot
+    let transparent = settings.window_alpha() < 1.0;
     let pref = force.unwrap_or(settings.display_server);
     let backend = display::resolve(&pref);
 
@@ -57,7 +59,8 @@ fn main() -> eframe::Result {
         .with_app_id("ffcut")
         .with_inner_size([1280.0, 800.0])
         .with_min_inner_size([1000.0, 640.0])
-        .with_drag_and_drop(true);
+        .with_drag_and_drop(true)
+        .with_transparent(transparent);
     if let Some(icon) = icon {
         viewport = viewport.with_icon(icon);
     }

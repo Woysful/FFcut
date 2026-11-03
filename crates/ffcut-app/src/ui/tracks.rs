@@ -44,8 +44,8 @@ impl App {
                 ui.add_space(8.0);
                 // what will be exported: in / out and the resulting length
                 let end = if self.trim_end > 0.0 { self.trim_end } else { self.dur() };
-                let dim = theme::TEXT_DIM;
-                ui.label(RichText::new(format!("{} → {}", fmt_time(self.trim_start), fmt_time(end))).monospace().size(11.5).color(theme::TEXT));
+                let dim = theme::text_dim();
+                ui.label(RichText::new(format!("{} → {}", fmt_time(self.trim_start), fmt_time(end))).monospace().size(11.5).color(theme::text()));
                 ui.label(RichText::new(format!("length {}", fmt_time((end - self.trim_start).max(0.0)))).monospace().size(11.5).color(dim));
             });
             self.timeline(ui, 50.0);
@@ -85,7 +85,7 @@ impl App {
                         "The preview plays all audible tracks together, with their trim, shift and effects (FX). Drag the panel edge up for more room.",
                     )
                     .size(11.5)
-                    .color(theme::TEXT_OFF),
+                    .color(theme::text_off()),
                 )
                 .truncate(),
             );
@@ -219,7 +219,7 @@ impl App {
                 if ui.add_sized(vec2(41.0, 20.0), egui::Button::new(icon("↩"))).on_hover_text("Put this track back into the export").clicked() {
                     *act = Some(Act::Restore(i));
                 }
-                ui.label(RichText::new("removed").size(11.5).color(theme::TEXT_OFF));
+                ui.label(RichText::new("removed").size(11.5).color(theme::text_off()));
             });
             return;
         }
@@ -237,7 +237,7 @@ impl App {
             {
                 // |← drawn by hand: the font has no glyph for it
                 let c = r.rect.center();
-                let col = if moved { theme::TEXT } else { Color32::from_gray(90) };
+                let col = if moved { theme::text() } else { Color32::from_gray(90) };
                 let st = Stroke::new(1.6, col);
                 let p = ui.painter();
                 p.line_segment([pos2(c.x - 8.0, c.y - 5.0), pos2(c.x - 8.0, c.y + 5.0)], st);
@@ -248,13 +248,14 @@ impl App {
             if r.clicked() {
                 t.shift = 0.0;
             }
-            let fx = egui::Button::new(RichText::new("FX").size(12.0).strong().color(if has_fx { Color32::BLACK } else { theme::TEXT })).fill(if has_fx {
-                theme::ACCENT
-            } else if fx_open {
-                Color32::from_gray(70)
-            } else {
-                ui.visuals().widgets.inactive.weak_bg_fill
-            });
+            let fx =
+                egui::Button::new(RichText::new("FX").size(12.0).strong().color(if has_fx { theme::on_accent() } else { theme::text() })).fill(if has_fx {
+                    theme::accent()
+                } else if fx_open {
+                    Color32::from_gray(70)
+                } else {
+                    ui.visuals().widgets.inactive.weak_bg_fill
+                });
             if ui.add_sized(sz, fx).on_hover_text("Audio effects").clicked() {
                 *act = Some(Act::Fx(i));
             }
@@ -268,14 +269,14 @@ impl App {
                 t.volume = pct / 100.0;
             }
             // solo / mute are exclusive on one track
-            let solo = egui::Button::new(letter("S")).fill(if t.solo { theme::WARN.gamma_multiply(0.7) } else { ui.visuals().widgets.inactive.weak_bg_fill });
+            let solo = egui::Button::new(letter("S")).fill(if t.solo { theme::warn().gamma_multiply(0.7) } else { ui.visuals().widgets.inactive.weak_bg_fill });
             if ui.add_sized(sz, solo).on_hover_text("Solo: hear and export only the soloed tracks").clicked() {
                 t.solo = !t.solo;
                 if t.solo {
                     t.muted = false;
                 }
             }
-            let mute = egui::Button::new(letter("M")).fill(if t.muted { theme::ERR.gamma_multiply(0.7) } else { ui.visuals().widgets.inactive.weak_bg_fill });
+            let mute = egui::Button::new(letter("M")).fill(if t.muted { theme::err().gamma_multiply(0.7) } else { ui.visuals().widgets.inactive.weak_bg_fill });
             if ui.add_sized(sz, mute).on_hover_text("Mute: leave this track out of the preview and the export").clicked() {
                 t.muted = !t.muted;
                 if t.muted {
@@ -295,13 +296,13 @@ impl App {
             super::ctx_menu(&resp, |ui| self.lane_menu(ui, i, None, act));
             let strip = Rect::from_min_max(pos2(rect.left() + 10.0, rect.top() + 2.0), pos2(rect.right() - 10.0, rect.bottom() - 2.0));
             let p = ui.painter_at(rect);
-            p.rect_filled(strip, 5.0, Color32::from_rgb(34, 35, 40));
+            p.rect_filled(strip, theme::radius::of(5.0), theme::card());
             p.text(
                 strip.left_center() + vec2(8.0, 0.0),
                 Align2::LEFT_CENTER,
                 format!("{} — removed from the export (right-click: restore)", t.label),
                 FontId::proportional(11.0),
-                theme::TEXT_OFF,
+                theme::text_off(),
             );
             return;
         }
@@ -447,15 +448,15 @@ impl App {
 
         // ---- painting
         let p = ui.painter_at(rect);
-        p.rect_filled(track, 5.0, theme::TRACK);
+        p.rect_filled(track, theme::radius::of(5.0), theme::track());
         let mid = track.center().y;
         let half = track.height() * 0.5 - 4.0;
-        let accent = if matches!(t.source, TrackSource::External { .. }) { theme::CROP } else { theme::OK };
+        let accent = if matches!(t.source, TrackSource::External { .. }) { theme::crop() } else { theme::ok() };
         let (on, off) = (accent, Color32::from_gray(85));
         let (on, off) = if t.deleted {
-            (Color32::from_gray(70), theme::LINE)
+            (Color32::from_gray(70), theme::line())
         } else if !heard {
-            (theme::TEXT_OFF, Color32::from_gray(70))
+            (theme::text_off(), Color32::from_gray(70))
         } else {
             (on, off)
         };
@@ -499,20 +500,20 @@ impl App {
                 }
             }
             Some(Wave::Loading) | None => {
-                p.text(track.center(), Align2::CENTER_CENTER, "reading waveform…", FontId::proportional(11.5), theme::TEXT_OFF);
+                p.text(track.center(), Align2::CENTER_CENTER, "reading waveform…", FontId::proportional(11.5), theme::text_off());
             }
             Some(Wave::Failed) => {
-                p.text(track.center(), Align2::CENTER_CENTER, "no waveform", FontId::proportional(11.5), theme::TEXT_OFF);
+                p.text(track.center(), Align2::CENTER_CENTER, "no waveform", FontId::proportional(11.5), theme::text_off());
             }
         }
         drop(wave);
 
         if t.deleted {
-            p.text(track.center(), Align2::CENTER_CENTER, "removed from export", FontId::proportional(12.0), theme::TEXT_LABEL);
+            p.text(track.center(), Align2::CENTER_CENTER, "removed from export", FontId::proportional(12.0), theme::text_label());
         } else {
             let clip = Rect::from_min_max(pos2(xs.max(track.left()), track.top()), pos2(xe.min(track.right()), track.bottom()));
             if clip.width() > 0.0 {
-                p.rect_stroke(clip, 4.0, Stroke::new(1.5, accent), StrokeKind::Inside);
+                p.rect_stroke(clip, theme::radius::of(4.0), Stroke::new(1.5, accent), StrokeKind::Inside);
                 for x in [xs, xe] {
                     if x >= track.left() - 1.0 && x <= track.right() + 1.0 {
                         p.rect_filled(Rect::from_center_size(pos2(x, mid), vec2(5.0, track.height() - 6.0)), 2.0, accent);
@@ -567,21 +568,21 @@ impl App {
                     if last.x < xe {
                         pts.push(pos2(xe, last.y));
                     }
-                    p.add(egui::Shape::line(pts, Stroke::new(1.8, theme::WARN)));
+                    p.add(egui::Shape::line(pts, Stroke::new(1.8, theme::warn())));
                     for pt in &t.envelope {
-                        p.circle(env_xy(pt), 4.0, theme::WARN, Stroke::new(1.0, Color32::BLACK));
+                        p.circle(env_xy(pt), 4.0, theme::warn(), Stroke::new(1.0, Color32::BLACK));
                     }
                 }
             }
             // the file name in the corner, like in video editors
             let label_x = xs.max(track.left()) + 14.0;
             let name = format!("{}{}", if matches!(t.source, TrackSource::External { .. }) { "+ " } else { "" }, t.label);
-            let gal = p.layout_no_wrap(name, FontId::proportional(10.5), if heard { theme::TEXT_STRONG } else { theme::TEXT_DIM });
+            let gal = p.layout_no_wrap(name, FontId::proportional(10.5), if heard { theme::text_strong() } else { theme::text_dim() });
             let at = pos2(label_x, track.top() + 3.0);
             p.rect_filled(Rect::from_min_size(at, gal.size()).expand2(vec2(4.0, 1.0)), 3.0, Color32::from_black_alpha(150));
             p.galley(at, gal, Color32::WHITE);
             if t.shift.abs() > 0.001 {
-                let gal = p.layout_no_wrap(format!("{:+.2}s", t.shift), FontId::proportional(10.5), theme::TEXT);
+                let gal = p.layout_no_wrap(format!("{:+.2}s", t.shift), FontId::proportional(10.5), theme::text());
                 let at = pos2(label_x, track.bottom() - 3.0 - gal.size().y);
                 p.rect_filled(Rect::from_min_size(at, gal.size()).expand2(vec2(4.0, 1.0)), 3.0, Color32::from_black_alpha(150));
                 p.galley(at, gal, Color32::WHITE);
@@ -592,7 +593,7 @@ impl App {
                     Align2::RIGHT_TOP,
                     "keyframes: click adds, right-click = menu",
                     FontId::proportional(10.5),
-                    theme::WARN,
+                    theme::warn(),
                 );
             }
         }

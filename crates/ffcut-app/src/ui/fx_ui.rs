@@ -128,19 +128,19 @@ fn eq_plot(ui: &mut egui::Ui, bands: &mut Vec<EqBand>, sel: &mut Option<usize>) 
 
     // ---- drawing
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 6.0, theme::BG);
+    p.rect_filled(rect, theme::radius::of(6.0), theme::bg());
     for db in [-12.0f32, -6.0, 0.0, 6.0, 12.0] {
-        let col = if db == 0.0 { theme::BAND } else { theme::LINE_FAINT };
+        let col = if db == 0.0 { theme::band() } else { theme::line_faint() };
         p.line_segment([pos2(rect.left(), y_of(db)), pos2(rect.right(), y_of(db))], Stroke::new(1.0, col));
     }
     for f in [100.0f32, 1000.0, 10000.0] {
-        p.line_segment([pos2(x_of(f), rect.top()), pos2(x_of(f), rect.bottom())], Stroke::new(1.0, theme::LINE_FAINT));
+        p.line_segment([pos2(x_of(f), rect.top()), pos2(x_of(f), rect.bottom())], Stroke::new(1.0, theme::line_faint()));
         p.text(
             pos2(x_of(f) + 3.0, rect.bottom() - 2.0),
             egui::Align2::LEFT_BOTTOM,
             if f >= 1000.0 { format!("{}k", f / 1000.0) } else { format!("{f}") },
             egui::FontId::proportional(10.0),
-            theme::TEXT_OFF,
+            theme::text_off(),
         );
     }
     let n = 240;
@@ -151,13 +151,13 @@ fn eq_plot(ui: &mut egui::Ui, bands: &mut Vec<EqBand>, sel: &mut Option<usize>) 
             pos2(rect.left() + rect.width() * k as f32 / n as f32, y_of(db))
         })
         .collect();
-    p.add(egui::Shape::line(pts, Stroke::new(2.0, theme::ACCENT)));
+    p.add(egui::Shape::line(pts, Stroke::new(2.0, theme::accent())));
     for (k, b) in bands.iter().enumerate().filter(|(_, b)| b.on) {
         let selected = *sel == Some(k);
-        p.circle(point(b), if selected { 6.0 } else { 4.5 }, if selected { theme::ACCENT } else { Color32::WHITE }, Stroke::new(1.5, Color32::BLACK));
+        p.circle(point(b), if selected { 6.0 } else { 4.5 }, if selected { theme::accent() } else { Color32::WHITE }, Stroke::new(1.5, Color32::BLACK));
     }
     if bands.is_empty() {
-        p.text(rect.center(), egui::Align2::CENTER_CENTER, "double-click to add a band", egui::FontId::proportional(11.5), theme::TEXT_OFF);
+        p.text(rect.center(), egui::Align2::CENTER_CENTER, "double-click to add a band", egui::FontId::proportional(11.5), theme::text_off());
     }
 }
 
@@ -329,7 +329,7 @@ fn fx_body(ui: &mut egui::Ui, t: &mut TrackEdit, c: &mut FxCtx) {
     if rendering {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new("Preparing the preview…").size(theme::size::HINT).color(theme::TEXT_LABEL));
+            ui.label(RichText::new("Preparing the preview…").size(theme::size::HINT).color(theme::text_label()));
         });
     } else if let Some(e) = &render_err {
         widgets::error(ui, format!("Preview failed: {e}"));
@@ -470,10 +470,10 @@ fn effect_body(ui: &mut egui::Ui, k: usize, kind: &mut EffectKind, sel: &mut Opt
             } else if *busy {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label(RichText::new("Measuring the track…").color(theme::TEXT_LABEL));
+                    ui.label(RichText::new("Measuring the track…").color(theme::text_label()));
                 });
             } else if let Some(m) = &n.measured {
-                ui.label(RichText::new(format!("Measured: {} LUFS, peak {} dB", db_fmt(m.i), db_fmt(m.tp))).size(12.0).color(theme::OK));
+                ui.label(RichText::new(format!("Measured: {} LUFS, peak {} dB", db_fmt(m.i), db_fmt(m.tp))).size(12.0).color(theme::ok()));
             }
         }
     }

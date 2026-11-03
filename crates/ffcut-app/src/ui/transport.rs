@@ -15,7 +15,7 @@ impl App {
         if self.clip.is_none() {
             return;
         }
-        let frame = egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin::symmetric(12, 8));
+        let frame = egui::Frame::NONE.fill(theme::panel()).inner_margin(egui::Margin::symmetric(12, 8));
         if self.multitrack {
             // taller on demand: with many audio tracks the user drags the top edge up
             // no taller than needed to show every track (the video keeps the rest)
@@ -198,7 +198,7 @@ impl App {
                 }
             }
             let icon = if self.player.paused() { Icon::Play } else { Icon::Pause };
-            if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(theme::ACCENT.gamma_multiply(0.75)))
+            if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(theme::accent().gamma_multiply(0.75)))
                 .on_hover_text(self.tip("Play / pause", Action::PlayPause))
                 .clicked()
             {
@@ -412,21 +412,21 @@ impl App {
         let mut tk = 0.0;
         while tk <= dur {
             let x = t2x(tk);
-            p.line_segment([pos2(x, rect.top() + 14.0), pos2(x, rect.top() + 20.0)], Stroke::new(1.0, theme::TEXT_OFF));
+            p.line_segment([pos2(x, rect.top() + 14.0), pos2(x, rect.top() + 20.0)], Stroke::new(1.0, theme::text_off()));
             if x < track.right() - 34.0 {
-                p.text(pos2(x + 3.0, rect.top() + 1.0), Align2::LEFT_TOP, short_time(tk), FontId::proportional(theme::size::SMALL), theme::TEXT_DIM);
+                p.text(pos2(x + 3.0, rect.top() + 1.0), Align2::LEFT_TOP, short_time(tk), FontId::proportional(theme::size::SMALL), theme::text_dim());
             }
             tk += step;
         }
-        p.rect_filled(track, 5.0, theme::TRACK);
+        p.rect_filled(track, theme::radius::of(5.0), theme::track());
         // selected range
         let sel = Rect::from_min_max(pos2(xs, track.top()), pos2(xe, track.bottom()));
-        p.rect_filled(sel, 4.0, theme::ACCENT.gamma_multiply(0.38));
-        p.rect_stroke(sel, 4.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
+        p.rect_filled(sel, theme::radius::of(4.0), theme::accent().gamma_multiply(0.38));
+        p.rect_stroke(sel, theme::radius::of(4.0), Stroke::new(1.5, theme::accent()), StrokeKind::Inside);
         // handles
         for x in [xs, xe] {
             let hr = Rect::from_center_size(pos2(x, track.center().y), vec2(10.0, track.height() + 6.0));
-            p.rect_filled(hr, 3.0, theme::ACCENT);
+            p.rect_filled(hr, theme::radius::of(3.0), theme::accent());
             let cx = hr.center().x;
             for dx in [-1.5_f32, 1.5] {
                 p.line_segment([pos2(cx + dx, hr.center().y - 6.0), pos2(cx + dx, hr.center().y + 6.0)], Stroke::new(1.0, Color32::from_black_alpha(130)));

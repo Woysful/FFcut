@@ -15,7 +15,7 @@ pub fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) 
         let h = ui.spacing().interact_size.y;
         ui.allocate_ui_with_layout(egui::vec2(LABEL_W, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.set_min_size(egui::vec2(LABEL_W, h));
-            ui.add(egui::Label::new(RichText::new(label).color(theme::TEXT_LABEL)).truncate());
+            ui.add(egui::Label::new(RichText::new(label).color(theme::text_label())).truncate());
         });
         add(ui)
     })
@@ -247,22 +247,22 @@ pub fn fit_sliders(ui: &mut egui::Ui) {
 
 /// Dim explanatory text that wraps.
 pub fn hint(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
-    ui.add(egui::Label::new(RichText::new(text.into()).size(size::HINT).color(theme::TEXT_DIM)).wrap())
+    ui.add(egui::Label::new(RichText::new(text.into()).size(size::HINT).color(theme::text_dim())).wrap())
 }
 
 /// A warning line that wraps.
 pub fn warn(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
-    ui.add(egui::Label::new(RichText::new(text.into()).size(size::HINT).color(theme::WARN)).wrap())
+    ui.add(egui::Label::new(RichText::new(text.into()).size(size::HINT).color(theme::warn())).wrap())
 }
 
 /// An error line that wraps.
 pub fn error(ui: &mut egui::Ui, text: impl Into<String>) -> egui::Response {
-    ui.add(egui::Label::new(RichText::new(text.into()).size(size::HINT).color(theme::ERR)).wrap())
+    ui.add(egui::Label::new(RichText::new(text.into()).size(size::HINT).color(theme::err())).wrap())
 }
 
 /// A small upper-case label that introduces a list ("EFFECTS", "TRACKS").
 pub fn caption(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    ui.label(RichText::new(text.to_uppercase()).size(size::SMALL).strong().color(theme::TEXT_DIM))
+    ui.label(RichText::new(text.to_uppercase()).size(size::SMALL).strong().color(theme::text_dim()))
 }
 
 /// A short coloured word next to a title ("auto", "edited", "3 on").
@@ -272,19 +272,19 @@ pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
 
 /// The main action of a place: accent fill, dark text.
 pub fn primary_button(text: impl Into<String>) -> egui::Button<'static> {
-    egui::Button::new(RichText::new(text.into()).strong().color(Color32::BLACK)).fill(theme::ACCENT)
+    egui::Button::new(RichText::new(text.into()).strong().color(theme::on_accent())).fill(theme::accent())
 }
 
 /// The frame of a box inside a panel.
 pub fn box_frame() -> egui::Frame {
-    egui::Frame::NONE.fill(theme::CARD).stroke(egui::Stroke::new(1.0, theme::LINE)).corner_radius(radius::CARD).inner_margin(egui::Margin::same(10))
+    egui::Frame::NONE.fill(theme::card()).stroke(egui::Stroke::new(1.0, theme::line())).corner_radius(radius::card()).inner_margin(egui::Margin::same(10))
 }
 
 /// A titled box: the building block of the settings pages. `hint` is shown under the title.
 pub fn card(ui: &mut egui::Ui, title: &str, hint_text: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
-    box_frame().corner_radius(radius::PANEL).inner_margin(egui::Margin::same(16)).show(ui, |ui| {
+    super::deco::show_box(box_frame().corner_radius(radius::panel()).inner_margin(egui::Margin::same(16)), ui, |ui| {
         ui.set_width(ui.available_width());
-        ui.label(RichText::new(title).size(size::TITLE).strong().color(theme::TEXT_STRONG));
+        ui.label(theme::heading(title, size::TITLE));
         if let Some(h) = hint_text {
             hint(ui, h);
         }
@@ -296,9 +296,9 @@ pub fn card(ui: &mut egui::Ui, title: &str, hint_text: Option<&str>, add: impl F
 
 /// A compact titled box for the sidebar: the explanation is a tooltip on the title, not text.
 pub fn side_box(ui: &mut egui::Ui, title: &str, tip: Option<&str>, add: impl FnOnce(&mut egui::Ui)) {
-    box_frame().show(ui, |ui| {
+    super::deco::show_box(box_frame(), ui, |ui| {
         ui.set_width(ui.available_width());
-        let t = ui.label(RichText::new(title).size(size::BODY).strong().color(theme::TEXT_STRONG));
+        let t = ui.label(RichText::new(title).size(size::BODY).strong().color(theme::text_strong()));
         if let Some(h) = tip {
             t.on_hover_text(h);
         }
@@ -313,7 +313,7 @@ pub fn side_box(ui: &mut egui::Ui, title: &str, tip: Option<&str>, add: impl FnO
 pub fn empty_state(ui: &mut egui::Ui, title: &str, hint_text: &str) {
     ui.add_space(30.0);
     ui.vertical_centered(|ui| {
-        ui.label(RichText::new(title).size(15.0).color(theme::TEXT));
+        ui.label(RichText::new(title).size(15.0).color(theme::text()));
         ui.add_space(4.0);
         hint(ui, hint_text);
     });
@@ -371,13 +371,13 @@ pub struct StackEntry<'a> {
 /// One entry of an effect stack (audio or video): bypass checkbox, name, ▲ ▼ ✕, then `body`.
 pub fn stack_card(ui: &mut egui::Ui, e: StackEntry, on: &mut bool, act: &mut Option<StackAct>, body: impl FnOnce(&mut egui::Ui)) -> egui::Response {
     let StackEntry { k, count, name, tip, highlight } = e;
-    let stroke = if highlight { egui::Stroke::new(1.5, theme::ACCENT) } else { egui::Stroke::new(1.0, theme::LINE) };
-    let r = box_frame().stroke(stroke).show(ui, |ui| {
+    let stroke = if highlight { egui::Stroke::new(1.5, theme::accent()) } else { egui::Stroke::new(1.0, theme::line()) };
+    let r = super::deco::show_box(box_frame().stroke(stroke), ui, |ui| {
         ui.set_width(ui.available_width());
         fit_sliders(ui);
         ui.horizontal(|ui| {
             ui.checkbox(on, "").on_hover_text("Bypass: keep it in the list but do not apply it");
-            let n = ui.label(RichText::new(name).size(size::BODY).strong().color(if *on { theme::TEXT_STRONG } else { theme::TEXT_OFF }));
+            let n = ui.label(RichText::new(name).size(size::BODY).strong().color(if *on { theme::text_strong() } else { theme::text_off() }));
             if let Some(t) = tip {
                 n.on_hover_text(t);
             }

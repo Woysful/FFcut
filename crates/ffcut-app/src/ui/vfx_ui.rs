@@ -63,7 +63,7 @@ fn font_combo(ui: &mut egui::Ui, id: impl std::hash::Hash + std::fmt::Debug, pat
     let Some(fonts) = fonts else {
         ui.horizontal(|ui| {
             ui.spinner();
-            ui.label(RichText::new("Looking for fonts…").color(theme::TEXT_DIM));
+            ui.label(RichText::new("Looking for fonts…").color(theme::text_dim()));
         });
         return;
     };
@@ -194,14 +194,14 @@ fn curve_plot(ui: &mut egui::Ui, pts: &mut Vec<(f32, f32)>, sel: &mut Option<usi
     }
 
     let p = ui.painter_at(rect);
-    p.rect_filled(rect, 6.0, Color32::from_gray(24));
+    p.rect_filled(rect, theme::radius::of(6.0), theme::field());
     for i in 0..=4 {
         let f = i as f32 / 4.0;
-        let c = Color32::from_gray(if i == 2 { 52 } else { 38 });
+        let c = if i == 2 { theme::line() } else { theme::line_faint() };
         p.line_segment([to((f, 0.0)), to((f, 1.0))], Stroke::new(1.0, c));
         p.line_segment([to((0.0, f)), to((1.0, f))], Stroke::new(1.0, c));
     }
-    p.line_segment([to((0.0, 0.0)), to((1.0, 1.0))], Stroke::new(1.0, Color32::from_gray(70)));
+    p.line_segment([to((0.0, 0.0)), to((1.0, 1.0))], Stroke::new(1.0, theme::band()));
     let line: Vec<Pos2> = spline(pts, 64).into_iter().map(to).collect();
     p.add(egui::Shape::line(line, Stroke::new(2.0, color)));
     for (k, q) in pts.iter().enumerate() {
@@ -682,7 +682,7 @@ impl App {
                     t.y = (t.y + d.y / rect.height()).clamp(0.0, 1.0);
                 }
                 let p = ui.painter();
-                let s = Stroke::new(1.5, theme::ACCENT);
+                let s = Stroke::new(1.5, theme::accent());
                 p.circle_stroke(c, 9.0, s);
                 p.line_segment([c - vec2(14.0, 0.0), c + vec2(14.0, 0.0)], s);
                 p.line_segment([c - vec2(0.0, 14.0), c + vec2(0.0, 14.0)], s);
@@ -697,11 +697,11 @@ fn area_frame(ui: &mut egui::Ui, id: egui::Id, rect: Rect, e: &mut [f32; 4]) {
     let to = |x: f32, y: f32| pos2(rect.left() + x * rect.width(), rect.top() + y * rect.height());
     let cr = Rect::from_min_max(to(e[0], e[1]), to(e[2], e[3]));
     let p = ui.painter();
-    p.rect_filled(cr, 0.0, theme::ACCENT.gamma_multiply(0.18));
-    p.rect_stroke(cr, 0.0, Stroke::new(1.5, theme::ACCENT), StrokeKind::Inside);
+    p.rect_filled(cr, 0.0, theme::accent().gamma_multiply(0.18));
+    p.rect_stroke(cr, 0.0, Stroke::new(1.5, theme::accent()), StrokeKind::Inside);
     let zones = widgets::grips(cr, 12.0);
     if let Some((g, d)) = widgets::drag_grips(ui, id, &zones) {
         widgets::move_edges(e, g, vec2(d.x / rect.width(), d.y / rect.height()), vec2(1.0, 1.0), 0.02);
     }
-    widgets::paint_grips(ui.painter(), &zones, theme::ACCENT, 8.0);
+    widgets::paint_grips(ui.painter(), &zones, theme::accent(), 8.0);
 }

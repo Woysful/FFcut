@@ -18,9 +18,9 @@ impl App {
     fn command_body(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             if self.cmd.edited {
-                badge(ui, "EDITED", theme::WARN).on_hover_text("You changed the command by hand; settings no longer update it");
+                badge(ui, "EDITED", theme::warn()).on_hover_text("You changed the command by hand; settings no longer update it");
             } else {
-                badge(ui, "AUTO", theme::OK).on_hover_text("Built from the settings above");
+                badge(ui, "AUTO", theme::ok()).on_hover_text("Built from the settings above");
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.small_button("Copy").clicked() {
@@ -38,11 +38,11 @@ impl App {
 
         let changed = ui
             .add_enabled_ui(self.job.is_none(), |ui| {
-                let stroke = if self.cmd.edited { theme::WARN.gamma_multiply(0.7) } else { theme::LINE };
+                let stroke = if self.cmd.edited { theme::warn().gamma_multiply(0.7) } else { theme::line() };
                 egui::Frame::NONE
-                    .fill(theme::BG)
+                    .fill(theme::bg())
                     .stroke(egui::Stroke::new(1.0, stroke))
-                    .corner_radius(radius::WIDGET)
+                    .corner_radius(radius::widget())
                     .inner_margin(egui::Margin::same(6))
                     .show(ui, |ui| {
                         ui.add(
@@ -75,14 +75,14 @@ impl App {
             Some(Status::Done(p)) => {
                 let p = p.clone();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("✔ Exported").color(theme::OK).strong());
+                    ui.label(RichText::new("✔ Exported").color(theme::ok()).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Show in folder").clicked() {
                             open_in_file_manager(&p);
                         }
                     });
                 });
-                ui.add(egui::Label::new(RichText::new(p.display().to_string()).size(size::HINT).color(theme::TEXT_DIM)).truncate())
+                ui.add(egui::Label::new(RichText::new(p.display().to_string()).size(size::HINT).color(theme::text_dim())).truncate())
                     .on_hover_text(p.display().to_string());
                 ui.add_space(4.0);
             }
@@ -117,10 +117,10 @@ impl App {
                     egui::ProgressBar::new(frac.unwrap_or(0.0))
                         .text(RichText::new(text).color(Color32::WHITE))
                         .animate(frac.is_none())
-                        .fill(theme::ACCENT.gamma_multiply(0.6))
+                        .fill(theme::accent().gamma_multiply(0.6))
                         .desired_width(bar_w)
                         .desired_height(32.0)
-                        .corner_radius(radius::WIDGET),
+                        .corner_radius(radius::widget()),
                 );
                 if ui.add_sized(vec2(78.0, 32.0), egui::Button::new("Cancel")).clicked() {
                     run.job.cancel();

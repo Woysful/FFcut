@@ -189,13 +189,18 @@ pub struct App {
     pub backend: Backend,
     /// File from the command line: opened after the first frame so mpv has a running render loop.
     pub pending_open: Option<PathBuf>,
+    /// The main window was made see-through at start (it can only be at start, see `main`).
+    pub transparent: bool,
+    /// Settings → Appearance changed and is not saved yet (it is saved once the pointer is let go).
+    pub appearance_dirty: bool,
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>, backend: Backend) -> Result<Self, String> {
-        theme::apply(&cc.egui_ctx);
-        let player = Player::new(cc)?;
         let settings = Settings::load();
+        theme::install_fonts(&cc.egui_ctx);
+        settings.apply_look(&cc.egui_ctx);
+        let player = Player::new(cc)?;
 
         let mut app = App {
             player,
@@ -249,6 +254,8 @@ impl App {
             applied_audio: None,
             backend,
             pending_open: open,
+            transparent: settings.window_alpha() < 1.0,
+            appearance_dirty: false,
             settings,
         };
         app.locate_tools(&cc.egui_ctx);
@@ -1125,6 +1132,11 @@ impl eframe::App for App {
         }
         self.video_panel(ui);
         self.windows(&ctx);
+    }
+
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // the panels paint every pixel; nothing behind them, so a see-through window shows the desktop
+        [0.0; 4]
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {

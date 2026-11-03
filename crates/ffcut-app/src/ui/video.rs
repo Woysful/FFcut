@@ -1,11 +1,11 @@
 use super::widgets::{self, Grip};
 use crate::app::{App, FsMode};
 use crate::theme;
-use eframe::egui::{self, pos2, vec2, Color32, Rect, RichText, Sense, Stroke, StrokeKind};
+use eframe::egui::{self, pos2, vec2, Align2, Color32, Rect, RichText, Sense, Stroke, StrokeKind};
 
 impl App {
     pub fn video_panel(&mut self, ui: &mut egui::Ui) {
-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::BG)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::bg())).show(ui, |ui| {
             if self.clip.is_none() {
                 self.empty_state(ui);
                 return;
@@ -24,6 +24,17 @@ impl App {
             let inner = Rect::from_min_size(pos2(rect.left(), rect.top() + self.vfx.bars.0 as f32 * scale), vec2(rect.width(), fh as f32 * scale));
 
             self.player.paint(ui, rect);
+            if super::deco::on() && self.fs != FsMode::Video {
+                let p = ui.painter();
+                if theme::kind() == theme::Kind::Y2k {
+                    super::deco::brackets(p, rect.expand(5.0), 16.0, Stroke::new(1.5, theme::accent().gamma_multiply(0.8)));
+                } else {
+                    let o = rect.expand(5.0);
+                    for c in [o.left_top(), o.right_top(), o.left_bottom(), o.right_bottom()] {
+                        super::deco::cross(p, c, 4.0, Stroke::new(1.0, theme::text_label()));
+                    }
+                }
+            }
 
             let click = ui.interact(rect, ui.id().with("video"), Sense::click());
             if click.clicked() && !self.crop.on {
@@ -43,21 +54,37 @@ impl App {
 
     fn empty_state(&mut self, ui: &mut egui::Ui) {
         let r = ui.max_rect();
-        ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_center_size(r.center(), vec2(420.0, 190.0))), |ui| {
+        if super::deco::on() {
+            self.empty_deco(ui, r);
+        }
+        let new_look = super::deco::on();
+        let h = if new_look { 250.0 } else { 190.0 };
+        ui.scope_builder(egui::UiBuilder::new().max_rect(Rect::from_center_size(r.center(), vec2(420.0, h))), |ui| {
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new("FFcut").size(40.0).strong().color(theme::ACCENT));
-                ui.label(RichText::new("ffmpeg, with the command in your hands").size(15.0).weak());
+                if new_look {
+                    ui.add_space(18.0);
+                    let size = if theme::kind() == theme::Kind::Brutalist { 64.0 } else { 52.0 };
+                    ui.label(RichText::new("FFCUT").font(theme::display(size)).color(theme::text_strong()));
+                    ui.label(RichText::new("FFMPEG, WITH THE COMMAND IN YOUR HANDS").monospace().size(11.0).color(theme::text_label()));
+                } else {
+                    ui.label(RichText::new("FFcut").size(40.0).strong().color(theme::accent()));
+                    ui.label(RichText::new("ffmpeg, with the command in your hands").size(15.0).weak());
+                }
                 ui.add_space(18.0);
                 if !self.tools_ok() {
-                    ui.colored_label(theme::ERR, "ffmpeg / ffprobe not found.");
+                    ui.colored_label(theme::err(), "ffmpeg / ffprobe not found.");
                     if ui.button("Open settings").clicked() {
                         self.dialogs.settings = true;
                     }
                 } else {
-                    if ui
-                        .add(egui::Button::new(RichText::new("Open video…").size(16.0)).fill(theme::ACCENT.gamma_multiply(0.75)).min_size(vec2(180.0, 38.0)))
-                        .clicked()
-                    {
+                    let label = if new_look { "OPEN VIDEO…" } else { "Open video…" };
+                    let b = egui::Button::new(RichText::new(label).size(16.0).color(theme::on_accent())).fill(theme::accent()).min_size(vec2(180.0, 38.0));
+                    let b = if new_look {
+                        b
+                    } else {
+                        egui::Button::new(RichText::new(label).size(16.0)).fill(theme::accent().gamma_multiply(0.75)).min_size(vec2(180.0, 38.0))
+                    };
+                    if ui.add(b).clicked() {
                         self.open_dialog();
                     }
                     ui.add_space(6.0);
@@ -66,16 +93,56 @@ impl App {
                         ui.weak(format!("{} to open a file", self.keys(crate::hotkeys::Action::Open)));
                         ui.add(
                             egui::Label::new(
-                                RichText::new("Drag & drop does not work on Wayland. Switch to X11 in File → Settings.").size(12.0).color(theme::WARN),
+                                RichText::new("Drag & drop does not work on Wayland. Switch to X11 in File → Settings.").size(12.0).color(theme::warn()),
                             )
                             .wrap(),
                         );
                     } else {
-                        ui.weak(format!("or drop a file here  ·  {}", self.keys(crate::hotkeys::Action::Open)));
+                        let or = if new_look { "OR DROP A FILE HERE" } else { "or drop a file here" };
+                        ui.weak(format!("{or}  ·  {}", self.keys(crate::hotkeys::Action::Open)));
                     }
                 }
             });
         });
+    }
+
+    /// The ornaments around the start screen of the brutalist and the Y2K theme.
+    fn empty_deco(&self, ui: &egui::Ui, area: Rect) {
+        use super::deco;
+        let p = ui.painter();
+        let b = Rect::from_center_size(area.center(), vec2(520.0, 300.0));
+        let ver = format!("V{}", crate::update::VERSION);
+        if theme::kind() == theme::Kind::Brutalist {
+            let white = theme::text_strong();
+            p.rect_stroke(b, 0.0, Stroke::new(1.5, white), StrokeKind::Inside);
+            // the label strip of a technical drawing
+            let strip = Rect::from_min_size(b.min, vec2(b.width(), 20.0));
+            p.rect_filled(strip, 0.0, white);
+            let ink = theme::on(white);
+            deco::caption(p, pos2(strip.left() + 8.0, strip.center().y), Align2::LEFT_CENTER, "FFCUT / VIDEO CUTTER", ink);
+            deco::caption(p, pos2(strip.right() - 8.0, strip.center().y), Align2::RIGHT_CENTER, &format!("{ver} / READY"), ink);
+            for c in [b.left_top(), b.right_top(), b.left_bottom(), b.right_bottom()] {
+                deco::cross(p, c + (c - b.center()).normalized() * 18.0, 7.0, Stroke::new(1.0, theme::text_label()));
+            }
+            let dim = theme::text_dim();
+            deco::caption(p, pos2(b.left() + 8.0, b.bottom() - 8.0), Align2::LEFT_BOTTOM, "[01] OPEN    [02] DROP    [03] CUT", dim);
+            p.rect_filled(Rect::from_min_size(pos2(b.right() - 58.0, b.bottom() - 18.0), vec2(50.0, 10.0)), 0.0, theme::accent());
+            p.hline(b.left()..=b.right(), b.bottom() - 26.0, Stroke::new(1.0, theme::line()));
+        } else {
+            let acc = theme::accent();
+            let line = Stroke::new(1.0, theme::line());
+            p.add(egui::Shape::convex_polygon(super::deco::chamfer(b, 22.0), theme::card().gamma_multiply(0.6), line));
+            deco::brackets(p, b.expand(10.0), 18.0, Stroke::new(1.5, acc));
+            let dim = theme::text_dim();
+            deco::caption(p, pos2(b.left() + 14.0, b.top() + 12.0), Align2::LEFT_TOP, "SYS://FFCUT", dim);
+            deco::caption(p, pos2(b.right() - 30.0, b.top() + 12.0), Align2::RIGHT_TOP, &ver, dim);
+            deco::caption(p, pos2(b.right() - 14.0, b.bottom() - 12.0), Align2::RIGHT_BOTTOM, "NOW LOADING…", dim);
+            deco::barcode(p, Rect::from_min_size(pos2(b.left() + 30.0, b.bottom() - 28.0), vec2(96.0, 14.0)), theme::text_label());
+            deco::dots(p, pos2(b.left() + 30.0, b.top() + 40.0), 6, 2, 4.0, acc);
+            deco::star(p, pos2(b.right() + 4.0, b.top() - 4.0), 16.0, theme::text_strong());
+            deco::star(p, pos2(b.left() - 30.0, b.center().y + 40.0), 8.0, acc);
+            deco::star(p, pos2(b.right() - 60.0, b.bottom() + 26.0), 6.0, theme::text_label());
+        }
     }
 
     fn crop_overlay(&mut self, ui: &mut egui::Ui, full: Rect, rect: Rect, fw: f32, fh: f32) {
@@ -98,7 +165,7 @@ impl App {
             p.line_segment([pos2(cr.left() + cr.width() * f, cr.top()), pos2(cr.left() + cr.width() * f, cr.bottom())], guide);
             p.line_segment([pos2(cr.left(), cr.top() + cr.height() * f), pos2(cr.right(), cr.top() + cr.height() * f)], guide);
         }
-        p.rect_stroke(cr, 0.0, Stroke::new(1.5, theme::CROP), StrokeKind::Inside);
+        p.rect_stroke(cr, 0.0, Stroke::new(1.5, theme::crop()), StrokeKind::Inside);
 
         let zones = widgets::grips(cr, 14.0);
         if let Some((g, d)) = widgets::drag_grips(ui, ui.id().with("crop"), &zones) {
@@ -129,7 +196,7 @@ impl App {
             self.loupe.dirty = false;
             self.settings.save();
         }
-        widgets::paint_grips(ui.painter(), &zones, theme::CROP, 9.0);
+        widgets::paint_grips(ui.painter(), &zones, theme::crop(), 9.0);
 
         // size label
         let cropped = self.crop_rect();
@@ -197,7 +264,7 @@ impl App {
         let k = size / used.width().max(1.0);
         let to_win = |p: egui::Pos2| pos2(win.left() + (p.x - used.left()) * k, win.top() + (p.y - used.top()) * k);
         let lp = ui.painter().with_clip_rect(win.shrink(1.0));
-        let line = Stroke::new(1.5, theme::CROP);
+        let line = Stroke::new(1.5, theme::crop());
         for xx in [crop.left(), crop.right()] {
             let w = to_win(pos2(xx, 0.0)).x;
             lp.line_segment([pos2(w, win.top()), pos2(w, win.bottom())], line);

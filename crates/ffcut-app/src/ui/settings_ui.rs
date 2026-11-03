@@ -3,12 +3,12 @@
 use super::{card, os_window_raw};
 use crate::app::App;
 use crate::theme::{self, radius, size};
-use eframe::egui::{self, vec2, Align, Color32, Layout, RichText};
+use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, Layout, Rect, RichText, Sense, Stroke, StrokeKind};
 
-const PAGES: [&str; 6] = ["General", "Interface", "Plugins", "Hotkeys", "Updates", "About"];
+const PAGES: [&str; 7] = ["General", "Appearance", "Interface", "Plugins", "Hotkeys", "Updates", "About"];
 
 fn dim(t: impl Into<String>) -> RichText {
-    RichText::new(t.into()).size(size::HINT).color(theme::TEXT_DIM)
+    RichText::new(t.into()).size(size::HINT).color(theme::text_dim())
 }
 
 impl App {
@@ -20,17 +20,19 @@ impl App {
             egui::Panel::left("settings_nav")
                 .exact_size(190.0)
                 .resizable(false)
-                .frame(egui::Frame::NONE.fill(theme::BG).inner_margin(egui::Margin::symmetric(12, 16)))
+                .frame(egui::Frame::NONE.fill(theme::bg()).inner_margin(egui::Margin::symmetric(12, 16)))
                 .show(ui, |ui| {
-                    ui.label(RichText::new("Settings").size(size::PAGE).strong());
+                    ui.label(theme::heading("Settings", size::PAGE));
                     ui.add_space(12.0);
                     ui.with_layout(Layout::top_down_justified(Align::LEFT), |ui| {
                         for (i, name) in PAGES.iter().enumerate() {
                             let sel = self.settings_tab == i;
-                            let b = egui::Button::new(RichText::new(*name).size(size::TITLE).color(if sel { Color32::WHITE } else { theme::TEXT_LABEL }))
-                                .fill(if sel { theme::ACCENT.gamma_multiply(0.55) } else { Color32::TRANSPARENT })
+                            // the new themes number their pages, like the sections of the sidebar
+                            let name = if super::deco::on() { format!("{:02}  {}", i + 1, theme::title(name)) } else { name.to_string() };
+                            let b = egui::Button::new(RichText::new(name).size(size::TITLE).color(if sel { Color32::WHITE } else { theme::text_label() }))
+                                .fill(if sel { theme::accent().gamma_multiply(0.55) } else { Color32::TRANSPARENT })
                                 .stroke(egui::Stroke::NONE)
-                                .corner_radius(radius::CARD)
+                                .corner_radius(radius::card())
                                 .min_size(vec2(0.0, 34.0));
                             if ui.add(b).clicked() {
                                 self.settings_tab = i;
@@ -38,15 +40,16 @@ impl App {
                         }
                     });
                 });
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::PANEL).inner_margin(egui::Margin::symmetric(22, 18))).show(ui, |ui| {
-                ui.label(RichText::new(PAGES[self.settings_tab.min(PAGES.len() - 1)]).size(20.0).strong());
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(egui::Margin::symmetric(22, 18))).show(ui, |ui| {
+                ui.label(theme::heading(PAGES[self.settings_tab.min(PAGES.len() - 1)], 20.0));
                 ui.add_space(10.0);
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.settings_tab {
                     0 => self.page_general(ui),
-                    1 => self.page_interface(ui),
-                    2 => self.page_plugins(ui),
-                    3 => self.page_hotkeys(ui),
-                    4 => self.page_updates(ui),
+                    1 => self.page_appearance(ui),
+                    2 => self.page_interface(ui),
+                    3 => self.page_plugins(ui),
+                    4 => self.page_hotkeys(ui),
+                    5 => self.page_updates(ui),
                     _ => self.page_about(ui),
                 });
             });
@@ -76,11 +79,11 @@ impl App {
             ui.add_space(8.0);
             match (&self.ffmpeg, &self.ffprobe) {
                 (Some(f), Some(p)) => {
-                    ui.colored_label(theme::OK, format!("✔ {}", self.ffmpeg_version));
+                    ui.colored_label(theme::ok(), format!("✔ {}", self.ffmpeg_version));
                     ui.label(dim(format!("{}\n{}", f.display(), p.display())));
                 }
                 _ => {
-                    ui.colored_label(theme::ERR, "ffmpeg and/or ffprobe not found");
+                    ui.colored_label(theme::err(), "ffmpeg and/or ffprobe not found");
                 }
             }
         });
@@ -112,6 +115,98 @@ impl App {
         ui.label(dim(format!("Settings file: {}", crate::settings::config_dir().join("settings.json").display())));
     }
 
+    fn page_appearance(&mut self, ui: &mut egui::Ui) {
+        use theme::Kind;
+        let before = (self.settings.theme.clone(), self.settings.accents.clone(), self.settings.window_opacity, self.settings.popup_opacity);
+        card(ui, "Theme", Some("The look of the whole interface. It changes at once."), |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 14.0;
+                let cur = self.settings.theme();
+                for k in Kind::ALL {
+                    if theme_tile(ui, k, k == cur).on_hover_text(k.blurb()).clicked() {
+                        self.settings.theme = k.id().to_string();
+                    }
+                }
+            });
+        });
+
+        let kind = self.settings.theme();
+        card(ui, "Accent colour", Some("The trim range, the main buttons and the selection. Each theme keeps its own."), |ui| {
+            let own = kind.default_accent();
+            let cur = self.settings.accent().unwrap_or(own);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let list = std::iter::once(own).chain(ACCENTS.into_iter().filter(|c| *c != own));
+                for (i, c) in list.enumerate() {
+                    let tip = if i == 0 { "The theme's own colour".to_string() } else { format!("#{:02X}{:02X}{:02X}", c.r(), c.g(), c.b()) };
+                    if swatch(ui, c, c == cur, i == 0).on_hover_text(tip).clicked() {
+                        if i == 0 {
+                            self.settings.accents.remove(kind.id());
+                        } else {
+                            self.settings.accents.insert(kind.id().into(), [c.r(), c.g(), c.b()]);
+                        }
+                    }
+                }
+                ui.add_space(10.0);
+                let mut rgb = [cur.r(), cur.g(), cur.b()];
+                if ui.color_edit_button_srgb(&mut rgb).on_hover_text("Any colour").changed() {
+                    self.settings.accents.insert(kind.id().into(), rgb);
+                }
+                ui.label(dim("Custom"));
+            });
+        });
+
+        card(
+            ui,
+            "Transparency",
+            Some("Lets the desktop show through the window, or the interface through menus, tooltips and dialogs. The video itself always stays opaque."),
+            |ui| {
+                let pct = |a: f32| (a * 100.0).round();
+                let back = |v: f32| (v < 99.5).then_some(v / 100.0);
+                egui::Grid::new("opacity").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                    ui.label("Window");
+                    let mut w = pct(self.settings.window_alpha());
+                    if ui.add(egui::Slider::new(&mut w, 30.0..=100.0).suffix(" %").integer().trailing_fill(true)).changed() {
+                        self.settings.window_opacity = back(w);
+                    }
+                    ui.end_row();
+                    ui.label("Menus and dialogs");
+                    let mut m = pct(self.settings.popup_alpha());
+                    if ui.add(egui::Slider::new(&mut m, 50.0..=100.0).suffix(" %").integer().trailing_fill(true)).changed() {
+                        self.settings.popup_opacity = back(m);
+                    }
+                    ui.end_row();
+                });
+                if !self.transparent && self.settings.window_alpha() < 1.0 {
+                    ui.add_space(6.0);
+                    ui.label(dim("The window can only become see-through when FFcut starts."));
+                    if ui.button("Restart now").clicked() {
+                        let open = self.clip.as_ref().map(|c| c.path.clone());
+                        if crate::display::restart(open.as_deref()) {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    }
+                }
+                #[cfg(all(unix, not(target_os = "macos")))]
+                {
+                    ui.add_space(4.0);
+                    ui.label(dim(
+                        "On X11 a see-through window needs a compositor (KDE, GNOME and most desktops have one); without it the window stays opaque.",
+                    ));
+                }
+            },
+        );
+
+        if (self.settings.theme.clone(), self.settings.accents.clone(), self.settings.window_opacity, self.settings.popup_opacity) != before {
+            self.settings.apply_look(ui.ctx());
+            self.appearance_dirty = true;
+        }
+        // not on every step of a drag: once the pointer is let go
+        if self.appearance_dirty && !ui.input(|i| i.pointer.any_down()) {
+            self.appearance_dirty = false;
+            self.settings.save();
+        }
+    }
     fn page_interface(&mut self, ui: &mut egui::Ui) {
         card(ui, "Window title", Some("Build the title from variables. Click a variable to add it. Empty = default."), |ui| {
             let r = ui.add(egui::TextEdit::singleline(&mut self.settings.title_template).desired_width(f32::INFINITY).hint_text(crate::layout::DEFAULT_TITLE));
@@ -139,7 +234,7 @@ impl App {
                 crate::layout::render_title(&self.settings.title_template, self.clip.as_ref().map(|c| (c.path.as_path(), &c.info)), &self.settings.path_sep);
             ui.add_space(6.0);
             ui.label(dim("Preview"));
-            ui.label(RichText::new(preview).size(size::TITLE).color(theme::TEXT));
+            ui.label(RichText::new(preview).size(size::TITLE).color(theme::text()));
         });
 
         card(ui, "Path display", Some("How folder separators look in {path}, {dir} and the file info line."), |ui| {
@@ -168,7 +263,7 @@ impl App {
             for (i, it) in self.settings.info_items.iter_mut().enumerate() {
                 egui::Frame::NONE
                     .fill(if i % 2 == 0 { Color32::from_white_alpha(5) } else { Color32::TRANSPARENT })
-                    .corner_radius(radius::WIDGET)
+                    .corner_radius(radius::widget())
                     .inner_margin(egui::Margin::symmetric(8, 3))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
@@ -291,9 +386,10 @@ impl App {
                             let recording = self.hk_capture == Some((a, slot));
                             let text =
                                 if recording { "Press keys…".to_string() } else { list.get(slot).map(|c| c.display()).unwrap_or_else(|| "—".into()) };
-                            let b = egui::Button::new(RichText::new(text).monospace().size(12.5).color(if recording { theme::ACCENT } else { theme::TEXT }))
-                                .min_size(vec2(104.0, 24.0))
-                                .selected(recording);
+                            let b =
+                                egui::Button::new(RichText::new(text).monospace().size(12.5).color(if recording { theme::accent() } else { theme::text() }))
+                                    .min_size(vec2(104.0, 24.0))
+                                    .selected(recording);
                             if ui.add(b).clicked() {
                                 self.hk_capture = if recording { None } else { Some((a, slot)) };
                                 self.hk_note.clear();
@@ -345,7 +441,7 @@ impl App {
                             remove = Some(i);
                         }
                         let missing = !std::path::Path::new(d).is_dir();
-                        ui.label(RichText::new(d).color(if missing { theme::WARN } else { theme::TEXT_STRONG }));
+                        ui.label(RichText::new(d).color(if missing { theme::warn() } else { theme::text_strong() }));
                         if missing {
                             ui.label(dim("(not found)"));
                         }
@@ -398,7 +494,7 @@ impl App {
                     return;
                 }
                 crate::catalog::Load::Failed(e) => {
-                    ui.colored_label(theme::ERR, e);
+                    ui.colored_label(theme::err(), e);
                     return;
                 }
             };
@@ -410,7 +506,7 @@ impl App {
                     ui.label(RichText::new(kind.label()).strong());
                     ui.label(format!("{usable} usable{}", if n > usable { format!(" (of {n})") } else { String::new() }));
                     match self.catalog.lacks_host(kind) {
-                        Some(true) => ui.colored_label(theme::WARN, "your ffmpeg was built without it"),
+                        Some(true) => ui.colored_label(theme::warn(), "your ffmpeg was built without it"),
                         _ => ui.label(dim(if kind == PluginKind::Frei0r { "video effects" } else { "audio effects" })),
                     };
                     ui.end_row();
@@ -427,7 +523,7 @@ impl App {
                         ui.label(
                             RichText::new(format!("{} ({}): {}", p.name, p.kind.label(), p.problem.as_deref().unwrap_or("")))
                                 .size(size::HINT)
-                                .color(theme::TEXT_LABEL),
+                                .color(theme::text_label()),
                         )
                         .on_hover_text(p.file.display().to_string());
                     }
@@ -436,7 +532,7 @@ impl App {
             if !scan.errors.is_empty() {
                 egui::CollapsingHeader::new(format!("Could not be read ({})", scan.errors.len())).id_salt("plugins-errors").show(ui, |ui| {
                     for (f, e) in &scan.errors {
-                        ui.label(RichText::new(format!("{}: {e}", f.display())).size(size::HINT).color(theme::WARN));
+                        ui.label(RichText::new(format!("{}: {e}", f.display())).size(size::HINT).color(theme::warn()));
                     }
                 });
             }
@@ -447,7 +543,7 @@ impl App {
                     ui.label(
                         RichText::new(format!("{label}: {}", if found.is_empty() { "none".into() } else { found.join(", ") }))
                             .size(size::HINT)
-                            .color(theme::TEXT_LABEL),
+                            .color(theme::text_label()),
                     );
                 }
             });
@@ -481,7 +577,85 @@ impl App {
                 ui.hyperlink_to(crate::update::repo_url(), crate::update::repo_url());
             }
             ui.add_space(4.0);
-            ui.label(dim("MIT license. Fonts: JetBrains Mono, Manrope (OFL)."));
+            ui.label(dim("MIT license. Fonts: JetBrains Mono, Manrope, Archivo Black, Michroma (OFL)."));
         });
     }
+}
+
+/// Accent colours offered next to the theme's own.
+const ACCENTS: [Color32; 9] = [
+    Color32::from_rgb(255, 138, 61),
+    Color32::from_rgb(255, 72, 72),
+    Color32::from_rgb(255, 105, 200),
+    Color32::from_rgb(170, 120, 255),
+    Color32::from_rgb(143, 168, 255),
+    Color32::from_rgb(64, 216, 255),
+    Color32::from_rgb(90, 230, 150),
+    Color32::from_rgb(204, 255, 0),
+    Color32::from_rgb(240, 240, 240),
+];
+
+/// A small picture of a theme: its surfaces, its accent, its title face.
+fn theme_tile(ui: &mut egui::Ui, k: theme::Kind, selected: bool) -> egui::Response {
+    use theme::Kind;
+    let (rect, resp) = ui.allocate_exact_size(vec2(172.0, 112.0), Sense::click());
+    let p = ui.painter();
+    let [bg, panel, card, hover, text] = k.swatches();
+    let acc = k.default_accent();
+    let rad = match k {
+        Kind::Standard => 8.0,
+        Kind::Brutalist => 0.0,
+        Kind::Y2k => 12.0,
+    };
+    let pic = Rect::from_min_size(rect.min, vec2(rect.width(), 84.0));
+    p.rect_filled(pic, rad, bg);
+    let side = Rect::from_min_max(pos2(pic.right() - 58.0, pic.top()), pic.max);
+    p.rect_filled(side, egui::CornerRadius { ne: rad as u8, se: rad as u8, ..Default::default() }, panel);
+    for (i, c) in [card, hover, card].into_iter().enumerate() {
+        p.rect_filled(Rect::from_min_size(pos2(side.left() + 8.0, side.top() + 10.0 + i as f32 * 20.0), vec2(42.0, 14.0)), rad / 3.0, c);
+    }
+    let tl = Rect::from_min_size(pos2(pic.left() + 10.0, pic.bottom() - 20.0), vec2(side.left() - pic.left() - 20.0, 8.0));
+    p.rect_filled(tl, rad / 3.0, card);
+    p.rect_filled(Rect::from_min_size(tl.min + vec2(tl.width() * 0.2, 0.0), vec2(tl.width() * 0.45, tl.height())), rad / 3.0, acc);
+    let name = if k == Kind::Standard { "FFcut" } else { "FFCUT" };
+    p.text(pic.left_top() + vec2(10.0, 12.0), Align2::LEFT_TOP, name, theme::display_of(k, 17.0), text);
+    match k {
+        Kind::Standard => {}
+        Kind::Brutalist => {
+            p.rect_filled(Rect::from_min_size(pic.min, vec2(5.0, 5.0)), 0.0, text);
+            super::deco::cross(p, pos2(side.left() - 12.0, pic.top() + 12.0), 4.0, Stroke::new(1.0, text));
+        }
+        Kind::Y2k => {
+            super::deco::star(p, pos2(side.left() - 14.0, pic.top() + 16.0), 8.0, text);
+            super::deco::brackets(p, tl.expand(4.0), 4.0, Stroke::new(1.0, acc));
+        }
+    }
+    let stroke = if selected {
+        Stroke::new(2.0, theme::accent())
+    } else if resp.hovered() {
+        Stroke::new(1.0, theme::text_label())
+    } else {
+        Stroke::new(1.0, theme::line())
+    };
+    p.rect_stroke(pic, rad, stroke, StrokeKind::Outside);
+    let col = if selected { theme::text_strong() } else { theme::text_label() };
+    p.text(pos2(rect.left() + 2.0, pic.bottom() + 9.0), Align2::LEFT_TOP, k.label(), egui::FontId::proportional(size::BODY), col);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// One accent colour to pick; `own` = the theme's own colour (marked with a dot).
+fn swatch(ui: &mut egui::Ui, c: Color32, selected: bool, own: bool) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let p = ui.painter();
+    let r = theme::radius::of(5.0);
+    p.rect_filled(rect.shrink(4.0), r, c);
+    if own {
+        p.circle_filled(rect.center(), 2.5, theme::on(c));
+    }
+    if selected {
+        p.rect_stroke(rect.shrink(1.0), r + 2.0, Stroke::new(2.0, theme::text_strong()), StrokeKind::Inside);
+    } else if resp.hovered() {
+        p.rect_stroke(rect.shrink(1.0), r + 2.0, Stroke::new(1.0, theme::text_label()), StrokeKind::Inside);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

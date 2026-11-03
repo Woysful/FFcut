@@ -20,7 +20,7 @@ pub fn loaded<T>(ui: &mut egui::Ui, l: Load<T>, what: &str) -> Option<std::sync:
         Load::Loading => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(RichText::new(format!("Reading {what}…")).color(theme::TEXT_LABEL));
+                ui.label(RichText::new(format!("Reading {what}…")).color(theme::text_label()));
             });
             None
         }
@@ -94,8 +94,8 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, fav: Option<bool>) -> Option<
     let w = ui.available_width();
     let star_w = if fav.is_some() { STAR_W } else { 0.0 };
     let mut job = LayoutJob::default();
-    job.append(title, 0.0, TextFormat { font_id: FontId::proportional(size::BODY), color: theme::TEXT_STRONG, ..Default::default() });
-    job.append(desc, 10.0, TextFormat { font_id: FontId::proportional(size::SMALL), color: theme::TEXT_DIM, ..Default::default() });
+    job.append(title, 0.0, TextFormat { font_id: FontId::proportional(size::BODY), color: theme::text_strong(), ..Default::default() });
+    job.append(desc, 10.0, TextFormat { font_id: FontId::proportional(size::SMALL), color: theme::text_dim(), ..Default::default() });
     job.wrap = egui::text::TextWrapping::truncate_at_width(w - 2.0 * pad.x - star_w);
     let galley = ui.painter().layout_job(job);
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, galley.size().y + 2.0 * pad.y), egui::Sense::click());
@@ -109,13 +109,13 @@ fn row(ui: &mut egui::Ui, title: &str, desc: &str, fav: Option<bool>) -> Option<
         if hovered {
             ui.painter().rect_filled(rect, v.corner_radius, v.weak_bg_fill);
         }
-        ui.painter().galley(egui::pos2(rect.left() + pad.x, rect.center().y - galley.size().y / 2.0), galley, theme::TEXT_STRONG);
+        ui.painter().galley(egui::pos2(rect.left() + pad.x, rect.center().y - galley.size().y / 2.0), galley, theme::text_strong());
         if let Some((on, s)) = &star {
             if *on || hovered {
                 let color = match (*on, s.hovered()) {
-                    (true, _) => theme::ACCENT,
-                    (false, true) => theme::TEXT_STRONG,
-                    (false, false) => theme::TEXT_DIM,
+                    (true, _) => theme::accent(),
+                    (false, true) => theme::text_strong(),
+                    (false, false) => theme::text_dim(),
                 };
                 paint_star(ui.painter(), s.rect.center(), 6.5, *on, color);
             }
@@ -538,7 +538,7 @@ pub fn body(ui: &mut egui::Ui, id: impl Hash + Copy + std::fmt::Debug, f: &mut F
         Load::Loading => {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label(RichText::new("Reading the options…").color(theme::TEXT_LABEL));
+                ui.label(RichText::new("Reading the options…").color(theme::text_label()));
             });
             None
         }
@@ -559,7 +559,7 @@ pub fn body(ui: &mut egui::Ui, id: impl Hash + Copy + std::fmt::Debug, f: &mut F
                 for o in &h.options {
                     let cur = f.get(&o.name).map(str::to_string);
                     let shown = cur.clone().or_else(|| o.default.clone()).unwrap_or_default();
-                    let label = RichText::new(&o.name).color(if cur.is_some() { theme::TEXT_STRONG } else { theme::TEXT_LABEL });
+                    let label = RichText::new(&o.name).color(if cur.is_some() { theme::text_strong() } else { theme::text_label() });
                     ui.label(label).on_hover_text(opt_tip(o));
                     let (resp, new) = opt_control(ui, egui::Id::new(("filter-opt", id, &o.name)), o, &shown);
                     let mut new = new;
@@ -586,7 +586,7 @@ pub fn body(ui: &mut egui::Ui, id: impl Hash + Copy + std::fmt::Debug, f: &mut F
         for (k, v) in unknown {
             ui.horizontal(|ui| {
                 let warn = if help.is_some() { "not an option of this ffmpeg" } else { "set" };
-                ui.label(RichText::new(format!("{k} = {v}")).color(if help.is_some() { theme::WARN } else { theme::TEXT_LABEL })).on_hover_text(warn);
+                ui.label(RichText::new(format!("{k} = {v}")).color(if help.is_some() { theme::warn() } else { theme::text_label() })).on_hover_text(warn);
                 if ui.small_button("✕").on_hover_text("Remove this value").clicked() {
                     f.set(&k, None);
                 }

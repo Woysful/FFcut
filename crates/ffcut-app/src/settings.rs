@@ -77,6 +77,13 @@ pub struct Settings {
     /// Entries of "+ Add effect" starred by the user, shown at its top in this order (`audio:effect:eq`,
     /// `video:filter:hue`, `audio:plugin:LV2:<uri>:`...).
     pub favorite_effects: Vec<String>,
+    /// Settings → Appearance: "standard" (also when empty), "brutalist" or "y2k".
+    pub theme: String,
+    /// The accent colour the user chose, per theme (theme name → RGB); a missing one = the theme's own.
+    pub accents: std::collections::BTreeMap<String, [u8; 3]>,
+    /// Opacity of the main window's surfaces, and of menus, tooltips and dialogs (30..=100 % and 50..=100 %); `None` = opaque.
+    pub window_opacity: Option<f32>,
+    pub popup_opacity: Option<f32>,
 }
 
 /// Output choices the user made the default; `None` = the built-in one.
@@ -134,6 +141,24 @@ impl Settings {
         }
     }
 
+    pub fn theme(&self) -> crate::theme::Kind {
+        crate::theme::Kind::from_id(&self.theme)
+    }
+    pub fn accent(&self) -> Option<eframe::egui::Color32> {
+        self.accents.get(self.theme().id()).map(|[r, g, b]| eframe::egui::Color32::from_rgb(*r, *g, *b))
+    }
+    pub fn window_alpha(&self) -> f32 {
+        self.window_opacity.unwrap_or(1.0).clamp(0.3, 1.0)
+    }
+    pub fn popup_alpha(&self) -> f32 {
+        self.popup_opacity.unwrap_or(1.0).clamp(0.5, 1.0)
+    }
+    /// Gives the interface the theme, the accent colour and the opacity chosen here.
+    pub fn apply_look(&self, ctx: &eframe::egui::Context) {
+        crate::theme::configure(self.theme(), self.accent(), self.window_alpha(), self.popup_alpha());
+        crate::theme::apply(ctx);
+    }
+
     /// Where plugins are looked for: the user's folders, then the usual ones.
     pub fn plugin_dirs(&self) -> ffcut_core::plugins::Dirs {
         let mine: Vec<PathBuf> = self.plugin_folders.iter().map(|f| f.trim()).filter(|f| !f.is_empty()).map(PathBuf::from).collect();
@@ -156,5 +181,27 @@ impl Settings {
         if std::fs::write(&tmp, serde_json::to_string_pretty(self).unwrap()).is_ok() {
             let _ = std::fs::rename(tmp, Self::file());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_keep_the_old_look() {
+        let s: Settings = serde_json::from_str(r#"{"show_frames": true}"#).unwrap();
+        assert_eq!(s.theme(), crate::theme::Kind::Standard);
+        assert_eq!(s.accent(), None);
+        assert_eq!((s.window_alpha(), s.popup_alpha()), (1.0, 1.0));
+    }
+
+    #[test]
+    fn accent_and_opacity_per_theme() {
+        let s: Settings =
+            serde_json::from_str(r#"{"theme": "y2k", "accents": {"brutalist": [1, 2, 3], "y2k": [4, 5, 6]}, "window_opacity": 0.05, "popup_opacity": 0.8}"#)
+                .unwrap();
+        assert_eq!(s.accent(), Some(eframe::egui::Color32::from_rgb(4, 5, 6)));
+        assert_eq!((s.window_alpha(), s.popup_alpha()), (0.3, 0.8));
     }
 }

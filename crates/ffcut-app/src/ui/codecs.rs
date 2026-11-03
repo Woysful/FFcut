@@ -47,14 +47,14 @@ fn heading(ui: &mut egui::Ui, text: &str) {
     let w = ui.available_width().max(160.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 24.0), egui::Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, 4.0, theme::BAND);
-    p.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())), 2.0, theme::ACCENT);
+    p.rect_filled(rect, theme::radius::of(4.0), theme::band());
+    p.rect_filled(egui::Rect::from_min_size(rect.min, egui::vec2(3.0, rect.height())), 2.0, theme::accent());
     p.text(
         egui::pos2(rect.left() + 12.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         text.to_uppercase(),
         egui::FontId::proportional(theme::size::BODY),
-        theme::TEXT_STRONG,
+        theme::text_strong(),
     );
     ui.add_space(2.0);
 }

@@ -94,7 +94,7 @@ impl App {
 
         let resp = ui.interact(rect, ui.id().with("level_meter"), Sense::hover());
         let p = ui.painter();
-        p.rect_filled(rect, 3.0, theme::TRACK);
+        p.rect_filled(rect, theme::radius::of(3.0), theme::track());
         let h = rect.height();
         let y_of = |d: f32| rect.bottom() - h * (d - FLOOR_DB) / (0.0 - FLOOR_DB);
         // segments of 3 px with a 1 px gap, coloured by level
@@ -104,11 +104,11 @@ impl App {
             let d_here = FLOOR_DB + (rect.bottom() - y) / h * (-FLOOR_DB);
             if d_here <= db {
                 let col = if d_here > -3.0 {
-                    theme::ERR
+                    theme::err()
                 } else if d_here > -12.0 {
-                    theme::WARN
+                    theme::warn()
                 } else {
-                    theme::OK
+                    theme::ok()
                 };
                 p.rect_filled(Rect::from_min_max(pos2(rect.left() + 1.5, y - 3.0), pos2(rect.right() - 1.5, y)), 1.0, col);
             }
