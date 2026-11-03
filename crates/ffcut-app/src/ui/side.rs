@@ -8,7 +8,7 @@ use super::{audio_label, codecs};
 use crate::app::{fmt_time, parse_time, App, AUDIO_EXPORT, CONTAINERS};
 use crate::hotkeys::Action;
 use crate::theme::{self, size};
-use eframe::egui::{self, pos2, vec2, Align2, Color32, DragValue, RichText, Sense, Stroke};
+use eframe::egui::{self, pos2, vec2, Color32, DragValue, RichText, Sense, Stroke};
 use ffcut_core::*;
 
 pub const SPEEDS: [&str; 9] = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
@@ -162,10 +162,13 @@ impl App {
         self.side.n += 1;
         let mut x = rect.left() + 18.0;
         if theme::kind() == theme::Kind::Brutalist {
-            // numbered like the sheets of a drawing
-            let r =
-                p.text(pos2(x, rect.center().y), Align2::LEFT_CENTER, format!("{:02}", self.side.n), egui::FontId::monospace(size::SMALL), theme::text_dim());
-            x = r.right() + 8.0;
+            // numbered like the sheets of a drawing, the number on a solid label (accent when open)
+            let fill = if open { theme::accent() } else { theme::text_dim() };
+            let g = p.layout_no_wrap(format!("{:02}", self.side.n), egui::FontId::monospace(size::SMALL), theme::on(fill));
+            let tag = egui::Rect::from_min_size(pos2(x, rect.center().y - 7.0), vec2(g.size().x + 6.0, 14.0));
+            p.rect_filled(tag, 0.0, fill);
+            p.galley(pos2(tag.left() + 3.0, tag.center().y - g.size().y / 2.0), g, theme::on(fill));
+            x = tag.right() + 8.0;
         }
         let title = p.layout_no_wrap(theme::title(s.title()), theme::display(size::TITLE), col);
         let mut title_w = x - rect.left() - 18.0 + title.size().x;
@@ -196,7 +199,18 @@ impl App {
             ui.add_space(10.0);
         }
         let y = ui.cursor().top();
-        ui.painter().hline(rect.left()..=rect.right(), y, Stroke::new(1.0, theme::line_faint()));
+        let p = ui.painter();
+        match theme::kind() {
+            theme::Kind::Standard => {
+                p.hline(rect.left()..=rect.right(), y, Stroke::new(1.0, theme::line_faint()));
+            }
+            theme::Kind::Brutalist => {
+                p.hline(rect.left()..=rect.right(), y, Stroke::new(1.0, theme::line_faint()));
+                p.rect_filled(egui::Rect::from_min_size(pos2(rect.left(), y - 1.0), vec2(22.0, 3.0)), 0.0, theme::text_label());
+                p.rect_filled(egui::Rect::from_min_size(pos2(rect.right() - 3.0, y - 3.0), vec2(3.0, 3.0)), 0.0, theme::text_label());
+            }
+            theme::Kind::Y2k => super::deco::rail(p, pos2(rect.left() + 2.0, y), pos2(rect.right() - 2.0, y), Stroke::new(1.0, theme::line_faint())),
+        }
         ui.add_space(1.0);
     }
 

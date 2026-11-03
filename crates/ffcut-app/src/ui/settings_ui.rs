@@ -627,7 +627,8 @@ fn theme_tile(ui: &mut egui::Ui, k: theme::Kind, selected: bool) -> egui::Respon
         }
         Kind::Y2k => {
             super::deco::star(p, pos2(side.left() - 14.0, pic.top() + 16.0), 8.0, text);
-            super::deco::brackets(p, tl.expand(4.0), 4.0, Stroke::new(1.0, acc));
+            p.rect_stroke(tl.expand(4.0), 8.0, Stroke::new(1.0, theme::line()), StrokeKind::Outside);
+            super::deco::dots(p, pos2(pic.left() + 12.0, pic.top() + 42.0), 5, 2, 2.5, text);
         }
     }
     let stroke = if selected {

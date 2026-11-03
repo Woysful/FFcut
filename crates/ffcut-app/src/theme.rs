@@ -12,7 +12,7 @@ pub enum Kind {
     Standard,
     /// Black and white, square corners, hard lines, heavy grotesk titles.
     Brutalist,
-    /// Night blue and periwinkle, cut and round corners, wide titles, stars and brackets.
+    /// Charcoal and thin white line art, pill controls, notched boxes, wide titles, stars and glyphs.
     Y2k,
 }
 
@@ -41,7 +41,7 @@ impl Kind {
         match self {
             Kind::Standard => "Calm dark grey, soft corners.",
             Kind::Brutalist => "Black and white, hard lines, square corners.",
-            Kind::Y2k => "Night blue, wide type, stars and brackets.",
+            Kind::Y2k => "Charcoal and white line art, wide type, stars.",
         }
     }
     pub fn default_accent(self) -> Color32 {
@@ -155,32 +155,34 @@ const BRUTALIST: Palette = Palette {
     radius: [0, 0, 0],
 };
 
+// near-monochrome: colour comes from the picture, the interface is drawn in thin light lines on charcoal
 const Y2K: Palette = Palette {
-    accent: rgb(143, 168, 255),
-    crop: rgb(255, 128, 222),
-    ok: rgb(110, 240, 196),
-    warn: rgb(255, 214, 120),
-    err: rgb(255, 104, 140),
-    bg: rgb(5, 8, 19),
-    panel: rgb(10, 15, 33),
-    window: rgb(14, 21, 44),
-    card: rgb(16, 24, 50),
-    track: rgb(22, 32, 64),
-    button: rgb(21, 31, 63),
-    button_hover: rgb(34, 49, 96),
-    field: rgb(5, 9, 22),
-    field_line: rgb(46, 63, 116),
-    field_line_hover: rgb(124, 148, 226),
-    band: rgb(44, 62, 120),
-    line: rgb(40, 57, 106),
-    line_faint: rgb(27, 38, 74),
-    faint_bg: rgb(13, 19, 41),
-    text_strong: rgb(244, 247, 255),
-    text: rgb(214, 222, 255),
-    text_label: rgb(158, 172, 222),
-    text_dim: rgb(120, 134, 190),
-    text_off: rgb(90, 102, 152),
-    radius: [9, 12, 16],
+    accent: rgb(236, 236, 240),
+    crop: rgb(250, 250, 250),
+    ok: rgb(150, 228, 170),
+    warn: rgb(240, 210, 120),
+    err: rgb(255, 112, 112),
+    bg: rgb(30, 30, 32),
+    panel: rgb(13, 13, 14),
+    window: rgb(16, 16, 17),
+    card: rgb(19, 19, 20),
+    track: rgb(38, 38, 40),
+    button: rgb(20, 20, 21),
+    button_hover: rgb(46, 46, 48),
+    field: rgb(6, 6, 7),
+    field_line: gray(92),
+    field_line_hover: gray(225),
+    band: gray(72),
+    line: gray(120),
+    line_faint: gray(56),
+    faint_bg: gray(22),
+    text_strong: gray(250),
+    text: gray(224),
+    text_label: gray(170),
+    text_dim: gray(132),
+    text_off: gray(100),
+    // the widget radius is more than half of their height: buttons and fields are pills
+    radius: [14, 14, 18],
 };
 
 #[derive(Clone, Copy)]
@@ -312,7 +314,7 @@ pub mod radius {
     }
     /// A radius drawn by hand, in the proportion of the theme (none in the square one).
     pub fn of(r: f32) -> f32 {
-        r * super::look().p.radius[0] as f32 / 6.0
+        r * (super::look().p.radius[0] as f32).min(12.0) / 6.0
     }
 }
 
@@ -444,15 +446,18 @@ pub fn apply(ctx: &egui::Context) {
             v.selection.bg_fill = p.accent.gamma_multiply(0.45);
         }
         Kind::Y2k => {
+            // line art: every control a thin light outline that turns white under the pointer
             v.widgets.inactive.bg_fill = p.button;
-            v.widgets.inactive.bg_stroke = Stroke::new(1.0, rgb(52, 70, 128));
-            v.widgets.hovered.bg_stroke = Stroke::new(1.0, rgb(176, 194, 255));
+            v.widgets.inactive.bg_stroke = Stroke::new(1.0, gray(118));
+            v.widgets.hovered.bg_stroke = Stroke::new(1.0, gray(245));
             v.widgets.active.bg_stroke = Stroke::new(1.0, p.accent);
             v.widgets.open.bg_stroke = Stroke::new(1.0, p.accent);
-            v.window_stroke = Stroke::new(1.0, rgb(70, 92, 160));
-            // a soft glow of the accent instead of a shadow
-            v.popup_shadow = Shadow { offset: [0, 0], blur: 18, spread: 0, color: p.accent.gamma_multiply(0.22) };
+            v.widgets.hovered.expansion = 0.0;
+            v.widgets.active.expansion = 0.0;
+            v.window_stroke = Stroke::new(1.0, gray(200));
+            v.popup_shadow = Shadow { offset: [0, 0], blur: 14, spread: 0, color: Color32::from_black_alpha(140) };
             v.window_shadow = v.popup_shadow;
+            v.selection.bg_fill = p.accent.gamma_multiply(0.35);
         }
     }
     ctx.set_visuals(v);

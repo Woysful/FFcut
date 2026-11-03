@@ -175,7 +175,7 @@ impl App {
             }
         });
         // ---- centre: crop | media buttons | tracks
-        ui.scope_builder(lay(Layout::left_to_right(Align::Center), centre), |ui| {
+        let group = ui.scope_builder(lay(Layout::left_to_right(Align::Center), centre), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if !audio {
                 if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop.on, None).on_hover_text(self.tip("Crop", Action::Crop)).clicked() {
@@ -198,10 +198,8 @@ impl App {
                 }
             }
             let icon = if self.player.paused() { Icon::Play } else { Icon::Pause };
-            if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(theme::accent().gamma_multiply(0.75)))
-                .on_hover_text(self.tip("Play / pause", Action::PlayPause))
-                .clicked()
-            {
+            let fill = if super::deco::on() { theme::accent() } else { theme::accent().gamma_multiply(0.75) };
+            if icon_button(ui, vec2(46.0, 28.0), icon, false, Some(fill)).on_hover_text(self.tip("Play / pause", Action::PlayPause)).clicked() {
                 self.play_pause();
             }
             if icon_button(ui, sz, Icon::StepForward, false, None)
@@ -227,6 +225,16 @@ impl App {
                 }
             }
         });
+        let g = group.response.rect;
+        match theme::kind() {
+            theme::Kind::Standard => {}
+            theme::Kind::Brutalist => super::deco::brackets(ui.painter(), g.expand2(vec2(6.0, 2.0)), 5.0, Stroke::new(1.0, theme::text_label())),
+            theme::Kind::Y2k => {
+                // the media buttons sit in one capsule, like the controls of a player module
+                let cap = g.expand2(vec2(7.0, 2.0));
+                ui.painter().rect_stroke(cap, cap.height() / 2.0, Stroke::new(1.0, theme::line_faint()), StrokeKind::Outside);
+            }
+        }
 
         // ---- right: preview audio track (hidden in track view), preview quality, volume
         ui.scope_builder(lay(Layout::right_to_left(Align::Center), right), |ui| {
@@ -409,6 +417,16 @@ impl App {
             .into_iter()
             .find(|s| (*s / dur) as f32 * track.width() >= 70.0)
             .unwrap_or(3600.0);
+        if super::deco::on() {
+            // minor ticks between the labelled ones, like a ruler
+            let minor = step / 5.0;
+            let mut tk = minor;
+            while tk <= dur {
+                let x = t2x(tk);
+                p.line_segment([pos2(x, rect.top() + 17.0), pos2(x, rect.top() + 20.0)], Stroke::new(1.0, theme::line_faint()));
+                tk += minor;
+            }
+        }
         let mut tk = 0.0;
         while tk <= dur {
             let x = t2x(tk);

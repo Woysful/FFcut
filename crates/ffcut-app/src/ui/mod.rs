@@ -71,6 +71,23 @@ fn name_prompt(ui: &mut egui::Ui, name: &mut String, ready: bool) -> Option<Prom
     out
 }
 
+/// A few ornaments in the free part of the menu bar between `x0` and `x1`.
+fn menu_deco(p: &egui::Painter, x0: f32, x1: f32, y: f32) {
+    if x1 - x0 < 40.0 {
+        return;
+    }
+    let ink = theme::text_dim();
+    if theme::kind() == theme::Kind::Brutalist {
+        let w = (x1 - x0).min(64.0);
+        deco::barcode(p, egui::Rect::from_min_size(egui::pos2(x0, y - 5.0), vec2(w, 10.0)), ink);
+    } else {
+        deco::star(p, egui::pos2(x0 + 5.0, y), 5.0, theme::text_label());
+        if x1 - x0 > 60.0 {
+            deco::dots(p, egui::pos2(x0 + 18.0, y), 4, 1, 2.0, ink);
+        }
+    }
+}
+
 impl App {
     pub fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("menu").show(ui, |ui| {
@@ -134,6 +151,8 @@ impl App {
                     }
                 });
 
+                let menus_end = ui.min_rect().right();
+
                 // right (next to the sidebar): presets, and the "lamp" when a newer release exists
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     widgets::menu_button(ui, "Presets", |ui| self.presets_menu(ui));
@@ -151,6 +170,11 @@ impl App {
                     let w = (bar.width() - 2.0 * 230.0).max(100.0);
                     let r = Rect::from_center_size(bar.center(), vec2(w, bar.height()));
                     ui.put(r, egui::Label::new(RichText::new(text).color(theme::text_label())).truncate());
+                }
+                if deco::on() {
+                    let w = (bar.width() - 2.0 * 230.0).max(100.0);
+                    let free = if self.clip.is_some() { bar.center().x - w / 2.0 } else { menus_end + 140.0 };
+                    menu_deco(ui.painter(), menus_end + 14.0, free - 14.0, bar.center().y);
                 }
             });
         });

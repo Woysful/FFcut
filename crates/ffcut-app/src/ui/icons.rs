@@ -95,7 +95,12 @@ pub fn icon_button(ui: &mut egui::Ui, size: Vec2, icon: Icon, selected: bool, fi
         b = b.fill(f);
     }
     let resp = ui.add_sized(size, b);
-    let col = if selected { Color32::WHITE } else { ui.style().interact(&resp).fg_stroke.color };
+    // on a coloured fill the icon takes whichever of dark and light reads on it
+    let col = match fill {
+        Some(f) => crate::theme::on(f),
+        None if selected => Color32::WHITE,
+        None => ui.style().interact(&resp).fg_stroke.color,
+    };
     draw(ui.painter(), icon, resp.rect.center(), size.y.min(size.x) * 0.36, col);
     resp
 }
