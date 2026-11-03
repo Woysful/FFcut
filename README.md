@@ -94,6 +94,12 @@ FFcut finds LADSPA and LV2 plugins (audio effects) and frei0r plugins (video eff
 
 VST, VST3, CLAP, AU and OFX plugins cannot be used: ffmpeg has no host for them.
 
+## Appearance
+
+*File → Settings → Appearance* changes the look at once: three themes (*Standard*, *Technical brutalist*, *Cyber Y2K*), an accent colour per theme, and the opacity of the window and of menus, tooltips and dialogs. A see-through window has to be made so at start (the page offers a restart); on X11 it needs a compositor.
+
+*Blur what is behind the window* asks the desktop to blur through the see-through window; the desktop decides how strong. KDE Plasma takes the request (X11 and Wayland), and so do Wayland compositors with `ext-background-effect`. picom, Hyprland and SwayFX blur see-through windows by their own settings; GNOME does not blur.
+
 ## Keyboard Shortcuts
 
 | key          | Description                         |
@@ -121,11 +127,11 @@ All shortcuts can be changed in *File → Settings → Hotkeys*; *Help* lists th
 
 ## Development
 - `crates/ffcut-core` — all logic without UI: `model/` (export settings: source, video, audio, export), `builder` (settings → ffmpeg argv), `cmdline` (argv ⇄ editable text), `probe` (ffprobe), `run` (background jobs; runs exactly the argv you see: progress, cancel, cleanup), `presets`, `audiofx` / `videofx` (effects → filters), `filters` (ffmpeg's filter list and options), `plugins/` (finding and reading LADSPA, LV2, frei0r plugins), `analysis` (loudness measuring), `waveform`. Tested, including against real ffmpeg.
-- `crates/ffcut-app` — the UI (egui + libmpv): `player`, `app` (state and actions), `state` (dialogs, presets, crop…), `theme` (colours, sizes, the egui style), `update` / `install` (update check, installing the Windows zip), `ui/` (one file per area; `ui/widgets.rs` holds the shared building blocks: form rows, value fields, cards, effect stacks, drag handles).
+- `crates/ffcut-app` — the UI (egui + libmpv): `player`, `app` (state and actions), `state` (dialogs, presets, crop…), `theme` (themes: colours, sizes, the egui style), `blur` (blur behind the window), `update` / `install` (update check, installing the Windows zip), `ui/` (one file per area; `ui/widgets.rs` holds the shared building blocks: form rows, value fields, cards, effect stacks, drag handles; `ui/deco.rs` the ornaments of the brutalist and the Y2K theme).
 - Changes per version: [CHANGELOG.md](CHANGELOG.md).
 - Tests: `cargo test --workspace` (needs `ffmpeg` in `PATH`).
 - The version lives in one place: `[workspace.package]` in the root `Cargo.toml`. Release = bump it, build, publish a GitHub Release tagged `v<version>`.
 - Debug env: `FFCUT_DEBUG=1`, `FFCUT_MPV_LOG=file`, `FFCUT_NO_AUDIO=1`, `FFCUT_MPV_DR=auto|yes`, `FFCUT_DISPLAY=x11|wayland`, `FFCUT_UPDATE_URL=<url>`, `FFCUT_UPDATE_ASSET=<end of the file name to install>`, `FFCUT_NO_UPDATE=1`.
-- Fonts: Manrope and JetBrains Mono (OFL), embedded from `crates/ffcut-app/assets/fonts`.
+- Fonts: Manrope, JetBrains Mono, Archivo Black and Michroma (OFL), embedded from `crates/ffcut-app/assets/fonts`.
 
 **Main principle:** on export FFcut runs **exactly the text in the command field**. Nothing is filtered or reinterpreted.
