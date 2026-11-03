@@ -275,6 +275,19 @@ pub fn primary_button(text: impl Into<String>) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text.into()).strong().color(theme::on_accent())).fill(theme::accent())
 }
 
+/// Room on the right of a scrolled page for the scroll bar: egui draws it over the content, here it sits
+/// in this strip, beside the boxes.
+pub const SCROLL_GUTTER: i8 = 14;
+
+/// A vertically scrolled page whose scroll bar does not cover it. The panel around it needs
+/// [`SCROLL_GUTTER`] less margin on its right.
+pub fn scroll_page<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| egui::Frame::NONE.inner_margin(egui::Margin { right: SCROLL_GUTTER, ..Default::default() }).show(ui, add).inner)
+        .inner
+}
+
 /// The frame of a box inside a panel.
 pub fn box_frame() -> egui::Frame {
     egui::Frame::NONE.fill(theme::card()).stroke(egui::Stroke::new(1.0, theme::line())).corner_radius(radius::card()).inner_margin(egui::Margin::same(10))

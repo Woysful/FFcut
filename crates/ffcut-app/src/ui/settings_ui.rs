@@ -1,6 +1,6 @@
 //! The Settings window: a page list on the left, cards on the right.
 
-use super::{card, os_window_raw};
+use super::{card, os_window_raw, widgets};
 use crate::app::App;
 use crate::theme::{self, radius, size};
 use eframe::egui::{self, pos2, vec2, Align, Align2, Color32, Layout, Rect, RichText, Sense, Stroke, StrokeKind};
@@ -40,10 +40,11 @@ impl App {
                         }
                     });
                 });
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(egui::Margin::symmetric(22, 18))).show(ui, |ui| {
+            let margin = egui::Margin { left: 22, right: 22 - widgets::SCROLL_GUTTER, top: 18, bottom: 18 };
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(margin)).show(ui, |ui| {
                 ui.label(theme::heading(PAGES[self.settings_tab.min(PAGES.len() - 1)], 20.0));
                 ui.add_space(10.0);
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.settings_tab {
+                widgets::scroll_page(ui, |ui| match self.settings_tab {
                     0 => self.page_general(ui),
                     1 => self.page_appearance(ui),
                     2 => self.page_interface(ui),
@@ -427,7 +428,7 @@ impl App {
                 });
                 if !self.hk_note.is_empty() {
                     ui.add_space(6.0);
-                    super::widgets::warn(ui, self.hk_note.clone());
+                    widgets::warn(ui, self.hk_note.clone());
                 }
                 ui.add_space(8.0);
                 if ui.add_enabled(!self.settings.hotkeys.is_empty(), egui::Button::new("Reset all to defaults")).clicked() {

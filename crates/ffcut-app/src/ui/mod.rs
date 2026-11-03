@@ -433,9 +433,7 @@ impl App {
 /// Returns `false` once the user has closed it (title-bar button or Esc).
 pub fn os_window(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], mut body: impl FnMut(&mut egui::Ui)) -> bool {
     os_window_raw(ctx, id, title, size, |ui| {
-        egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| body(ui));
-        });
+        egui::CentralPanel::default().show(ui, |ui| widgets::scroll_page(ui, &mut body));
     })
 }
 

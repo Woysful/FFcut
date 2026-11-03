@@ -231,12 +231,15 @@ impl App {
                     }
                 });
             });
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(egui::Margin::symmetric(18, 14))).show(ui, |ui| {
+            let margin = egui::Margin { left: 18, right: 18 - widgets::SCROLL_GUTTER, top: 14, bottom: 14 };
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(theme::panel()).inner_margin(margin)).show(ui, |ui| {
                 if let Some(m) = &self.presets_ui.msg {
-                    widgets::warn(ui, m.clone());
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin { right: widgets::SCROLL_GUTTER, ..Default::default() })
+                        .show(ui, |ui| widgets::warn(ui, m.clone()));
                     ui.add_space(6.0);
                 }
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match self.presets_ui.tab {
+                widgets::scroll_page(ui, |ui| match self.presets_ui.tab {
                     PresetsTab::Export => self.export_presets_tab(ui),
                     PresetsTab::Audio => self.fx_presets_tab(ui),
                 });
