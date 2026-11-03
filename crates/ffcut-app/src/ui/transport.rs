@@ -225,13 +225,16 @@ impl App {
                 }
             }
         });
+        // the group is as tall as the row, the buttons in it 28 px: measured from the buttons, the
+        // ornaments keep the same distance from them on every side
         let g = group.response.rect;
+        let g = Rect::from_center_size(g.center(), vec2(g.width(), 28.0));
         match theme::kind() {
             theme::Kind::Standard => {}
-            theme::Kind::Brutalist => super::deco::brackets(ui.painter(), g.expand2(vec2(6.0, 2.0)), 5.0, Stroke::new(1.0, theme::text_label())),
+            theme::Kind::Brutalist => super::deco::brackets(ui.painter(), g.expand(4.0), 5.0, Stroke::new(1.0, theme::text_label())),
             theme::Kind::Y2k => {
                 // the media buttons sit in one capsule, like the controls of a player module
-                let cap = g.expand2(vec2(7.0, 2.0));
+                let cap = g.expand(3.0);
                 ui.painter().rect_stroke(cap, cap.height() / 2.0, Stroke::new(1.0, theme::line_faint()), StrokeKind::Outside);
             }
         }

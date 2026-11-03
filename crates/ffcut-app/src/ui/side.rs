@@ -163,7 +163,8 @@ impl App {
         let mut x = rect.left() + 18.0;
         if theme::kind() == theme::Kind::Brutalist {
             // numbered like the sheets of a drawing, the number on a solid label (accent when open)
-            let fill = if open { theme::accent() } else { theme::text_dim() };
+            // closed: a dark label, so the light number stands out on it
+            let fill = if open { theme::accent() } else { theme::line_faint() };
             let g = p.layout_no_wrap(format!("{:02}", self.side.n), egui::FontId::monospace(size::SMALL), theme::on(fill));
             let tag = egui::Rect::from_min_size(pos2(x, rect.center().y - 7.0), vec2(g.size().x + 6.0, 14.0));
             p.rect_filled(tag, 0.0, fill);
@@ -174,7 +175,7 @@ impl App {
         let mut title_w = x - rect.left() - 18.0 + title.size().x;
         p.galley(pos2(x, rect.center().y - title.size().y / 2.0), title, col);
         if theme::kind() == theme::Kind::Y2k && open {
-            super::deco::star(p, pos2(rect.left() + 18.0 + title_w + 10.0, rect.center().y), 5.0, theme::accent());
+            super::deco::star(p, pos2(rect.left() + 18.0 + title_w + 10.0, rect.center().y), 4.5, theme::accent());
             title_w += 18.0;
         }
         if let Some(sum) = summary.filter(|s| !s.is_empty()) {

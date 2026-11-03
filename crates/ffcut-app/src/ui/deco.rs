@@ -23,24 +23,45 @@ pub fn cross(p: &egui::Painter, c: Pos2, s: f32, stroke: Stroke) {
     p.line_segment([pos2(c.x, c.y - s), pos2(c.x, c.y + s)], stroke);
 }
 
-/// A four-pointed sparkle of radius `r` with curved, pinched sides.
+/// A four-pointed sparkle of radius `r` with curved, pinched sides. Below 7 px the shape cannot be made
+/// out, so a small ring with a dot stands in for it.
 pub fn star(p: &egui::Painter, c: Pos2, r: f32, col: Color32) {
-    // a superellipse with an exponent above 2 has concave sides; it is star-shaped around its centre,
-    // so a fan from the centre fills it
+    if r < 7.0 {
+        p.circle_stroke(c, r * 0.72, Stroke::new(1.0, col));
+        p.circle_filled(c, (r * 0.28).max(1.2), col);
+        return;
+    }
+    // a superellipse with an exponent above 2 has concave sides (4: thin rays); it is star-shaped around
+    // its centre, so a fan from the centre fills it
+    const N: usize = 96;
+    let edge: Vec<Pos2> = (0..N)
+        .map(|i| {
+            let a = i as f32 / N as f32 * TAU;
+            let (s, k) = (a.sin(), a.cos());
+            pos2(c.x + r * k.signum() * k.abs().powi(4), c.y + r * s.signum() * s.abs().powi(4))
+        })
+        .collect();
+    // a mesh has no anti-aliasing of its own: a ring half a pixel inside (solid) and half a pixel outside
+    // (clear) the edge smooths it, the way egui feathers its shapes
     let mut m = egui::Mesh::default();
     m.colored_vertex(c, col);
-    const N: u32 = 48;
     for i in 0..N {
-        let a = i as f32 / N as f32 * TAU;
-        let (s, k) = (a.sin(), a.cos());
-        m.colored_vertex(pos2(c.x + r * k.signum() * k.abs().powf(3.0), c.y + r * s.signum() * s.abs().powf(3.0)), col);
+        let (prev, next) = (edge[(i + N - 1) % N], edge[(i + 1) % N]);
+        let mut n = (next - prev).rot90().normalized();
+        if n.dot(edge[i] - c) < 0.0 {
+            n = -n;
+        }
+        m.colored_vertex(edge[i] - n * 0.5, col);
+        m.colored_vertex(edge[i] + n * 0.5, Color32::TRANSPARENT);
     }
+    let (inner, outer) = (|i: usize| 1 + 2 * (i % N) as u32, |i: usize| 2 + 2 * (i % N) as u32);
     for i in 0..N {
-        m.add_triangle(0, 1 + i, 1 + (i + 1) % N);
+        m.add_triangle(0, inner(i), inner(i + 1));
+        m.add_triangle(inner(i), outer(i), outer(i + 1));
+        m.add_triangle(inner(i), outer(i + 1), inner(i + 1));
     }
     p.add(Shape::mesh(m));
 }
-
 /// A barcode filling `r`.
 pub fn barcode(p: &egui::Painter, r: Rect, col: Color32) {
     // bar, gap, bar... in units
