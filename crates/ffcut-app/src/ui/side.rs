@@ -89,6 +89,27 @@ fn time_field_w(ui: &mut egui::Ui, v: &mut f64, min: f64, max: f64, fps: Option<
     widgets::value_sized(ui, [width, ui.spacing().interact_size.y], dv)
 }
 
+/// Space between the fields of one trim row.
+const GAP: f32 = 4.0;
+/// Side padding of the speed preset buttons, tighter than other buttons so three fit beside the speed.
+const PRESET_PAD: f32 = 6.0;
+const SPEED_PRESETS: [f64; 3] = [0.5, 1.5, 2.0];
+
+/// Width of `s` in `style`.
+fn text_w(ui: &egui::Ui, s: &str, style: &egui::TextStyle) -> f32 {
+    ui.painter().layout_no_wrap(s.to_string(), style.resolve(ui.style()), Color32::WHITE).size().x
+}
+
+/// The smallest width at which a value field or button shows `s` without growing.
+fn value_w(ui: &egui::Ui, s: &str, style: &egui::TextStyle) -> f32 {
+    (text_w(ui, s, style) + 2.0 * ui.spacing().button_padding.x).ceil() + 1.0
+}
+
+/// Room for the controls of a [`field`] row.
+fn row_w(ui: &egui::Ui) -> f32 {
+    ui.available_width() - widgets::LABEL_W - ui.spacing().item_spacing.x
+}
+
 /// Width × height with 0 = "auto" (keeps the proportions). True when changed.
 pub(super) fn size_fields(ui: &mut egui::Ui, scale: &mut Scale) -> bool {
     let (mut w, mut h) = (scale.w.unwrap_or(0), scale.h.unwrap_or(0));
@@ -330,11 +351,7 @@ impl App {
         }
         self.section(ui, Section::Trim, Some(sum), |a, ui| {
             let dur = a.dur();
-            // start and end side by side, split by a dash; both shrink together in a narrow sidebar
-            field(ui, "Start / End", |ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let dash = ui.painter().layout_no_wrap("–".into(), egui::TextStyle::Body.resolve(ui.style()), theme::text_dim()).size().x;
-                let w = ((ui.available_width() - dash - 8.0) / 2.0).floor().clamp(80.0, 110.0);
+            let start = |a: &mut App, ui: &mut egui::Ui, w: f32| {
                 let mut v = a.trim_start;
                 let r = time_field_w(ui, &mut v, 0.0, (a.trim_end - 0.05).max(0.0), fps, w)
                     .on_hover_text(a.tip("Start. Right-click to reset. Set to the playhead", Action::TrimStart));
@@ -343,7 +360,8 @@ impl App {
                     a.player.seek(v);
                     a.sync_loop();
                 }
-                ui.label(RichText::new("–").color(theme::text_dim()));
+            };
+            let end = |a: &mut App, ui: &mut egui::Ui, w: f32| {
                 let mut v = a.trim_end;
                 let r = time_field_w(ui, &mut v, a.trim_start + 0.05, dur, fps, w)
                     .on_hover_text(a.tip("End. Right-click to reset. Set to the playhead", Action::TrimEnd));
@@ -352,7 +370,29 @@ impl App {
                     a.player.seek(v);
                     a.sync_loop();
                 }
-            });
+            };
+            // the longest value the fields show; a field narrower than its text would push the sidebar wider
+            let longest = match fps {
+                Some(f) => format!("{}", (dur * f).round() as i64),
+                None => fmt_time(dur),
+            };
+            let need = value_w(ui, &longest, &ui.style().drag_value_text_style.clone());
+            let dash = text_w(ui, "–", &egui::TextStyle::Body);
+            let row = row_w(ui);
+            let w = ((row - dash - 2.0 * GAP) / 2.0).floor().min(110.0);
+            if w >= need {
+                // start and end side by side, split by a dash
+                field(ui, "Start / End", |ui| {
+                    ui.spacing_mut().item_spacing.x = GAP;
+                    start(a, ui, w);
+                    ui.label(RichText::new("–").color(theme::text_dim()));
+                    end(a, ui, w);
+                });
+            } else {
+                let w = row.min(110.0).max(need);
+                field(ui, "Start", |ui| start(a, ui, w));
+                field(ui, "End", |ui| end(a, ui, w));
+            }
             ui.add_space(2.0);
             a.speed_rows(ui);
         });
@@ -360,13 +400,22 @@ impl App {
 
     /// How fast the result plays, and whether the sound keeps its pitch.
     fn speed_rows(&mut self, ui: &mut egui::Ui) {
+        let h = ui.spacing().interact_size.y;
+        let field_w = value_w(ui, "0.25×", &ui.style().drag_value_text_style.clone()).max(64.0);
+        let btn_need = ui.scope(|ui| {
+            ui.spacing_mut().button_padding.x = PRESET_PAD;
+            SPEED_PRESETS.iter().map(|&p| value_w(ui, &format!("{}×", speed_text(p)), &egui::TextStyle::Button)).fold(0.0, f32::max)
+        });
+        let btn_need = btn_need.inner;
+        let row = row_w(ui);
+        // the presets sit beside the field, or under it when the sidebar is too narrow for both
+        let beside = field_w + 4.0 * GAP + 3.0 * btn_need <= row;
         field(ui, "Speed", |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let h = ui.spacing().interact_size.y;
+            ui.spacing_mut().item_spacing.x = GAP;
             let mut v = self.s.speed;
             let r = widgets::value_sized(
                 ui,
-                [64.0, h],
+                [field_w, h],
                 DragValue::new(&mut v)
                     .range(SPEED_RANGE)
                     .speed(0.01)
@@ -377,18 +426,19 @@ impl App {
             if resettable(r, &mut v, 1.0).changed() {
                 self.s.speed = v;
             }
-            ui.add_space(4.0);
-            const PRESETS: [f64; 3] = [0.5, 1.5, 2.0];
-            let w = ((ui.available_width() - 8.0) / 3.0).floor().clamp(36.0, 52.0);
-            for p in PRESETS {
-                let on = (self.s.speed - p).abs() < 1e-6;
-                let b = ui.add_sized([w, h], egui::Button::new(format!("{}×", speed_text(p))).selected(on));
-                let b = if on { b.on_hover_text("Click again for normal speed") } else { b };
-                if b.clicked() {
-                    self.s.speed = if on { 1.0 } else { p };
-                }
+            if beside {
+                ui.add_space(GAP);
+                let w = ((row - field_w - 4.0 * GAP) / 3.0).floor().clamp(btn_need, 52.0);
+                self.speed_presets(ui, w);
             }
         });
+        if !beside {
+            field(ui, "", |ui| {
+                ui.spacing_mut().item_spacing.x = GAP;
+                let w = ((row - 2.0 * GAP) / 3.0).floor().clamp(btn_need, 52.0);
+                self.speed_presets(ui, w);
+            });
+        }
         if !self.s.speed_changed() {
             return;
         }
@@ -400,6 +450,20 @@ impl App {
         }
         let out = (self.trim_end - self.trim_start) / self.s.speed;
         hint(ui, format!("The export lasts {}. The preview plays at normal speed.", fmt_time(out)));
+    }
+
+    /// The 0.5× / 1.5× / 2× buttons; a second click on the lit one goes back to 1×.
+    fn speed_presets(&mut self, ui: &mut egui::Ui, w: f32) {
+        let h = ui.spacing().interact_size.y;
+        ui.spacing_mut().button_padding.x = PRESET_PAD;
+        for p in SPEED_PRESETS {
+            let on = (self.s.speed - p).abs() < 1e-6;
+            let b = ui.add_sized([w, h], egui::Button::new(format!("{}×", speed_text(p))).selected(on));
+            let b = if on { b.on_hover_text("Click again for normal speed") } else { b };
+            if b.clicked() {
+                self.s.speed = if on { 1.0 } else { p };
+            }
+        }
     }
 
     // ------------------------------------------------------------------ crop & transform
