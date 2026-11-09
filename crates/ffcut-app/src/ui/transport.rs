@@ -84,10 +84,10 @@ impl App {
         }
     }
 
-    /// [loop, time]   [crop, frame, ⏮ ◀ ▶ ▶| ⏭, tracks]   [audio track, preview quality, volume]
+    /// [loop, time]   [crop, frame, ⏮ ◀ ▶ ▶| ⏭, preview quality, tracks]   [audio track, volume]
     ///
     /// When the bar is narrow the sides give way in steps: the volume slider gets shorter, the time drops
-    /// the duration, the audio track and the preview quality move into a "⋯" menu, then the slider too.
+    /// the duration, the audio track moves into a "⋯" menu, then the preview quality, then the slider too.
     /// The centre moves off the middle before anything has to go.
     fn controls(&mut self, ui: &mut egui::Ui) {
         let dur = self.dur();
@@ -112,7 +112,6 @@ impl App {
         let long_w = text_w(format!("{total} / {total}"), font.clone());
         let short_w = text_w(total.clone(), font);
         let mute_w = text_w("🔊".into(), egui::TextStyle::Button.resolve(ui.style())) + 2.0 * ui.spacing().button_padding.x;
-        let extras = show_tracks || show_quality;
         let left_need = |short: bool| 34.0 + sp + 6.0 + if short { short_w } else { long_w } + 4.0;
         let right_need = |fit: &Fit| {
             let mut w = mute_w + sp;
@@ -121,23 +120,36 @@ impl App {
             }
             if fit.more {
                 w += 12.0 + 34.0 + sp;
-            } else {
-                w += if show_quality { 12.0 + 64.0 + sp } else { 0.0 } + if show_tracks { 12.0 + 96.0 + sp } else { 0.0 };
+            } else if show_tracks {
+                w += 12.0 + 96.0 + sp;
             }
             w + 4.0
         };
-        let cw = if audio { 210.0 } else { 344.0 };
+        // the preview quality sits in the centre, before the timeline switch (and the spacing after it)
+        // at the narrowest the groups inside the centre lose the space between them (2 × 8)
+        let centre_w = |fit: &Fit| {
+            let w = if audio { 210.0 } else { 344.0 + if show_quality && fit.quality_centre { 64.0 + 6.0 } else { 0.0 } };
+            if fit.tight && !audio {
+                w - 16.0
+            } else {
+                w
+            }
+        };
         let gap = 10.0;
         let steps = [
-            Fit { short_time: false, vol_w: 92.0, more: false, vol_in_more: false },
-            Fit { short_time: false, vol_w: 60.0, more: false, vol_in_more: false },
-            Fit { short_time: true, vol_w: 60.0, more: false, vol_in_more: false },
-            Fit { short_time: true, vol_w: 60.0, more: extras, vol_in_more: false },
-            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true },
+            Fit { short_time: false, vol_w: 92.0, more: false, vol_in_more: false, quality_centre: true, tight: false },
+            Fit { short_time: false, vol_w: 60.0, more: false, vol_in_more: false, quality_centre: true, tight: false },
+            Fit { short_time: true, vol_w: 60.0, more: false, vol_in_more: false, quality_centre: true, tight: false },
+            Fit { short_time: true, vol_w: 60.0, more: show_tracks, vol_in_more: false, quality_centre: true, tight: false },
+            Fit { short_time: true, vol_w: 60.0, more: show_tracks || show_quality, vol_in_more: false, quality_centre: false, tight: false },
+            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true, quality_centre: false, tight: false },
+            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true, quality_centre: false, tight: true },
         ];
-        let fits = |f: &Fit| left_need(f.short_time) + cw + right_need(f) + 2.0 * gap <= rect.width();
+        let fits = |f: &Fit| left_need(f.short_time) + centre_w(f) + right_need(f) + 2.0 * gap <= rect.width();
         let fit = steps.iter().find(|f| fits(f)).unwrap_or(&steps[steps.len() - 1]);
-        let (lneed, rneed) = (left_need(fit.short_time), right_need(fit));
+        let (lneed, rneed, cw) = (left_need(fit.short_time), right_need(fit), centre_w(fit));
+        let quality_centre = show_quality && fit.quality_centre;
+        let group_gap = if fit.tight { 0.0 } else { 8.0 };
         let mid = rect.center().x - cw / 2.0;
         let (lo, hi) = (rect.left() + lneed + gap, rect.right() - rneed - gap - cw);
         let cx = if lo <= hi { mid.clamp(lo, hi) } else { mid };
@@ -174,7 +186,7 @@ impl App {
                 self.settings.save();
             }
         });
-        // ---- centre: crop | media buttons | tracks
+        // ---- centre: crop, frame | media buttons | preview quality, tracks
         let group = ui.scope_builder(lay(Layout::left_to_right(Align::Center), centre), |ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if !audio {
@@ -185,7 +197,7 @@ impl App {
                 if icon_button(ui, vec2(34.0, 28.0), Icon::Frame, false, None).on_hover_text(tip).clicked() {
                     self.export_frame(ui.ctx());
                 }
-                ui.add_space(8.0);
+                ui.add_space(group_gap);
             }
             let sz = vec2(34.0, 28.0);
             if icon_button(ui, sz, Icon::ToStart, false, None).on_hover_text("Go to trim start").clicked() {
@@ -220,7 +232,10 @@ impl App {
                 self.player.seek(self.trim_end);
             }
             if !audio {
-                ui.add_space(8.0);
+                ui.add_space(group_gap);
+                if quality_centre {
+                    self.preview_quality(ui);
+                }
                 if icon_button(ui, vec2(34.0, 28.0), Icon::Tracks, self.multitrack, None)
                     .on_hover_text("Switch the timeline: one bar / one lane per audio track")
                     .clicked()
@@ -243,7 +258,7 @@ impl App {
             }
         }
 
-        // ---- right: preview audio track (hidden in track view), preview quality, volume
+        // ---- right: preview audio track (hidden in track view), volume
         ui.scope_builder(lay(Layout::right_to_left(Align::Center), right), |ui| {
             ui.set_clip_rect(right);
             if !fit.vol_in_more {
@@ -257,7 +272,8 @@ impl App {
             }
             if fit.more {
                 ui.add_space(12.0);
-                let what: Vec<&str> = [(show_tracks, "audio track"), (show_quality, "preview quality"), (fit.vol_in_more, "volume")]
+                let in_more = show_quality && !quality_centre;
+                let what: Vec<&str> = [(show_tracks, "audio track"), (in_more, "preview quality"), (fit.vol_in_more, "volume")]
                     .into_iter()
                     .filter_map(|(on, w)| on.then_some(w))
                     .collect();
@@ -283,24 +299,18 @@ impl App {
                         head(ui, "Audio track");
                         self.audio_items(ui, &tracks);
                     }
-                    if show_quality {
+                    if in_more {
                         sep(ui);
                         head(ui, "Preview quality").on_hover_text(QUALITY_TIP);
                         self.quality_items(ui);
                     }
                 });
-            } else {
-                if show_quality {
-                    ui.add_space(12.0);
-                    self.preview_quality(ui);
-                }
-                if show_tracks {
-                    ui.add_space(12.0);
-                    let cur = format!("Audio #{}", self.preview_audio + 1);
-                    widgets::Combo::from_id_salt("preview_audio").selected_text(cur).width(96.0).show_list(ui, |ui| {
-                        self.audio_items(ui, &tracks);
-                    });
-                }
+            } else if show_tracks {
+                ui.add_space(12.0);
+                let cur = format!("Audio #{}", self.preview_audio + 1);
+                widgets::Combo::from_id_salt("preview_audio").selected_text(cur).width(96.0).show_list(ui, |ui| {
+                    self.audio_items(ui, &tracks);
+                });
             }
         });
     }
@@ -493,7 +503,11 @@ fn quality_label(div: u32) -> &'static str {
 struct Fit {
     short_time: bool,
     vol_w: f32,
-    /// The audio track and the preview quality sit in the "⋯" menu.
+    /// The audio track (and the preview quality, when it is not in the centre) sit in the "⋯" menu.
     more: bool,
     vol_in_more: bool,
+    /// The preview quality is in the centre group; otherwise in the "⋯" menu.
+    quality_centre: bool,
+    /// No extra space between the groups of buttons in the centre.
+    tight: bool,
 }
