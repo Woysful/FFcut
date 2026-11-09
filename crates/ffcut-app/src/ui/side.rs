@@ -354,8 +354,10 @@ impl App {
     fn speed_rows(&mut self, ui: &mut egui::Ui) {
         field(ui, "Speed", |ui| {
             let mut v = self.s.speed;
-            let r = num(
+            // as wide as the time fields above it
+            let r = widgets::value_sized(
                 ui,
+                [110.0, ui.spacing().interact_size.y],
                 DragValue::new(&mut v)
                     .range(SPEED_RANGE)
                     .speed(0.01)
@@ -366,9 +368,16 @@ impl App {
             if resettable(r, &mut v, 1.0).changed() {
                 self.s.speed = v;
             }
-            for p in [0.5, 1.5, 2.0] {
-                if ui.add(egui::Button::new(format!("{}×", speed_text(p))).small().selected((self.s.speed - p).abs() < 1e-6)).clicked() {
-                    self.s.speed = if (self.s.speed - p).abs() < 1e-6 { 1.0 } else { p };
+        });
+        field(ui, "", |ui| {
+            const PRESETS: [f64; 5] = [0.5, 1.0, 1.5, 2.0, 4.0];
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let n = PRESETS.len() as f32;
+            let w = ((ui.available_width() - 4.0 * (n - 1.0)) / n).floor().max(30.0);
+            for p in PRESETS {
+                let on = (self.s.speed - p).abs() < 1e-6;
+                if ui.add_sized([w, ui.spacing().interact_size.y], egui::Button::new(format!("{}×", speed_text(p))).selected(on)).clicked() {
+                    self.s.speed = p;
                 }
             }
         });
