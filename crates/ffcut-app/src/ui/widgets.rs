@@ -13,6 +13,11 @@ pub const NUM_W: f32 = 84.0;
 pub fn field<R>(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         let h = ui.spacing().interact_size.y;
+        // a control taller than the row makes egui centre each next one a little lower: the padding
+        // is cut so that buttons and fields fit the row height
+        let text_h = ui.text_style_height(&egui::TextStyle::Button).max(ui.text_style_height(&ui.style().drag_value_text_style.clone()));
+        let pad = &mut ui.spacing_mut().button_padding.y;
+        *pad = pad.min(((h - text_h) / 2.0).floor()).max(0.0);
         ui.allocate_ui_with_layout(egui::vec2(LABEL_W, h), egui::Layout::left_to_right(egui::Align::Center), |ui| {
             ui.set_min_size(egui::vec2(LABEL_W, h));
             ui.add(egui::Label::new(RichText::new(label).color(theme::text_label())).truncate());
