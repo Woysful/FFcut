@@ -211,10 +211,20 @@ pub struct App {
 impl App {
     /// Asks for the blur behind the window when it is on and the window is see-through, takes it back otherwise.
     pub fn sync_blur(&mut self, ctx: &egui::Context) {
-        let on = self.settings.window_blur && self.transparent && self.settings.window_alpha() < 1.0;
+        let on = self.settings.blur_on() && self.transparent;
         self.blur.set(on);
         // the request applies with the next frame
         ctx.request_repaint();
+    }
+
+    /// The dialogs are see-through as much as the menus: they get the blur when the main window has it
+    /// and they are see-through too.
+    fn sync_dialog_blur(&mut self, ctx: &egui::Context) {
+        let on = self.settings.blur_on() && self.transparent && self.settings.popup_alpha() < 1.0;
+        let count = ctx.input(|i| i.raw.viewports.len()).saturating_sub(1);
+        if self.blur.sync_dialogs(on, count) {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
     }
 
     pub fn new(cc: &eframe::CreationContext<'_>, open: Option<PathBuf>, backend: Backend) -> Result<Self, String> {
@@ -1241,6 +1251,7 @@ impl eframe::App for App {
         }
         self.video_panel(ui);
         self.windows(&ctx);
+        self.sync_dialog_blur(&ctx);
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

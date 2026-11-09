@@ -100,7 +100,7 @@ VST, VST3, CLAP, AU and OFX plugins cannot be used: ffmpeg has no host for them.
 
 *File → Settings → Appearance* changes the look at once: three themes (*Standard*, *Technical brutalist*, *Cyber Y2K*), an accent colour per theme, and the opacity of the window and of menus, tooltips and dialogs. A see-through window has to be made so at start (the page offers a restart); on X11 it needs a compositor.
 
-*Blur what is behind the window* asks the desktop to blur through the see-through window; the desktop decides how strong. KDE Plasma takes the request (X11 and Wayland), and so do Wayland compositors with `ext-background-effect`. picom, Hyprland and SwayFX blur see-through windows by their own settings; GNOME does not blur.
+*Blur what is behind the window* asks the desktop to blur through the see-through window; the desktop decides how strong. KDE Plasma takes the request (X11 and Wayland), and so do Wayland compositors with `ext-background-effect`. picom, Hyprland and SwayFX blur see-through windows by their own settings; GNOME does not blur. The dialogs (settings, presets…) get the blur too on X11; on Wayland FFcut cannot reach their windows, so they are only see-through.
 
 ## Keyboard Shortcuts
 

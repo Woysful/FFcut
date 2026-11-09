@@ -155,6 +155,10 @@ impl Settings {
     pub fn popup_alpha(&self) -> f32 {
         self.popup_opacity.unwrap_or(1.0).clamp(0.5, 1.0)
     }
+    /// The blur is asked for (it needs a see-through window).
+    pub fn blur_on(&self) -> bool {
+        self.window_blur && self.window_alpha() < 1.0
+    }
     /// Gives the interface the theme, the accent colour and the opacity chosen here.
     pub fn apply_look(&self, ctx: &eframe::egui::Context) {
         crate::theme::configure(self.theme(), self.accent(), self.window_alpha(), self.popup_alpha());
