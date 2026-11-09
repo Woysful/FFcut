@@ -72,6 +72,11 @@ pub struct SideState {
 
 /// A time value as a time code, or as a frame number when `fps` is given.
 pub(super) fn time_field(ui: &mut egui::Ui, v: &mut f64, min: f64, max: f64, fps: Option<f64>) -> egui::Response {
+    time_field_w(ui, v, min, max, fps, 110.0)
+}
+
+/// A [`time_field`] of the given width.
+fn time_field_w(ui: &mut egui::Ui, v: &mut f64, min: f64, max: f64, fps: Option<f64>, width: f32) -> egui::Response {
     let dv = DragValue::new(v).range(min..=max);
     let dv = match fps {
         None => dv.speed(0.02).custom_formatter(|n, _| fmt_time(n)).custom_parser(parse_time),
@@ -81,7 +86,7 @@ pub(super) fn time_field(ui: &mut egui::Ui, v: &mut f64, min: f64, max: f64, fps
             // a plain number is a frame number; "1:30" is still read as a time
             .custom_parser(move |s| if s.contains(':') { parse_time(s) } else { s.trim().parse::<f64>().ok().map(|f| f / fps) }),
     };
-    widgets::value_sized(ui, [110.0, ui.spacing().interact_size.y], dv)
+    widgets::value_sized(ui, [width, ui.spacing().interact_size.y], dv)
 }
 
 /// Width × height with 0 = "auto" (keeps the proportions). True when changed.
@@ -325,20 +330,23 @@ impl App {
         }
         self.section(ui, Section::Trim, Some(sum), |a, ui| {
             let dur = a.dur();
-            field(ui, "Start", |ui| {
+            // start and end side by side, split by a dash; both shrink together in a narrow sidebar
+            field(ui, "Start / End", |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let dash = ui.painter().layout_no_wrap("–".into(), egui::TextStyle::Body.resolve(ui.style()), theme::text_dim()).size().x;
+                let w = ((ui.available_width() - dash - 8.0) / 2.0).floor().clamp(80.0, 110.0);
                 let mut v = a.trim_start;
-                let r = time_field(ui, &mut v, 0.0, (a.trim_end - 0.05).max(0.0), fps)
-                    .on_hover_text(a.tip("Right-click to reset. Set to the playhead", Action::TrimStart));
+                let r = time_field_w(ui, &mut v, 0.0, (a.trim_end - 0.05).max(0.0), fps, w)
+                    .on_hover_text(a.tip("Start. Right-click to reset. Set to the playhead", Action::TrimStart));
                 if resettable(r, &mut v, 0.0).changed() {
                     a.trim_start = v;
                     a.player.seek(v);
                     a.sync_loop();
                 }
-            });
-            field(ui, "End", |ui| {
+                ui.label(RichText::new("–").color(theme::text_dim()));
                 let mut v = a.trim_end;
-                let r =
-                    time_field(ui, &mut v, a.trim_start + 0.05, dur, fps).on_hover_text(a.tip("Right-click to reset. Set to the playhead", Action::TrimEnd));
+                let r = time_field_w(ui, &mut v, a.trim_start + 0.05, dur, fps, w)
+                    .on_hover_text(a.tip("End. Right-click to reset. Set to the playhead", Action::TrimEnd));
                 if resettable(r, &mut v, dur).changed() {
                     a.trim_end = v;
                     a.player.seek(v);
@@ -353,11 +361,12 @@ impl App {
     /// How fast the result plays, and whether the sound keeps its pitch.
     fn speed_rows(&mut self, ui: &mut egui::Ui) {
         field(ui, "Speed", |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let h = ui.spacing().interact_size.y;
             let mut v = self.s.speed;
-            // as wide as the time fields above it
             let r = widgets::value_sized(
                 ui,
-                [110.0, ui.spacing().interact_size.y],
+                [64.0, h],
                 DragValue::new(&mut v)
                     .range(SPEED_RANGE)
                     .speed(0.01)
@@ -368,16 +377,15 @@ impl App {
             if resettable(r, &mut v, 1.0).changed() {
                 self.s.speed = v;
             }
-        });
-        field(ui, "", |ui| {
-            const PRESETS: [f64; 5] = [0.5, 1.0, 1.5, 2.0, 4.0];
-            ui.spacing_mut().item_spacing.x = 4.0;
-            let n = PRESETS.len() as f32;
-            let w = ((ui.available_width() - 4.0 * (n - 1.0)) / n).floor().max(30.0);
+            ui.add_space(4.0);
+            const PRESETS: [f64; 3] = [0.5, 1.5, 2.0];
+            let w = ((ui.available_width() - 8.0) / 3.0).floor().clamp(36.0, 52.0);
             for p in PRESETS {
                 let on = (self.s.speed - p).abs() < 1e-6;
-                if ui.add_sized([w, ui.spacing().interact_size.y], egui::Button::new(format!("{}×", speed_text(p))).selected(on)).clicked() {
-                    self.s.speed = p;
+                let b = ui.add_sized([w, h], egui::Button::new(format!("{}×", speed_text(p))).selected(on));
+                let b = if on { b.on_hover_text("Click again for normal speed") } else { b };
+                if b.clicked() {
+                    self.s.speed = if on { 1.0 } else { p };
                 }
             }
         });
