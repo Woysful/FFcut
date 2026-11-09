@@ -189,27 +189,31 @@ const Y2K: Palette = Palette {
 struct Look {
     kind: Kind,
     p: Palette,
-    /// Opacity of the surfaces of the main window, and of menus, tooltips and dialogs.
+    /// Opacity of the surfaces of the main window, of dialogs, and of menus, lists and tooltips.
     window_alpha: f32,
     popup_alpha: f32,
+    menu_alpha: f32,
     /// The one of the two that applies to what is being drawn now (see [`dialog_scope`]).
     surface: f32,
 }
 
-static LOOK: RwLock<Look> = RwLock::new(Look { kind: Kind::Standard, p: STANDARD, window_alpha: 1.0, popup_alpha: 1.0, surface: 1.0 });
+static LOOK: RwLock<Look> = RwLock::new(Look { kind: Kind::Standard, p: STANDARD, window_alpha: 1.0, popup_alpha: 1.0, menu_alpha: 1.0, surface: 1.0 });
 
 fn look() -> Look {
     *LOOK.read().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Chooses the look; `accent` = `None` keeps the theme's own. Call [`apply`] after it.
-pub fn configure(kind: Kind, accent: Option<Color32>, window_alpha: f32, popup_alpha: f32) {
+/// `opaque_menus`: menus, lists and tooltips ignore `popup_alpha` (with the blur on: the desktop blurs what is
+/// behind the window, never the interface under a menu, so a see-through menu would just be hard to read).
+pub fn configure(kind: Kind, accent: Option<Color32>, window_alpha: f32, popup_alpha: f32, opaque_menus: bool) {
     let mut p = *kind.palette();
     if let Some(a) = accent {
         p.accent = a;
     }
     let (window_alpha, popup_alpha) = (window_alpha.clamp(0.2, 1.0), popup_alpha.clamp(0.2, 1.0));
-    *LOOK.write().unwrap_or_else(|e| e.into_inner()) = Look { kind, p, window_alpha, popup_alpha, surface: window_alpha };
+    let menu_alpha = if opaque_menus { 1.0 } else { popup_alpha };
+    *LOOK.write().unwrap_or_else(|e| e.into_inner()) = Look { kind, p, window_alpha, popup_alpha, menu_alpha, surface: window_alpha };
 }
 
 /// Runs `f` with the surfaces of a dialog window (they follow the opacity of menus and dialogs).
@@ -408,7 +412,7 @@ pub fn apply(ctx: &egui::Context) {
     let p = &l.p;
     let mut v = Visuals::dark();
     v.panel_fill = panel();
-    v.window_fill = p.window.gamma_multiply(l.popup_alpha);
+    v.window_fill = p.window.gamma_multiply(l.menu_alpha);
     v.extreme_bg_color = field();
     v.faint_bg_color = p.faint_bg;
     v.selection.bg_fill = p.accent.gamma_multiply(0.55);

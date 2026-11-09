@@ -195,6 +195,7 @@ impl App {
                         None => "Blur is not available on this system.".to_string(),
                     };
                     ui.label(dim(what));
+                    ui.label(dim("Menus, lists and tooltips stay opaque while the blur is on: the desktop blurs what is behind the window, not the interface under a menu."));
                     if self.blur.via().is_some() && !self.blur.reaches_dialogs() {
                         ui.label(dim(
                             "On Wayland the dialogs are not blurred: FFcut cannot reach their windows there. On X11 (General → Display server) they are.",

@@ -161,7 +161,7 @@ impl Settings {
     }
     /// Gives the interface the theme, the accent colour and the opacity chosen here.
     pub fn apply_look(&self, ctx: &eframe::egui::Context) {
-        crate::theme::configure(self.theme(), self.accent(), self.window_alpha(), self.popup_alpha());
+        crate::theme::configure(self.theme(), self.accent(), self.window_alpha(), self.popup_alpha(), self.blur_on());
         crate::theme::apply(ctx);
     }
 
