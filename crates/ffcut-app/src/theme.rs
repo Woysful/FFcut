@@ -432,12 +432,14 @@ pub fn apply(ctx: &egui::Context) {
     match l.kind {
         Kind::Standard => {}
         Kind::Brutalist => {
-            // every control outlined; the outline lights up under the pointer
+            // every control outlined; the outline lights up and thickens under the pointer.
+            // egui takes the outline width off the button padding and rounds the rest to whole pixels,
+            // so the widths stay whole: a 1.5 px outline made a hovered button a pixel bigger and moved its neighbours
             v.widgets.inactive.bg_fill = p.button;
             v.widgets.inactive.bg_stroke = Stroke::new(1.0, gray(96));
-            v.widgets.hovered.bg_stroke = Stroke::new(1.5, gray(240));
-            v.widgets.active.bg_stroke = Stroke::new(1.5, p.accent);
-            v.widgets.open.bg_stroke = Stroke::new(1.5, p.accent);
+            v.widgets.hovered.bg_stroke = Stroke::new(2.0, gray(240));
+            v.widgets.active.bg_stroke = Stroke::new(2.0, p.accent);
+            v.widgets.open.bg_stroke = Stroke::new(2.0, p.accent);
             v.widgets.hovered.expansion = 0.0;
             v.widgets.active.expansion = 0.0;
             v.window_stroke = Stroke::new(1.5, gray(220));
