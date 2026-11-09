@@ -212,6 +212,11 @@ fn menu_with<R>(ui: &mut egui::Ui, label: egui::WidgetText, close: egui::PopupCl
     resp
 }
 
+/// A [`menu_button`] that opens from a button the caller drew (an icon button...): picking an entry closes it.
+pub fn menu_for<R>(resp: &egui::Response, add: impl FnOnce(&mut egui::Ui) -> R) {
+    menu_on(resp, egui::PopupCloseBehavior::CloseOnClick, add);
+}
+
 /// A [`form_menu`] that opens from a button the caller drew (an icon button...).
 pub fn form_menu_for<R>(resp: &egui::Response, add: impl FnOnce(&mut egui::Ui) -> R) {
     menu_on(resp, egui::PopupCloseBehavior::CloseOnClickOutside, add);

@@ -15,6 +15,8 @@ pub enum Icon {
     Crop,
     /// A camera: save the frame as a picture.
     Frame,
+    /// Preview quality, by its divisor (1, 2, 4): the picture as finer or coarser pixels.
+    Quality(u32),
     /// Three dots: the controls that did not fit.
     More,
 }
@@ -28,7 +30,7 @@ fn tri(c: Pos2, s: f32, right: bool, col: Color32) -> Shape {
     )
 }
 
-fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
+pub(super) fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
     let st = Stroke::new(1.7, col);
     let bar = |x: f32, w: f32, h: f32| Shape::rect_filled(egui::Rect::from_center_size(pos2(x, c.y), vec2(w, h)), 1.0, col);
     match icon {
@@ -69,6 +71,24 @@ fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
             let top = egui::Rect::from_min_max(pos2(c.x - s * 0.32, c.y - s * 0.68), pos2(c.x + s * 0.32, c.y - s * 0.42));
             p.add(Shape::rect_filled(top, 1.0, col));
             p.add(Shape::circle_stroke(pos2(c.x, c.y + s * 0.1), s * 0.3, st))
+        }
+        Icon::Quality(div) => {
+            let n = match div {
+                1 => 4,
+                2 => 2,
+                _ => 1,
+            };
+            let side = s * 1.5;
+            let gap = (side * 0.1).max(1.0);
+            let cell = (side - gap * (n - 1) as f32) / n as f32;
+            let o = pos2(c.x - side / 2.0, c.y - side / 2.0);
+            for i in 0..n {
+                for j in 0..n {
+                    let min = pos2(o.x + i as f32 * (cell + gap), o.y + j as f32 * (cell + gap));
+                    p.add(Shape::rect_filled(egui::Rect::from_min_size(min, vec2(cell, cell)), (cell * 0.2).min(1.5), col));
+                }
+            }
+            p.add(Shape::Noop)
         }
         Icon::More => {
             for dx in [-0.6, 0.0, 0.6] {

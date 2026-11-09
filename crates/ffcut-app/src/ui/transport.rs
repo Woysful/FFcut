@@ -52,17 +52,22 @@ impl App {
     }
 
     /// The size the video preview runs at while effects are on: smaller keeps heavy effects real-time.
+    /// A button that shows the chosen size as a pictogram (finer or coarser pixels) and opens the list.
     fn preview_quality(&mut self, ui: &mut egui::Ui) {
-        let r = widgets::Combo::from_id_salt("preview_div").selected_text(quality_label(self.settings.preview_div())).width(64.0).show_list(ui, |ui| {
-            self.quality_items(ui);
-        });
-        r.response.on_hover_text(QUALITY_TIP);
+        let div = self.settings.preview_div();
+        let tip = format!("Preview quality: {}. Click to change.\n\n{QUALITY_TIP}", quality_label(div));
+        let r = icon_button(ui, vec2(34.0, 28.0), Icon::Quality(div), false, None).on_hover_text(tip);
+        widgets::menu_for(&r, |ui| self.quality_items(ui));
     }
 
     fn quality_items(&mut self, ui: &mut egui::Ui) {
         let cur = self.settings.preview_div();
-        for (d, what) in [(1, "Full size"), (2, "1/2 of the size"), (4, "1/4 of the size")] {
-            if ui.selectable_label(cur == d, what).clicked() && cur != d {
+        for d in [1, 2, 4] {
+            // room on the left for the pictogram of the button
+            let r = ui.selectable_label(cur == d, format!("     {}", quality_label(d)));
+            let col = if cur == d { ui.visuals().selection.stroke.color } else { ui.style().interact(&r).text_color() };
+            super::icons::draw(ui.painter(), Icon::Quality(d), pos2(r.rect.left() + 15.0, r.rect.center().y), 9.0, col);
+            if r.clicked() && cur != d {
                 self.settings.preview_div = d;
                 self.settings.save();
             }
@@ -128,7 +133,7 @@ impl App {
         // the preview quality sits in the centre, before the timeline switch (and the spacing after it)
         // at the narrowest the groups inside the centre lose the space between them (2 × 8)
         let centre_w = |fit: &Fit| {
-            let w = if audio { 210.0 } else { 344.0 + if show_quality && fit.quality_centre { 64.0 + 6.0 } else { 0.0 } };
+            let w = if audio { 210.0 } else { 344.0 + if show_quality && fit.quality_centre { 34.0 + 6.0 } else { 0.0 } };
             if fit.tight && !audio {
                 w - 16.0
             } else {
@@ -493,9 +498,9 @@ const QUALITY_TIP: &str = "Preview quality: the size the video preview runs at w
 
 fn quality_label(div: u32) -> &'static str {
     match div {
-        2 => "1/2",
-        4 => "1/4",
-        _ => "Full",
+        2 => "1/2 of the size",
+        4 => "1/4 of the size",
+        _ => "Full size",
     }
 }
 
