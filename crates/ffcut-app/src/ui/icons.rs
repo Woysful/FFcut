@@ -13,6 +13,8 @@ pub enum Icon {
     Loop,
     Tracks,
     Crop,
+    /// A camera: save the frame as a picture.
+    Frame,
     /// Three dots: the controls that did not fit.
     More,
 }
@@ -60,6 +62,13 @@ fn draw(p: &egui::Painter, icon: Icon, c: Pos2, s: f32, col: Color32) {
             let pts = |v: [(f32, f32); 3]| Shape::line(v.iter().map(|(x, y)| pos2(c.x + s * x, c.y + s * y)).collect(), st);
             p.add(pts([(-0.25, -0.65), (-0.25, 0.25), (0.65, 0.25)]));
             p.add(pts([(0.25, 0.65), (0.25, -0.25), (-0.65, -0.25)]))
+        }
+        Icon::Frame => {
+            let body = egui::Rect::from_min_max(pos2(c.x - s * 0.8, c.y - s * 0.42), pos2(c.x + s * 0.8, c.y + s * 0.62));
+            p.add(Shape::rect_stroke(body, s * 0.15, st, egui::StrokeKind::Middle));
+            let top = egui::Rect::from_min_max(pos2(c.x - s * 0.32, c.y - s * 0.68), pos2(c.x + s * 0.32, c.y - s * 0.42));
+            p.add(Shape::rect_filled(top, 1.0, col));
+            p.add(Shape::circle_stroke(pos2(c.x, c.y + s * 0.1), s * 0.3, st))
         }
         Icon::More => {
             for dx in [-0.6, 0.0, 0.6] {

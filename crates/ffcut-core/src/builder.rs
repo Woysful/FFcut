@@ -377,6 +377,37 @@ fn push_video(a: &mut Vec<String>, src: &SourceInfo, s: &ExportSettings) {
     }
 }
 
+/// Image formats a frame can be saved as (by file extension).
+pub const FRAME_FORMATS: [&str; 3] = ["png", "jpg", "webp"];
+
+/// Saves the picture at `t` seconds of the source as the export would show it (effects, rotation, crop,
+/// captions, resize) to an image file; the format follows its extension.
+pub fn frame_args(src: &SourceInfo, s: &ExportSettings, input: &Path, t: f64, output: &Path) -> Vec<String> {
+    // ffmpeg starts at the first frame from the seek time on; the preview (mpv) shows the first frame from
+    // 5 ms before the playhead on. Seeking that early gives the same frame, and rounding cannot skip it.
+    let early = if src.fps > 0.0 { (0.4 / src.fps).min(0.005) } else { 0.005 };
+    let seek = (t - early).max(0.0);
+    let mut a: Vec<String> = vec!["ffmpeg".into(), "-hide_banner".into(), "-y".into()];
+    if seek > 0.0 {
+        a.extend(["-ss".into(), secs(seek)]);
+    }
+    a.extend(["-i".into(), path_arg(input), "-map".into(), "0:v:0".into(), "-frames:v".into(), "1".into()]);
+    let filters = video_filters(src, s, seek);
+    if !filters.is_empty() {
+        a.extend(["-vf".into(), filters.join(",")]);
+    }
+    let ext = output.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    match ext.as_str() {
+        // JPEG wants full-range YUV; quality 2 of 31 is close to lossless
+        "jpg" | "jpeg" => a.extend(["-pix_fmt".into(), "yuvj444p".into(), "-q:v".into(), "2".into()]),
+        "webp" => a.extend(["-quality".into(), "95".into()]),
+        _ => {}
+    }
+    // one file under exactly this name: without it a "%" in the name would be read as a sequence pattern
+    a.extend(["-update".into(), "1".into(), path_arg(output)]);
+    a
+}
+
 /// Containers that carry several audio streams (the rest get one file per track).
 pub fn multi_stream_container(ext: &str) -> bool {
     matches!(ext, "mp4" | "mkv" | "mka" | "mov" | "webm")
@@ -775,6 +806,19 @@ mod tests {
         o.remove("keep_pitch");
         let s: ExportSettings = serde_json::from_value(v).unwrap();
         assert_eq!((s.speed, s.keep_pitch), (1.0, true));
+    }
+
+    #[test]
+    fn frame_is_the_export_picture_at_one_moment() {
+        let fr = |s: &ExportSettings, t: f64, out: &str| crate::cmdline::to_text(&frame_args(&src(), s, &PathBuf::from("in.mkv"), t, &PathBuf::from(out)));
+        // a little early, so the frame shown at 10 s is the one written
+        assert_eq!(fr(&ExportSettings::default(), 10.0, "f.png"), "ffmpeg -hide_banner -y -ss 9.995 -i in.mkv -map 0:v:0 -frames:v 1 -update 1 f.png");
+        assert!(fr(&ExportSettings::default(), 0.0, "f.png").starts_with("ffmpeg -hide_banner -y -i in.mkv"));
+        let s =
+            ExportSettings { rotation: Rotation::Cw90, crop: Some(Crop { x: 10, y: 20, w: 640, h: 480 }), speed: 2.0, trim_start: 3.0, ..Default::default() };
+        let c = fr(&s, 5.0, "dir/f.jpg");
+        assert!(c.contains("-vf transpose=1,crop=640:480:10:20 -pix_fmt yuvj444p -q:v 2 -update 1 dir/f.jpg"), "{c}");
+        assert!(!c.contains("setpts") && !c.contains("-c:v"), "{c}");
     }
 
     #[test]

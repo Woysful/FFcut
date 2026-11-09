@@ -104,6 +104,11 @@ impl App {
                         ui.close();
                         self.export_clicked();
                     }
+                    let can_frame = self.clip.is_some() && !self.audio_mode() && self.frame_job.is_none();
+                    if ui.add_enabled(can_frame, egui::Button::new(format!("Save frame…   {}", self.keys(Action::ExportFrame)))).clicked() {
+                        ui.close();
+                        self.export_frame(ui.ctx());
+                    }
                     ui.separator();
                     if ui.button("Settings…").clicked() {
                         ui.close();

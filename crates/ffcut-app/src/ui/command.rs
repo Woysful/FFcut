@@ -72,10 +72,11 @@ impl App {
     pub(super) fn export_footer(&mut self, ui: &mut egui::Ui) {
         let w = ui.available_width();
         match &self.status {
-            Some(Status::Done(p)) => {
+            Some(Status::Done(p) | Status::Frame(p)) => {
+                let what = if matches!(self.status, Some(Status::Frame(_))) { "✔ Frame saved" } else { "✔ Exported" };
                 let p = p.clone();
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("✔ Exported").color(theme::ok()).strong());
+                    ui.label(RichText::new(what).color(theme::ok()).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Show in folder").clicked() {
                             open_in_file_manager(&p);

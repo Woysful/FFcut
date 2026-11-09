@@ -11,6 +11,7 @@ Small and fast wrapper for FFmpeg.
 - Flip
 - Resize
 - Speed up / slow down (the sound keeps its pitch, or not)
+- Save the current frame as a picture (PNG, JPEG, WebP), with crop, rotation and effects
 - Presets
 - Video/Audio effects
 - Multi-track audio timeline
@@ -120,6 +121,7 @@ VST, VST3, CLAP, AU and OFX plugins cannot be used: ffmpeg has no host for them.
 | R            | Reset Trim                          |
 | C            | Toggle crop                         |
 | A            | Toggle loop                         |
+| S            | Save the current frame as a picture |
 |              |                                     |
 | Ctrl+Z       | Undo                                |
 | Ctrl+Shift+Z / Ctrl+Y | Redo                       |

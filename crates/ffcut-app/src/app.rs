@@ -114,7 +114,15 @@ pub struct Running {
 pub enum Status {
     Info(String),
     Done(PathBuf),
+    /// A frame was saved as a picture.
+    Frame(PathBuf),
     Error(String),
+}
+
+/// A frame being saved in the background: the picture's path, then ffmpeg's answer.
+pub struct FrameJob {
+    pub output: PathBuf,
+    pub done: std::sync::mpsc::Receiver<Result<(), String>>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -156,6 +164,9 @@ pub struct App {
 
     pub job: Option<Running>,
     pub status: Option<Status>,
+    pub frame_job: Option<FrameJob>,
+    /// Where the last frame went: the next one is offered the same folder and format.
+    pub last_frame: Option<PathBuf>,
 
     pub dialogs: Dialogs,
     pub presets: PresetStore,
@@ -239,6 +250,8 @@ impl App {
             cmd: CmdState::default(),
             job: None,
             status: None,
+            frame_job: None,
+            last_frame: None,
             dialogs: Dialogs::default(),
             presets: PresetStore::load(&settings::config_dir()),
             presets_ui: PresetsUi::default(),
@@ -784,6 +797,86 @@ impl App {
         }
     }
 
+    /// Saves the frame under the playhead as a picture, the way the export would show it
+    /// (effects, rotation, crop, captions, resize).
+    pub fn export_frame(&mut self, ctx: &egui::Context) {
+        let Some(clip) = &self.clip else { return };
+        if clip.info.audio_only || self.frame_job.is_some() {
+            return;
+        }
+        let Some(ffmpeg) = self.ffmpeg.clone() else {
+            self.status = Some(Status::Error("ffmpeg not found — see File → Settings".into()));
+            return;
+        };
+        let t = self.player.time().clamp(0.0, self.dur());
+        let stem = clip.path.file_stem().unwrap_or_default().to_string_lossy().into_owned();
+        let ms = (t * 1000.0).round() as u64;
+        let stamp = format!("{:02}-{:02}-{:02}.{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000);
+        let ext = self.last_frame.as_ref().and_then(|p| p.extension()).map_or("png".into(), |e| e.to_string_lossy().into_owned());
+        let dir = self
+            .last_frame
+            .as_ref()
+            .and_then(|p| p.parent())
+            .filter(|d| d.is_dir())
+            .map(Path::to_path_buf)
+            .or_else(|| clip.path.parent().map(Path::to_path_buf));
+        let mut dlg = rfd::FileDialog::new()
+            .set_title("Save frame")
+            .add_filter("PNG", &["png"])
+            .add_filter("JPEG", &["jpg", "jpeg"])
+            .add_filter("WebP", &["webp"])
+            .set_file_name(format!("{stem}_{stamp}.{ext}"));
+        if let Some(d) = &dir {
+            dlg = dlg.set_directory(d);
+        }
+        // FFCUT_FRAME_TO: debug/automation only, skips the dialog
+        let picked = std::env::var_os("FFCUT_FRAME_TO").map(PathBuf::from).or_else(|| dlg.save_file());
+        let Some(mut out) = picked else { return };
+        if out.extension().is_none() {
+            out.set_extension("png");
+        }
+        if same_file(&out, &clip.path) {
+            self.status = Some(Status::Error("Output file is the same as the input — pick another name".into()));
+            return;
+        }
+        let argv = builder::frame_args(&clip.info, &self.s, &clip.path, t, &out);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let r = ffcut_core::run::command(&ffmpeg).args(&argv[1..]).stdin(std::process::Stdio::null()).output();
+            let res = match r {
+                Ok(o) if o.status.success() => Ok(()),
+                Ok(o) => Err(match ffcut_core::run::crash_text(&o.status) {
+                    Some(c) => c.to_string(),
+                    None => {
+                        let err = String::from_utf8_lossy(&o.stderr);
+                        let lines: Vec<&str> = err.lines().filter(|l| !l.trim().is_empty()).collect();
+                        lines[lines.len().saturating_sub(8)..].join("\n")
+                    }
+                }),
+                Err(e) => Err(format!("Cannot start ffmpeg: {e}")),
+            };
+            let _ = tx.send(res);
+            ctx.request_repaint();
+        });
+        self.last_frame = Some(out.clone());
+        self.frame_job = Some(FrameJob { output: out, done: rx });
+    }
+
+    fn poll_frame(&mut self) {
+        let Some(fj) = &self.frame_job else { return };
+        let Ok(res) = fj.done.try_recv() else { return };
+        let output = fj.output.clone();
+        self.frame_job = None;
+        self.status = Some(match res {
+            Ok(()) => Status::Frame(output),
+            Err(msg) => {
+                self.dialogs.error = Some(("Saving the frame failed".into(), msg));
+                Status::Error("Saving the frame failed".into())
+            }
+        });
+    }
+
     fn poll_job(&mut self) {
         let Some(run) = &mut self.job else { return };
         let mut finished: Option<Event> = None;
@@ -1080,6 +1173,7 @@ impl App {
                         self.export_clicked();
                     }
                 }
+                Action::ExportFrame => self.export_frame(ctx),
                 Action::Fullscreen => self.set_fs(ctx, if self.fs == FsMode::App { FsMode::Off } else { FsMode::App }),
                 Action::VideoFullscreen => self.set_fs(ctx, if self.fs == FsMode::Video { FsMode::Off } else { FsMode::Video }),
                 Action::PlayPause => self.play_pause(),
@@ -1114,6 +1208,7 @@ impl eframe::App for App {
         self.handle_drops(&ctx);
         self.handle_hotkeys(&ctx);
         self.poll_job();
+        self.poll_frame();
         self.poll_update();
         self.sync_audio_track();
         self.track_history(&ctx);

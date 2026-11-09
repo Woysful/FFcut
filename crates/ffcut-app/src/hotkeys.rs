@@ -20,12 +20,13 @@ pub enum Action {
     Redo,
     Open,
     Export,
+    ExportFrame,
     Fullscreen,
     VideoFullscreen,
 }
 
 impl Action {
-    pub const ALL: [Action; 16] = [
+    pub const ALL: [Action; 17] = [
         Action::PlayPause,
         Action::StepBack,
         Action::StepForward,
@@ -40,6 +41,7 @@ impl Action {
         Action::Redo,
         Action::Open,
         Action::Export,
+        Action::ExportFrame,
         Action::Fullscreen,
         Action::VideoFullscreen,
     ];
@@ -61,6 +63,7 @@ impl Action {
             Action::Redo => "redo",
             Action::Open => "open",
             Action::Export => "export",
+            Action::ExportFrame => "export_frame",
             Action::Fullscreen => "fullscreen",
             Action::VideoFullscreen => "video_fullscreen",
         }
@@ -82,6 +85,7 @@ impl Action {
             Action::Redo => "Redo",
             Action::Open => "Open a file",
             Action::Export => "Export",
+            Action::ExportFrame => "Save the current frame as a picture",
             Action::Fullscreen => "Interface fullscreen",
             Action::VideoFullscreen => "Video fullscreen",
         }
@@ -108,6 +112,7 @@ impl Action {
             Action::Redo => &["Ctrl+Shift+Z", "Ctrl+Y"],
             Action::Open => &["Ctrl+O", "Ctrl+N"],
             Action::Export => &["Ctrl+E", "Ctrl+S"],
+            Action::ExportFrame => &["S"],
             Action::Fullscreen => &["F11"],
             Action::VideoFullscreen => &["Ctrl+F"],
         }

@@ -84,7 +84,7 @@ impl App {
         }
     }
 
-    /// [loop, time]   [crop, ⏮ ◀ ▶ ▶| ⏭, tracks]   [audio track, preview quality, volume]
+    /// [loop, time]   [crop, frame, ⏮ ◀ ▶ ▶| ⏭, tracks]   [audio track, preview quality, volume]
     ///
     /// When the bar is narrow the sides give way in steps: the volume slider gets shorter, the time drops
     /// the duration, the audio track and the preview quality move into a "⋯" menu, then the slider too.
@@ -126,7 +126,7 @@ impl App {
             }
             w + 4.0
         };
-        let cw = if audio { 210.0 } else { 304.0 };
+        let cw = if audio { 210.0 } else { 344.0 };
         let gap = 10.0;
         let steps = [
             Fit { short_time: false, vol_w: 92.0, more: false, vol_in_more: false },
@@ -180,6 +180,10 @@ impl App {
             if !audio {
                 if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop.on, None).on_hover_text(self.tip("Crop", Action::Crop)).clicked() {
                     self.set_crop(!self.crop.on);
+                }
+                let tip = self.tip("Save this frame as a picture (with crop, rotation and effects)", Action::ExportFrame);
+                if icon_button(ui, vec2(34.0, 28.0), Icon::Frame, false, None).on_hover_text(tip).clicked() {
+                    self.export_frame(ui.ctx());
                 }
                 ui.add_space(8.0);
             }

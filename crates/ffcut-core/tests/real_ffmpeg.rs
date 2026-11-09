@@ -168,6 +168,50 @@ fn speed_changes_the_length_of_picture_and_sound() {
 }
 
 #[test]
+fn frame_export_writes_exactly_the_frame_at_that_time() {
+    if tools_missing() {
+        return;
+    }
+    // every frame its own brightness, long GOP (the seek has to decode up to the frame), lossless
+    let input = tmp("numbered frames.mkv");
+    let st = Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i", "nullsrc=s=64x48:r=25:d=2,geq=lum='16+N*4':cb=128:cr=128", "-c:v", "libx264", "-qp", "0", "-g", "50"])
+        .arg(&input)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    let src = probe(Path::new("ffprobe"), &input).unwrap();
+    let gray = |file: &Path, select: Option<usize>| -> f64 {
+        let mut cmd = Command::new("ffmpeg");
+        cmd.args(["-v", "error", "-i"]).arg(file);
+        if let Some(n) = select {
+            cmd.args(["-vf", &format!("select=eq(n\\,{n})"), "-frames:v", "1"]);
+        }
+        let o = cmd.args(["-pix_fmt", "gray", "-f", "rawvideo", "-"]).output().unwrap();
+        assert!(!o.stdout.is_empty(), "{}", String::from_utf8_lossy(&o.stderr));
+        o.stdout.iter().map(|v| *v as f64).sum::<f64>() / o.stdout.len() as f64
+    };
+    for n in [0usize, 1, 7, 26, 49] {
+        let out = tmp(&format!("frame {n} 100%.png"));
+        let argv = builder::frame_args(&src, &ExportSettings::default(), &input, n as f64 / 25.0, &out);
+        let o = Command::new("ffmpeg").args(&argv[1..]).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let (got, want) = (gray(&out, None), gray(&input, Some(n)));
+        assert!((got - want).abs() < 1.5, "frame {n}: {got} vs {want}");
+    }
+    // crop and rotation reach the picture; JPEG and WebP work too
+    let s = ExportSettings { rotation: Rotation::Cw90, crop: Some(Crop { x: 0, y: 0, w: 48, h: 32 }), ..Default::default() };
+    for ext in ["jpg", "webp"] {
+        let out = tmp(&format!("frame.{ext}"));
+        let argv = builder::frame_args(&src, &s, &input, 1.0, &out);
+        let o = Command::new("ffmpeg").args(&argv[1..]).output().unwrap();
+        assert!(o.status.success(), "{ext}: {}", String::from_utf8_lossy(&o.stderr));
+        let p = probe(Path::new("ffprobe"), &out).unwrap();
+        assert_eq!((p.width, p.height), (48, 32), "{ext}");
+    }
+}
+
+#[test]
 fn failure_reports_ffmpeg_message_and_leaves_no_file() {
     if tools_missing() {
         return;
