@@ -10,6 +10,7 @@ Small and fast wrapper for FFmpeg.
 - Rotate
 - Flip
 - Resize
+- Speed up / slow down (the sound keeps its pitch, or not)
 - Presets
 - Video/Audio effects
 - Multi-track audio timeline

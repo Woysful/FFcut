@@ -379,6 +379,7 @@ impl App {
         self.s.crop = None;
         self.s.audio_mode = self.settings.defaults.audio_mode.unwrap_or(AudioMode::Separate);
         self.s.audio_only = false;
+        self.s.speed = 1.0;
         self.s.tracks = info.audio.iter().map(|a| TrackEdit::original(a.index, crate::ui::audio_label(a), info.duration)).collect();
         self.waves.lock().unwrap().clear();
         self.fx.clear();
@@ -772,7 +773,8 @@ impl App {
             argv.insert(1, "-y".into()); // overwrite was confirmed
         }
         let output = PathBuf::from(argv.last().cloned().unwrap_or_default());
-        let expected = (self.trim_end - self.trim_start).max(0.0);
+        let speed = if self.s.speed_changed() { self.s.speed } else { 1.0 };
+        let expected = (self.trim_end - self.trim_start).max(0.0) / speed;
         match Job::spawn(&ffmpeg, &argv, &outputs, Some(expected)) {
             Ok(job) => {
                 self.status = None;

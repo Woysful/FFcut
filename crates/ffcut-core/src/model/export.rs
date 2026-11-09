@@ -108,6 +108,31 @@ pub struct ExportSettings {
     /// Export only the sound of a video file (no picture in the output).
     #[serde(default)]
     pub audio_only: bool,
+    /// How fast the result plays: 2.0 = twice as fast (half as long), 0.5 = half as fast. 1.0 = unchanged.
+    #[serde(default = "normal_speed")]
+    pub speed: f64,
+    /// With a changed speed, the sound keeps its pitch; otherwise it rises or falls with the speed, like a tape.
+    #[serde(default = "keep")]
+    pub keep_pitch: bool,
+}
+
+fn normal_speed() -> f64 {
+    1.0
+}
+
+fn keep() -> bool {
+    true
+}
+
+/// Speeds the UI offers: slower than this or faster than that is rarely useful (and ffmpeg's tempo filter
+/// gets coarse).
+pub const SPEED_RANGE: std::ops::RangeInclusive<f64> = 0.25..=4.0;
+
+impl ExportSettings {
+    /// The speed is changed (anything but 1×).
+    pub fn speed_changed(&self) -> bool {
+        (self.speed - 1.0).abs() > 1e-6 && self.speed > 0.0
+    }
 }
 
 impl Default for ExportSettings {
@@ -130,6 +155,8 @@ impl Default for ExportSettings {
             tracks: Vec::new(),
             vfx: Default::default(),
             audio_only: false,
+            speed: 1.0,
+            keep_pitch: true,
         }
     }
 }

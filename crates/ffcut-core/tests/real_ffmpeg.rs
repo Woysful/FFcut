@@ -123,6 +123,50 @@ fn probe_build_run_and_user_edit() {
     assert_eq!(probe(Path::new("ffprobe"), &out3).unwrap().video_codec, "hevc");
 }
 
+/// "duration" and "nb_read_frames" style values of one stream (`v:0`, `a:0`...).
+fn stream_value(file: &Path, stream: &str, entry: &str) -> f64 {
+    let mut cmd = Command::new("ffprobe");
+    cmd.args(["-v", "error", "-select_streams", stream]);
+    if entry == "nb_read_frames" {
+        cmd.arg("-count_frames");
+    }
+    let o = cmd.args(["-show_entries", &format!("stream={entry}"), "-of", "csv=p=0"]).arg(file).output().unwrap();
+    String::from_utf8_lossy(&o.stdout).trim().parse().unwrap_or(-1.0)
+}
+
+#[test]
+fn speed_changes_the_length_of_picture_and_sound() {
+    if tools_missing() {
+        return;
+    }
+    let input = make_sample();
+    let src = probe(Path::new("ffprobe"), &input).unwrap();
+    for (speed, keep_pitch, trim, want) in
+        [(2.0, true, (0.0, None), 2.0), (2.0, false, (1.0, Some(3.0)), 1.0), (0.5, true, (1.0, Some(3.0)), 4.0), (3.0, true, (0.0, None), 4.0 / 3.0)]
+    {
+        let out = tmp(&format!("speed {speed} {keep_pitch}.mp4"));
+        let s = ExportSettings {
+            speed,
+            keep_pitch,
+            trim_start: trim.0,
+            trim_end: trim.1,
+            video_codec: VideoCodec::Encoder("libx264".into()),
+            preset: "ultrafast".into(),
+            ..Default::default()
+        };
+        let argv = build_args(&src, &s, &input, &out);
+        assert_eq!(run(&argv, want), Event::Finished, "cmd: {}", cmdline::to_text(&argv));
+        let cmd = cmdline::to_text(&argv);
+        // the picture keeps the source frame rate: fewer (or more) frames, not faster ones
+        let frames = stream_value(&out, "v:0", "nb_read_frames");
+        assert!((frames - want * 25.0).abs() <= 2.0, "{speed}×: {frames} frames, want {}: {cmd}", want * 25.0);
+        for a in ["a:0", "a:1"] {
+            let d = stream_value(&out, a, "duration");
+            assert!((d - want).abs() < 0.15, "{speed}× {a}: {d} s, want {want}: {cmd}");
+        }
+    }
+}
+
 #[test]
 fn failure_reports_ffmpeg_message_and_leaves_no_file() {
     if tools_missing() {

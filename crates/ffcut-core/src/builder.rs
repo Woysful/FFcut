@@ -72,15 +72,55 @@ fn push_inputs(a: &mut Vec<String>, s: &ExportSettings, input: &Path, plan: &Aud
     }
 }
 
-/// `-t <length>` when the export stops before the end of the source.
+/// `-t <length>` when the export stops before the end of the source. It counts output time, so a
+/// changed speed changes it too.
 fn trim_length(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
     if let Some(end) = s.trim_end {
         let dur = end - s.trim_start;
         if dur > 0.0 && (src.duration <= 0.0 || end < src.duration - TIME_EPS) {
+            let dur = if s.speed_changed() { dur / s.speed } else { dur };
             return vec!["-t".into(), secs(dur)];
         }
     }
     Vec::new()
+}
+
+/// The video part of a speed change: new timestamps, then back to the source frame rate (sped up, the
+/// frames would come twice as often; slowed down, half as often).
+fn speed_video(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
+    if !s.speed_changed() {
+        return Vec::new();
+    }
+    let mut f = vec![format!("setpts=PTS/{}", crate::fmtnum::num(s.speed, 4))];
+    if src.fps > 0.0 {
+        f.push(format!("fps={}", crate::fmtnum::num(src.fps, 3)));
+    }
+    f
+}
+
+/// The audio part of a speed change, as filters to append to a chain (empty = none).
+/// Keeping the pitch: `atempo`, a factor between 0.5 and 2 per step (older ffmpeg takes no more), so
+/// bigger changes are a few steps. Not keeping it: the samples are played at another rate, like a tape.
+pub(crate) fn speed_audio(s: &ExportSettings) -> String {
+    if !s.speed_changed() {
+        return String::new();
+    }
+    if !s.keep_pitch {
+        const RATE: f64 = 48000.0;
+        return format!(",aresample={RATE},asetrate={},aresample={RATE}", (RATE * s.speed).round());
+    }
+    let mut out = String::new();
+    let mut left = s.speed;
+    while left > 2.0 + 1e-9 {
+        out.push_str(",atempo=2");
+        left /= 2.0;
+    }
+    while left < 0.5 - 1e-9 {
+        out.push_str(",atempo=0.5");
+        left /= 0.5;
+    }
+    out.push_str(&format!(",atempo={}", crate::fmtnum::num(left, 4)));
+    out
 }
 
 /// The audio part of the command.
@@ -210,7 +250,8 @@ impl AudioPlan {
         let none = AudioPlan { advanced: false, orig_seek: None, external_paths: vec![], chains: vec![] };
         // removing / muting a track alone is not an "edit" that needs filters: it only changes which
         // streams are mapped. Filters are for trim, shift, volume and added files.
-        let edited = heard.iter().any(|t| t.needs_filter(src.duration));
+        // a speed change goes through filters too: the same path handles every packing of the tracks
+        let edited = heard.iter().any(|t| t.needs_filter(src.duration)) || s.speed_changed();
         if !edited || s.audio_mode == AudioMode::None {
             return none;
         }
@@ -255,7 +296,7 @@ impl AudioPlan {
             let le = it.vis_b - it.t.shift - seek_off;
             let delay_ms = ((it.vis_a - t0) * 1000.0).round() as i64;
             let label = format!("a{}", chains.len());
-            let body = crate::audiofx::track_chain(it.t, ls.max(0.0), le, (it.vis_a - it.t.shift).max(0.0), delay_ms);
+            let body = crate::audiofx::track_chain(it.t, ls.max(0.0), le, (it.vis_a - it.t.shift).max(0.0), delay_ms) + &speed_audio(s);
             let c = format!("[{input}:a:{ordinal}]{body}[{label}]");
             chains.push((c, label));
         }
@@ -263,7 +304,8 @@ impl AudioPlan {
     }
 }
 
-fn video_filters(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
+/// `shift`: the seconds of the source before the first frame that comes out (overlays are timed in source time).
+fn video_filters(src: &SourceInfo, s: &ExportSettings, shift: f64) -> Vec<String> {
     use crate::videofx as vfx;
     // colour / restoration work on the decoded picture, before it is turned
     let mut f = vfx::pixel_filters(&s.vfx);
@@ -274,7 +316,7 @@ fn video_filters(src: &SourceInfo, s: &ExportSettings) -> Vec<String> {
         _ => (src.width, src.height),
     };
     // areas and text sit in that same frame, so the crop does not move them
-    f.extend(vfx::overlay_filters(&s.vfx, fw, fh, s.trim_start));
+    f.extend(vfx::overlay_filters(&s.vfx, fw, fh, shift));
     let (mut cw, mut ch) = (fw, fh);
     if let Some(c) = s.crop {
         let full = c.x == 0 && c.y == 0 && c.w == fw && c.h == fh;
@@ -309,7 +351,8 @@ pub fn auto_encoder(source_codec: &str) -> &'static str {
 }
 
 fn push_video(a: &mut Vec<String>, src: &SourceInfo, s: &ExportSettings) {
-    let filters = video_filters(src, s);
+    let mut filters = video_filters(src, s, s.trim_start);
+    filters.extend(speed_video(src, s));
     a.extend(["-map".into(), "0:v:0".into()]);
     // Stream copy cannot apply filters: fall back to a same-family re-encode.
     let vcodec = match &s.video_codec {
@@ -677,6 +720,61 @@ mod tests {
         assert!(c.contains("[1:a:1]atrim") && c.contains("[2:a:0]atrim"), "{c}");
         assert!(c.contains("[a0][a1]amix=inputs=2"), "{c}");
         assert!(!c.contains("[1:a:0]"), "{c}");
+    }
+
+    #[test]
+    fn speed_retimes_picture_and_sound_and_shortens_the_length() {
+        let s = ExportSettings { speed: 2.0, trim_start: 10.0, trim_end: Some(30.0), video_codec: VideoCodec::Copy, ..Default::default() };
+        let c = build(&s);
+        assert!(c.contains("-t 10 "), "{c}"); // 20 s of source in 10 s
+        assert!(c.contains("-vf setpts=PTS/2,fps=25 -c:v libx265"), "{c}"); // copy cannot change the speed
+        assert!(c.contains("[1:a:0]atrim=start=0:end=20,asetpts=PTS-STARTPTS,atempo=2[a0]"), "{c}");
+        assert!(c.contains("-map [a0] -map [a1] -c:a aac"), "{c}"); // both tracks, re-encoded
+                                                                    // the speed goes after every other filter: overlays and captions are timed in source time
+        let s = ExportSettings { speed: 1.5, flip_h: true, scale: Scale { w: None, h: Some(720) }, ..Default::default() };
+        assert!(build(&s).contains("-vf hflip,scale=-2:720,setsar=1,setpts=PTS/1.5,fps=25 "), "{}", build(&s));
+    }
+
+    #[test]
+    fn speed_without_pitch_and_big_factors() {
+        let s = ExportSettings { speed: 2.0, keep_pitch: false, ..Default::default() };
+        assert!(build(&s).contains(",aresample=48000,asetrate=96000,aresample=48000[a0]"), "{}", build(&s));
+        let at = |v: f64| speed_audio(&ExportSettings { speed: v, ..Default::default() });
+        assert_eq!(at(4.0), ",atempo=2,atempo=2");
+        assert_eq!(at(3.0), ",atempo=2,atempo=1.5");
+        assert_eq!(at(0.25), ",atempo=0.5,atempo=0.5");
+        assert_eq!(at(0.75), ",atempo=0.75");
+        assert_eq!(at(1.0), "");
+        // merged tracks: each one is retimed before the mix
+        let c = build(&ExportSettings { speed: 0.5, audio_mode: AudioMode::Merge, ..Default::default() });
+        assert!(c.contains("atempo=0.5[a0]") && c.contains("atempo=0.5[a1]") && c.contains("[a0][a1]amix"), "{c}");
+        assert!(c.contains("setpts=PTS/0.5"), "{c}");
+    }
+
+    #[test]
+    fn speed_of_an_audio_file_and_untouched_speed() {
+        let src = SourceInfo {
+            duration: 30.0,
+            audio_only: true,
+            audio: vec![AudioStream { index: 0, codec: "mp3".into(), channels: 2, language: None, title: None }],
+            ..Default::default()
+        };
+        let s = ExportSettings { speed: 1.25, trim_end: Some(20.0), ..Default::default() };
+        let c = crate::cmdline::to_text(&build_args(&src, &s, &PathBuf::from("in.mp3"), &PathBuf::from("out.mp3")));
+        assert!(c.contains("-t 16 ") && c.contains("atempo=1.25[a0]") && c.contains("-c:a libmp3lame"), "{c}");
+        // 1× changes nothing at all
+        let plain = build(&ExportSettings { video_codec: VideoCodec::Copy, ..Default::default() });
+        assert!(!plain.contains("setpts") && !plain.contains("atempo") && plain.contains("-c:v copy"), "{plain}");
+    }
+
+    #[test]
+    fn old_settings_without_speed_read_as_normal_speed() {
+        let mut v = serde_json::to_value(ExportSettings::default()).unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("speed");
+        o.remove("keep_pitch");
+        let s: ExportSettings = serde_json::from_value(v).unwrap();
+        assert_eq!((s.speed, s.keep_pitch), (1.0, true));
     }
 
     #[test]

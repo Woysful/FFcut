@@ -316,10 +316,13 @@ impl App {
     fn trim_section(&mut self, ui: &mut egui::Ui) {
         let fps = self.frame_fps();
         let len = self.trim_end - self.trim_start;
-        let sum = match fps {
+        let mut sum = match fps {
             Some(f) => format!("{} frames", (len * f).round() as i64),
             None => fmt_time(len),
         };
+        if self.s.speed_changed() {
+            sum.push_str(&format!(" · {}×", speed_text(self.s.speed)));
+        }
         self.section(ui, Section::Trim, Some(sum), |a, ui| {
             let dur = a.dur();
             field(ui, "Start", |ui| {
@@ -342,7 +345,44 @@ impl App {
                     a.sync_loop();
                 }
             });
+            ui.add_space(2.0);
+            a.speed_rows(ui);
         });
+    }
+
+    /// How fast the result plays, and whether the sound keeps its pitch.
+    fn speed_rows(&mut self, ui: &mut egui::Ui) {
+        field(ui, "Speed", |ui| {
+            let mut v = self.s.speed;
+            let r = num(
+                ui,
+                DragValue::new(&mut v)
+                    .range(SPEED_RANGE)
+                    .speed(0.01)
+                    .custom_formatter(|n, _| format!("{}×", speed_text(n)))
+                    .custom_parser(|t| t.trim().trim_end_matches(['×', 'x']).trim().parse().ok()),
+            )
+            .on_hover_text("How fast the exported file plays: 2× = twice as fast, half as long. Right-click to reset");
+            if resettable(r, &mut v, 1.0).changed() {
+                self.s.speed = v;
+            }
+            for p in [0.5, 1.5, 2.0] {
+                if ui.add(egui::Button::new(format!("{}×", speed_text(p))).small().selected((self.s.speed - p).abs() < 1e-6)).clicked() {
+                    self.s.speed = if (self.s.speed - p).abs() < 1e-6 { 1.0 } else { p };
+                }
+            }
+        });
+        if !self.s.speed_changed() {
+            return;
+        }
+        if !self.s.tracks.is_empty() {
+            field(ui, "", |ui| {
+                ui.checkbox(&mut self.s.keep_pitch, "Keep the pitch")
+                    .on_hover_text("On: voices sound normal, just faster or slower.\nOff: the pitch rises or falls with the speed, like a tape played faster.");
+            });
+        }
+        let out = (self.trim_end - self.trim_start) / self.s.speed;
+        hint(ui, format!("The export lasts {}. The preview plays at normal speed.", fmt_time(out)));
     }
 
     // ------------------------------------------------------------------ crop & transform
@@ -697,11 +737,16 @@ impl App {
         if let Some(c) = self.default_act(act) {
             self.s.video_codec = c;
         }
-        let filters =
-            self.s.vfx.is_active() || self.s.rotation != Rotation::None || self.s.flip_h || self.s.flip_v || self.crop.on || self.s.scale != Scale::default();
+        let filters = self.s.vfx.is_active()
+            || self.s.rotation != Rotation::None
+            || self.s.flip_h
+            || self.s.flip_v
+            || self.crop.on
+            || self.s.scale != Scale::default()
+            || self.s.speed_changed();
         if matches!(self.s.video_codec, VideoCodec::Copy) {
             if filters {
-                warn(ui, "Crop, rotation, resize and effects need re-encoding: choose a codec, or they are left out.");
+                warn(ui, "Crop, rotation, resize, speed and effects need re-encoding: the video is encoded with the same codec as the source.");
             }
             if self.trimmed() {
                 warn(
@@ -736,7 +781,7 @@ impl App {
             }
         }
         if matches!(name.as_str(), "libx264" | "libx265") {
-            let act = field(ui, "Speed", |ui| {
+            let act = field(ui, "Preset", |ui| {
                 let r = widgets::Combo::from_id_salt("preset")
                     .selected_text(&self.s.preset)
                     .width(ui.available_width())
@@ -816,6 +861,8 @@ impl App {
             warn(ui, "Mixing re-encodes the audio.");
         } else if self.tracks_need_filters() {
             warn(ui, "Track edits or effects are active: the audio is re-encoded.");
+        } else if self.s.speed_changed() {
+            warn(ui, "The speed is changed: the audio is re-encoded.");
         }
         if self.s.audio_only && audible_n > 1 && self.s.audio_mode == AudioMode::Separate {
             let ext = &self.container;
@@ -863,6 +910,12 @@ impl App {
     fn trimmed(&self) -> bool {
         self.trim_start > 0.001 || self.trim_end < self.dur() - 0.001
     }
+}
+
+/// `1.5`, `2`, `0.75`: a speed factor without needless zeros.
+fn speed_text(v: f64) -> String {
+    let s = format!("{v:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
 }
 
 pub fn audio_mode_label(m: AudioMode) -> &'static str {
