@@ -92,8 +92,8 @@ impl App {
     /// [loop, time]   [crop, frame, ⏮ ◀ ▶ ▶| ⏭, preview quality, tracks]   [audio track, volume]
     ///
     /// When the bar is narrow the sides give way in steps: the volume slider gets shorter, the time drops
-    /// the duration, the audio track moves into a "⋯" menu, then the preview quality, then the slider too.
-    /// The centre moves off the middle before anything has to go.
+    /// the duration, the audio track moves into a "⋯" menu, then the preview quality, the frame button and
+    /// the slider too. The centre moves off the middle before anything has to go.
     fn controls(&mut self, ui: &mut egui::Ui) {
         let dur = self.dur();
         let t = self.player.time();
@@ -133,7 +133,11 @@ impl App {
         // the preview quality sits in the centre, before the timeline switch (and the spacing after it)
         // at the narrowest the groups inside the centre lose the space between them (2 × 8)
         let centre_w = |fit: &Fit| {
-            let w = if audio { 210.0 } else { 344.0 + if show_quality && fit.quality_centre { 34.0 + 6.0 } else { 0.0 } };
+            let w = if audio {
+                210.0
+            } else {
+                344.0 + if show_quality && fit.quality_centre { 34.0 + 6.0 } else { 0.0 } - if fit.frame_centre { 0.0 } else { 34.0 + 6.0 }
+            };
             if fit.tight && !audio {
                 w - 16.0
             } else {
@@ -142,13 +146,22 @@ impl App {
         };
         let gap = 10.0;
         let steps = [
-            Fit { short_time: false, vol_w: 92.0, more: false, vol_in_more: false, quality_centre: true, tight: false },
-            Fit { short_time: false, vol_w: 60.0, more: false, vol_in_more: false, quality_centre: true, tight: false },
-            Fit { short_time: true, vol_w: 60.0, more: false, vol_in_more: false, quality_centre: true, tight: false },
-            Fit { short_time: true, vol_w: 60.0, more: show_tracks, vol_in_more: false, quality_centre: true, tight: false },
-            Fit { short_time: true, vol_w: 60.0, more: show_tracks || show_quality, vol_in_more: false, quality_centre: false, tight: false },
-            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true, quality_centre: false, tight: false },
-            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true, quality_centre: false, tight: true },
+            Fit { short_time: false, vol_w: 92.0, more: false, vol_in_more: false, quality_centre: true, tight: false, frame_centre: true },
+            Fit { short_time: false, vol_w: 60.0, more: false, vol_in_more: false, quality_centre: true, tight: false, frame_centre: true },
+            Fit { short_time: true, vol_w: 60.0, more: false, vol_in_more: false, quality_centre: true, tight: false, frame_centre: true },
+            Fit { short_time: true, vol_w: 60.0, more: show_tracks, vol_in_more: false, quality_centre: true, tight: false, frame_centre: true },
+            Fit {
+                short_time: true,
+                vol_w: 60.0,
+                more: show_tracks || show_quality,
+                vol_in_more: false,
+                quality_centre: false,
+                tight: false,
+                frame_centre: true,
+            },
+            Fit { short_time: true, vol_w: 60.0, more: true, vol_in_more: false, quality_centre: false, tight: false, frame_centre: false },
+            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true, quality_centre: false, tight: false, frame_centre: false },
+            Fit { short_time: true, vol_w: 0.0, more: true, vol_in_more: true, quality_centre: false, tight: true, frame_centre: false },
         ];
         let fits = |f: &Fit| left_need(f.short_time) + centre_w(f) + right_need(f) + 2.0 * gap <= rect.width();
         let fit = steps.iter().find(|f| fits(f)).unwrap_or(&steps[steps.len() - 1]);
@@ -198,8 +211,9 @@ impl App {
                 if icon_button(ui, vec2(34.0, 28.0), Icon::Crop, self.crop.on, None).on_hover_text(self.tip("Crop", Action::Crop)).clicked() {
                     self.set_crop(!self.crop.on);
                 }
-                let tip = self.tip("Save this frame as a picture (with crop, rotation and effects)", Action::ExportFrame);
-                if icon_button(ui, vec2(34.0, 28.0), Icon::Frame, false, None).on_hover_text(tip).clicked() {
+                if fit.frame_centre
+                    && icon_button(ui, vec2(34.0, 28.0), Icon::Frame, false, None).on_hover_text(self.tip(FRAME_TIP, Action::ExportFrame)).clicked()
+                {
                     self.export_frame(ui.ctx());
                 }
                 ui.add_space(group_gap);
@@ -278,7 +292,8 @@ impl App {
             if fit.more {
                 ui.add_space(12.0);
                 let in_more = show_quality && !quality_centre;
-                let what: Vec<&str> = [(show_tracks, "audio track"), (in_more, "preview quality"), (fit.vol_in_more, "volume")]
+                let frame_in_more = !audio && !fit.frame_centre;
+                let what: Vec<&str> = [(frame_in_more, "save frame"), (show_tracks, "audio track"), (in_more, "preview quality"), (fit.vol_in_more, "volume")]
                     .into_iter()
                     .filter_map(|(on, w)| on.then_some(w))
                     .collect();
@@ -291,6 +306,17 @@ impl App {
                             ui.separator();
                         }
                     };
+                    if frame_in_more {
+                        sep(ui);
+                        // room on the left for the pictogram, as in the preview quality list
+                        let r = ui.button("     Save frame…").on_hover_text(self.tip(FRAME_TIP, Action::ExportFrame));
+                        let col = ui.style().interact(&r).text_color();
+                        super::icons::draw(ui.painter(), Icon::Frame, pos2(r.rect.left() + 15.0, r.rect.center().y), 9.0, col);
+                        if r.clicked() {
+                            ui.close();
+                            self.export_frame(ui.ctx());
+                        }
+                    }
                     if fit.vol_in_more {
                         sep(ui);
                         head(ui, "Volume");
@@ -515,4 +541,8 @@ struct Fit {
     quality_centre: bool,
     /// No extra space between the groups of buttons in the centre.
     tight: bool,
+    /// The "save frame" button is in the centre group; otherwise in the "⋯" menu.
+    frame_centre: bool,
 }
+
+const FRAME_TIP: &str = "Save this frame as a picture (with crop, rotation and effects)";
