@@ -3,8 +3,10 @@
 //! blur protocol), and Wayland compositors with `ext-background-effect` take it too. Others blur
 //! see-through windows by their own rules (picom, Hyprland, SwayFX) or not at all (GNOME).
 //!
-//! The dialogs (separate windows) get the blur on X11 only: there FFcut finds them among the windows of
-//! the screen, while on Wayland the windowing library keeps their surfaces to itself.
+//! On Windows it is the acrylic backdrop (Windows 11 22H2 and newer) or the blur of Windows 10.
+//!
+//! The dialogs (separate windows) get the blur on X11 and Windows: there FFcut finds them among the
+//! windows of the screen, while on Wayland the windowing library keeps their surfaces to itself.
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
@@ -28,6 +30,8 @@ enum Imp {
     X11(Box<x11::Kde>),
     #[cfg(all(unix, not(target_os = "macos")))]
     Wayland(Box<wl::Wl>),
+    #[cfg(windows)]
+    Windows(Box<win::Dwm>),
 }
 
 impl Blur {
@@ -51,7 +55,14 @@ impl Blur {
             _ => None,
         }
     }
-    #[cfg(not(all(unix, not(target_os = "macos"))))]
+    #[cfg(windows)]
+    fn connect(window: &(impl HasWindowHandle + HasDisplayHandle)) -> Option<Imp> {
+        match window.window_handle().ok()?.as_raw() {
+            raw_window_handle::RawWindowHandle::Win32(h) => win::Dwm::new(h.hwnd.get()).map(|d| Imp::Windows(Box::new(d))),
+            _ => None,
+        }
+    }
+    #[cfg(not(any(windows, all(unix, not(target_os = "macos")))))]
     fn connect(_: &(impl HasWindowHandle + HasDisplayHandle)) -> Option<Imp> {
         None
     }
@@ -64,6 +75,8 @@ impl Blur {
             Imp::X11(_) => Some("KDE, X11"),
             #[cfg(all(unix, not(target_os = "macos")))]
             Imp::Wayland(w) => Some(w.name()),
+            #[cfg(windows)]
+            Imp::Windows(d) => Some(d.name()),
         }
     }
 
@@ -72,6 +85,8 @@ impl Blur {
         match &self.imp {
             #[cfg(all(unix, not(target_os = "macos")))]
             Imp::X11(_) => true,
+            #[cfg(windows)]
+            Imp::Windows(_) => true,
             _ => false,
         }
     }
@@ -88,6 +103,8 @@ impl Blur {
             Imp::X11(x) => x.set(on),
             #[cfg(all(unix, not(target_os = "macos")))]
             Imp::Wayland(w) => w.set(on),
+            #[cfg(windows)]
+            Imp::Windows(d) => d.set(on),
         }
     }
 
@@ -102,23 +119,32 @@ impl Blur {
         if d.done {
             return false;
         }
-        match &self.imp {
+        let found = match &self.imp {
             #[cfg(all(unix, not(target_os = "macos")))]
             Imp::X11(x) => {
                 let wins = x.others();
                 for &w in &wins {
                     x.apply(w, on);
                 }
-                d.tries += 1;
-                // a dialog that never shows up (no window manager to list it) is not waited for forever
-                d.done = wins.len() >= count || d.tries >= 40;
-                !d.done
+                wins.len()
+            }
+            #[cfg(windows)]
+            Imp::Windows(w) => {
+                let wins = w.others();
+                for &h in &wins {
+                    w.apply(h, on);
+                }
+                wins.len()
             }
             _ => {
                 d.done = true;
-                false
+                return false;
             }
-        }
+        };
+        d.tries += 1;
+        // a dialog that never shows up (no window manager to list it) is not waited for forever
+        d.done = found >= count || d.tries >= 40;
+        !d.done
     }
 }
 
@@ -300,5 +326,106 @@ mod wl {
             }
             let _ = self.conn.flush();
         }
+    }
+}
+
+#[cfg(windows)]
+mod win {
+    use raw_window_handle::{HandleError, HasWindowHandle, RawWindowHandle, Win32WindowHandle, WindowHandle};
+    use std::num::NonZeroIsize;
+    use windows_sys::core::BOOL;
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, GetWindowThreadProcessId};
+
+    #[derive(Clone, Copy)]
+    enum Kind {
+        /// The system backdrop of transient windows (the documented API, Windows 11 22H2 and newer).
+        Acrylic,
+        /// The blur of the window composition attribute (Windows 10 1809 and newer). On Windows 11 22H2
+        /// it makes the window lag while it is dragged, which is why the newer one comes first there.
+        Blur,
+    }
+
+    pub struct Dwm {
+        hwnd: isize,
+        kind: Kind,
+    }
+
+    /// A window of this app; it is alive while FFcut asks for its blur (in the frame that listed it).
+    struct Win(isize);
+
+    impl HasWindowHandle for Win {
+        fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
+            let h = NonZeroIsize::new(self.0).ok_or(HandleError::Unavailable)?;
+            // SAFETY: see the type
+            Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::Win32(Win32WindowHandle::new(h))) })
+        }
+    }
+
+    impl Dwm {
+        pub fn new(hwnd: isize) -> Option<Dwm> {
+            // the builds window-vibrancy itself checks for each of the two
+            let build = windows_version::OsVersion::current().build;
+            let kind = if build >= 22523 {
+                Kind::Acrylic
+            } else if build >= 17763 {
+                Kind::Blur
+            } else {
+                return None;
+            };
+            Some(Dwm { hwnd, kind })
+        }
+
+        pub fn name(&self) -> &'static str {
+            match self.kind {
+                Kind::Acrylic => "Windows, acrylic",
+                Kind::Blur => "Windows, blur",
+            }
+        }
+
+        pub fn set(&self, on: bool) {
+            self.apply(self.hwnd, on);
+        }
+
+        pub fn apply(&self, hwnd: isize, on: bool) {
+            let w = Win(hwnd);
+            let _ = match (self.kind, on) {
+                (Kind::Acrylic, true) => window_vibrancy::apply_acrylic(w, None),
+                (Kind::Acrylic, false) => window_vibrancy::clear_acrylic(w),
+                (Kind::Blur, true) => window_vibrancy::apply_blur(w, None),
+                (Kind::Blur, false) => window_vibrancy::clear_blur(w),
+            };
+        }
+
+        /// The app's other top-level windows of the same kind as the main one (the dialogs, not the
+        /// system's file dialogs).
+        pub fn others(&self) -> Vec<isize> {
+            struct Find {
+                pid: u32,
+                class: Vec<u16>,
+                main: isize,
+                found: Vec<isize>,
+            }
+            unsafe extern "system" fn each(hwnd: HWND, lp: LPARAM) -> BOOL {
+                // SAFETY: `lp` is the `Find` that `EnumWindows` below was given, alive during the call
+                let f = unsafe { &mut *(lp as *mut Find) };
+                let mut pid = 0;
+                unsafe { GetWindowThreadProcessId(hwnd, &mut pid) };
+                if pid == f.pid && hwnd as isize != f.main && class_of(hwnd) == f.class {
+                    f.found.push(hwnd as isize);
+                }
+                1
+            }
+            let mut f = Find { pid: unsafe { GetCurrentProcessId() }, class: class_of(self.hwnd as HWND), main: self.hwnd, found: Vec::new() };
+            unsafe { EnumWindows(Some(each), &mut f as *mut Find as LPARAM) };
+            f.found
+        }
+    }
+
+    fn class_of(hwnd: HWND) -> Vec<u16> {
+        let mut b = [0u16; 256];
+        let n = unsafe { GetClassNameW(hwnd, b.as_mut_ptr(), b.len() as i32) };
+        b[..n.max(0) as usize].to_vec()
     }
 }

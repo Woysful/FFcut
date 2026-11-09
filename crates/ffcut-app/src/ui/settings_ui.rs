@@ -186,6 +186,9 @@ impl App {
                     .on_disabled_hover_text("Make the window see-through first");
                 if self.settings.window_blur && see_through {
                     let what = match self.blur.via() {
+                        Some(via) if cfg!(windows) => {
+                            format!("Windows draws the blur ({via}). It needs Transparency effects on (Windows Settings → Personalization → Colors).")
+                        }
                         Some(via) => format!("Your desktop takes the request ({via}). How strong the blur is, is set in its own settings."),
                         None if cfg!(all(unix, not(target_os = "macos"))) => {
                             "This desktop does not take blur requests from apps. Some blur see-through windows \
