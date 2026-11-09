@@ -387,7 +387,7 @@ impl App {
 
     // ------------------------------------------------------------------ crop & transform
 
-    /// "crop · 90° · flip H · 720p", or "none".
+    /// "crop · 90° · flip H", or "none".
     fn transform_summary(&self) -> String {
         let mut v: Vec<String> = Vec::new();
         if self.crop.on {
@@ -405,12 +405,6 @@ impl App {
         }
         if self.s.flip_v {
             v.push("flip V".into());
-        }
-        let sc = self.s.scale;
-        match (sc.w, sc.h) {
-            (None, None) => {}
-            (None, Some(h)) => v.push(format!("{h}p")),
-            (w, h) => v.push(format!("{}×{}", w.map_or("auto".into(), |x| x.to_string()), h.map_or("auto".into(), |x| x.to_string()))),
         }
         if v.is_empty() {
             "none".into()
@@ -482,7 +476,10 @@ impl App {
         if flipped {
             self.apply_preview_transform();
         }
-        ui.add_space(2.0);
+    }
+
+    /// The size of the output picture. It sits with the encoding: the preview always shows the frame at its own size.
+    fn resize_rows(&mut self, ui: &mut egui::Ui) {
         field(ui, "Resize", |ui| size_fields(ui, &mut self.s.scale));
         field(ui, "", |ui| {
             for (label, hh) in [("1080p", 1080u32), ("720p", 720), ("480p", 480)] {
@@ -668,6 +665,9 @@ impl App {
                 VideoCodec::Encoder(e) => e.clone(),
             });
         }
+        if !self.audio_mode() && !self.s.audio_only {
+            v.extend(scale_text(self.s.scale));
+        }
         if self.s.audio_mode != AudioMode::None && !self.s.tracks.is_empty() {
             v.push(match &self.s.audio_codec {
                 AudioCodec::Copy => "audio copy".into(),
@@ -717,6 +717,7 @@ impl App {
         if !self.audio_mode() && !self.s.audio_only {
             ui.add_space(6.0);
             caption(ui, "Video");
+            self.resize_rows(ui);
             self.video_codec_rows(ui, &enc);
         }
         if !self.s.tracks.is_empty() {
@@ -909,6 +910,15 @@ impl App {
     /// The trim is not the whole file.
     fn trimmed(&self) -> bool {
         self.trim_start > 0.001 || self.trim_end < self.dur() - 0.001
+    }
+}
+
+/// "720p", "1280×auto"; `None` = the source size.
+fn scale_text(sc: Scale) -> Option<String> {
+    match (sc.w, sc.h) {
+        (None, None) => None,
+        (None, Some(h)) => Some(format!("{h}p")),
+        (w, h) => Some(format!("{}×{}", w.map_or("auto".into(), |x| x.to_string()), h.map_or("auto".into(), |x| x.to_string()))),
     }
 }
 
