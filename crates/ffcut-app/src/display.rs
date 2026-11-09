@@ -7,6 +7,7 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Backend {
     Wayland,
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     X11,
     /// Windows / macOS: nothing to choose.
     #[allow(dead_code)]
@@ -14,6 +15,7 @@ pub enum Backend {
 }
 
 impl Backend {
+    #[cfg_attr(not(all(unix, not(target_os = "macos"))), allow(dead_code))]
     pub fn name(self) -> &'static str {
         match self {
             Backend::Wayland => "Wayland",
