@@ -89,7 +89,7 @@ fn time_field_w(ui: &mut egui::Ui, v: &mut f64, min: f64, max: f64, fps: Option<
     widgets::value_sized(ui, [width, ui.spacing().interact_size.y], dv)
 }
 
-/// Space between the fields of one trim row.
+/// Space between the fields of one row (start and end, speed and its presets).
 const GAP: f32 = 4.0;
 /// Side padding of the speed preset buttons, tighter than other buttons so three fit beside the speed.
 const PRESET_PAD: f32 = 6.0;
@@ -342,13 +342,10 @@ impl App {
     fn trim_section(&mut self, ui: &mut egui::Ui) {
         let fps = self.frame_fps();
         let len = self.trim_end - self.trim_start;
-        let mut sum = match fps {
+        let sum = match fps {
             Some(f) => format!("{} frames", (len * f).round() as i64),
             None => fmt_time(len),
         };
-        if self.s.speed_changed() {
-            sum.push_str(&format!(" · {}×", speed_text(self.s.speed)));
-        }
         self.section(ui, Section::Trim, Some(sum), |a, ui| {
             let dur = a.dur();
             let start = |a: &mut App, ui: &mut egui::Ui, w: f32| {
@@ -393,12 +390,11 @@ impl App {
                 field(ui, "Start", |ui| start(a, ui, w));
                 field(ui, "End", |ui| end(a, ui, w));
             }
-            ui.add_space(2.0);
-            a.speed_rows(ui);
         });
     }
 
-    /// How fast the result plays, and whether the sound keeps its pitch.
+    /// How fast the result plays, and whether the sound keeps its pitch. It sits with the encoding: the
+    /// preview always plays at normal speed.
     fn speed_rows(&mut self, ui: &mut egui::Ui) {
         let h = ui.spacing().interact_size.y;
         let field_w = value_w(ui, "0.25×", &ui.style().drag_value_text_style.clone()).max(64.0);
@@ -749,6 +745,9 @@ impl App {
         if !self.audio_mode() && !self.s.audio_only {
             v.extend(scale_text(self.s.scale));
         }
+        if self.s.speed_changed() {
+            v.push(format!("{}×", speed_text(self.s.speed)));
+        }
         if self.s.audio_mode != AudioMode::None && !self.s.tracks.is_empty() {
             v.push(match &self.s.audio_codec {
                 AudioCodec::Copy => "audio copy".into(),
@@ -795,6 +794,7 @@ impl App {
         if let Some(c) = self.default_act(act).filter(|c| self.containers().contains(&c.as_str())) {
             self.set_container(&c);
         }
+        self.speed_rows(ui);
         if !self.audio_mode() && !self.s.audio_only {
             ui.add_space(6.0);
             caption(ui, "Video");
