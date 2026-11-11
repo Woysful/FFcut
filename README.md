@@ -1,7 +1,7 @@
 # [<img src="packaging/ffcut.png" width="4%" alt="FFcut">](https://github.com/Woysful/FFcut/releases) FFcut - Video Editor
 
 Small and fast wrapper for FFmpeg.
-![preview](assets/preview.webp)
+![preview](assets/preview-anim.webp)
 > Heavily vibe coded. Expect issues.
 
 ## Features
