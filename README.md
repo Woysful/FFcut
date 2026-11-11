@@ -30,7 +30,7 @@ Small and fast wrapper for FFmpeg.
 ## Requirements
 - **FFmpeg + FFprobe** — found next to the program first, then in `PATH` (or set the paths in *File → Settings*).
 - **Linux:** `libmpv2` (`sudo apt install libmpv2` · `sudo pacman -S mpv` · `sudo dnf install mpv-libs`).
-- **Windows:** nothing else if you use the zip that includes `libmpv-2.dll` (and FFmpeg if it was bundled).
+- **Windows:** nothing else if you use the zip that includes `libmpv-2.dll`.
 
 ## 🐧 Installation Linux
 
