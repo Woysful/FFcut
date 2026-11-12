@@ -18,6 +18,20 @@ enum Trial {
     Failed(String),
 }
 
+/// A video chain that was handed to mpv but has not delivered its first picture yet.
+struct Pending {
+    /// Caption bars the layout switches to once the new picture is there.
+    bars: (u32, u32),
+    /// Size of mpv's output picture when the chain was handed over.
+    before: Option<(u64, u64)>,
+    since: Instant,
+}
+
+/// The longest a picture is held back while waiting for mpv's new one.
+const PENDING_MAX: Duration = Duration::from_millis(1500);
+/// Held at least this long even when the picture keeps its shape (mpv drops the paused frame on a chain change).
+const PENDING_MIN: Duration = Duration::from_millis(300);
+
 /// How long a trial may take before the plugin is taken for hung.
 const TRIAL_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -40,7 +54,10 @@ pub struct VfxState {
     /// The chain in mpv rotates / flips the picture itself.
     pub rotates: bool,
     /// Caption bars (top, bottom) in the picture mpv shows now, in source pixels.
+    /// This is what the layout uses. It follows the picture mpv really delivers: switching it right away
+    /// squeezed the old picture into the new shape (black bars above and below) until the new one arrived.
     pub bars: (u32, u32),
+    pending: Option<Pending>,
     hw_copy: bool,
     pub error: Option<String>,
     /// ffmpeg's messages since the chain was applied (mpv reports a failed graph only in its log).
@@ -64,6 +81,7 @@ impl Default for VfxState {
             applied: None,
             rotates: false,
             bars: (0, 0),
+            pending: None,
             hw_copy: false,
             error: None,
             log: Vec::new(),
@@ -121,6 +139,7 @@ impl VfxState {
         self.applied = None;
         self.rotates = false;
         self.bars = (0, 0);
+        self.pending = None;
         self.error = None;
     }
 }
@@ -170,12 +189,31 @@ impl App {
         }
     }
 
+    /// Switches the layout to the new caption bars (and shows live frames again) once mpv delivers the picture
+    /// of the new chain: its output size changes, or enough time has passed for a chain that keeps the shape.
+    fn commit_pending(&mut self, ctx: &egui::Context) {
+        let Some(p) = &self.vfx.pending else { return };
+        let el = p.since.elapsed();
+        let out = self.player.out_size();
+        let reshaped = p.bars != self.vfx.bars;
+        let arrived = if reshaped { out.is_some() && out != p.before } else { el >= PENDING_MIN };
+        if arrived || el >= PENDING_MAX {
+            self.vfx.bars = p.bars;
+            self.vfx.pending = None;
+            self.player.release_hold();
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+    }
+
     /// Keeps mpv's video filter in step with the settings. Waits until the user stops dragging.
     pub fn sync_video_preview(&mut self, ctx: &egui::Context) {
         if self.clip.is_none() {
             return;
         }
         self.watch_filter_log();
+        self.commit_pending(ctx);
         let (fw, fh) = self.frame_dims();
         let want = videofx::preview_chain(&self.s.vfx, self.total_rotation(), self.s.flip_h, self.s.flip_v, fw, fh, self.settings.preview_div());
         if want != self.vfx.want {
@@ -217,6 +255,13 @@ impl App {
             }
         }
         let keep = self.player.real_time();
+        let before = self.player.out_size();
+        let new_bars = if want.as_ref().is_some_and(|c| c.rotates) { videofx::bars(&self.s.vfx, fw) } else { (0, 0) };
+        // from here until the new chain delivers its first picture mpv may draw black or the old picture in a
+        // new shape: keep showing the last good frame (while playing the frames keep coming anyway)
+        if self.player.paused() || new_bars != self.vfx.bars {
+            self.player.hold();
+        }
         // a software filter cannot take frames that live in GPU memory: decode into system memory while it runs
         let result = match &want {
             Some(c) => {
@@ -238,7 +283,7 @@ impl App {
         self.vfx.error = trial_error.or(result.err().map(|e| format!("{e}")));
         self.vfx.log.clear();
         self.vfx.rotates = want.as_ref().is_some_and(|c| c.rotates);
-        self.vfx.bars = if self.vfx.rotates { videofx::bars(&self.s.vfx, fw) } else { (0, 0) };
+        self.vfx.pending = Some(Pending { bars: new_bars, before, since: Instant::now() });
         self.vfx.applied = Some(self.vfx.want.clone());
         self.apply_preview_transform();
         // mpv answers a filter change with a seek of its own: put the playhead back (see `watch_audio_jump`)

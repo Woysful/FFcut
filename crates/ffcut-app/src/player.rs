@@ -43,6 +43,25 @@ struct Fbo {
     tex: glow::Texture,
     w: i32,
     h: i32,
+    /// Only used by the "held" copy: it contains a picture that may be shown.
+    filled: bool,
+}
+
+unsafe fn new_fbo(gl: &glow::Context, w: i32, h: i32) -> Fbo {
+    let tex = gl.create_texture().unwrap();
+    gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, w, h, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
+    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
+    let fbo = gl.create_framebuffer().unwrap();
+    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+    gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(tex), 0);
+    Fbo { fbo, tex, w, h, filled: false }
+}
+
+unsafe fn drop_fbo(gl: &glow::Context, f: Fbo) {
+    gl.delete_framebuffer(f.fbo);
+    gl.delete_texture(f.tex);
 }
 
 /// Shared with the paint callback (which must be `Send + Sync`).
@@ -51,6 +70,12 @@ struct Fbo {
 struct Shared {
     render: ManuallyDrop<RenderContext<'static>>,
     fbo: Mutex<Option<Fbo>>,
+    /// A copy of the last picture that was good to show. While `freeze` is set (mpv is rebuilding its video
+    /// filters and may draw black / a wrongly shaped picture for a few frames) this copy is shown instead.
+    held: Mutex<Option<Fbo>>,
+    freeze: AtomicBool,
+    /// A seek is under way (paused): the picture from before it stays up until mpv has the new frame.
+    seek_hold: Arc<AtomicBool>,
     /// The part of the picture (u0, v0, u1, v1 in 0..1, as displayed) the loupe wants to see.
     loupe_req: Mutex<Option<[f32; 4]>>,
     loupe_out: Mutex<Option<LoupeImg>>,
@@ -77,25 +102,37 @@ struct Bridge {
     time: AtomicU64,
     paused: AtomicBool,
     eof: AtomicBool,
+    /// Size of the picture mpv's video chain delivers now (after the filters, before rotation), 0 = none yet.
+    out_w: AtomicU64,
+    out_h: AtomicU64,
 }
 
 struct MpvRef(&'static Mpv);
 // SAFETY: libmpv's client API is documented thread-safe.
 unsafe impl Send for MpvRef {}
 
-fn spawn_bridge(mpv: &'static Mpv) -> Arc<Bridge> {
+fn spawn_bridge(mpv: &'static Mpv, seek_hold: Arc<AtomicBool>) -> Arc<Bridge> {
     let b = Arc::new(Bridge {
         pending: Mutex::new(None),
         wake: Condvar::new(),
         time: AtomicU64::new(0f64.to_bits()),
         paused: AtomicBool::new(true),
         eof: AtomicBool::new(false),
+        out_w: AtomicU64::new(0),
+        out_h: AtomicU64::new(0),
     });
     let (bb, m) = (b.clone(), MpvRef(mpv));
+    // Scrubbing with keyframe seeks shows the nearest keyframe, not the frame under the playhead: the picture
+    // jumps around while dragging and then "corrects itself" on release. Exact seeks show the right frame all
+    // the time (mpv merges queued seeks, so only the newest target is decoded). FFCUT_SCRUB=keyframes brings
+    // the old behaviour back for very long-GOP / 4K footage where exact seeks are too slow.
+    let keyframe_scrub = std::env::var("FFCUT_SCRUB").is_ok_and(|v| v.eq_ignore_ascii_case("keyframes"));
     std::thread::Builder::new()
         .name("mpv-bridge".into())
         .spawn(move || {
             let mpv = m.0;
+            // when the last seek command was handed over; `seek_hold` stays set until mpv is done with it
+            let mut issued: Option<Instant> = None;
             loop {
                 let job = {
                     let mut g = bb.pending.lock().unwrap();
@@ -105,14 +142,26 @@ fn spawn_bridge(mpv: &'static Mpv) -> Arc<Bridge> {
                     g.take()
                 };
                 if let Some((t, exact)) = job {
-                    let mode = if exact { "absolute+exact" } else { "absolute+keyframes" };
+                    let mode = if exact || !keyframe_scrub { "absolute+exact" } else { "absolute+keyframes" };
                     let _ = mpv.command("seek", &[&format!("{t:.3}"), mode]);
+                    issued = Some(Instant::now());
+                }
+                if let Some(at) = issued {
+                    let busy = bb.pending.lock().unwrap().is_some() || mpv.get_property::<bool>("seeking").unwrap_or(false);
+                    let el = at.elapsed();
+                    // `seeking` may not be true yet right after the command: give it a moment
+                    if (!busy && el >= Duration::from_millis(40)) || el >= Duration::from_millis(500) {
+                        issued = None;
+                        seek_hold.store(false, Ordering::Relaxed);
+                    }
                 }
                 if let Ok(t) = mpv.get_property::<f64>("time-pos") {
                     bb.time.store(t.to_bits(), Ordering::Relaxed);
                 }
                 bb.paused.store(mpv.get_property::<bool>("pause").unwrap_or(true), Ordering::Relaxed);
                 bb.eof.store(mpv.get_property::<bool>("eof-reached").unwrap_or(false), Ordering::Relaxed);
+                bb.out_w.store(mpv.get_property::<i64>("video-out-params/w").unwrap_or(0).max(0) as u64, Ordering::Relaxed);
+                bb.out_h.store(mpv.get_property::<i64>("video-out-params/h").unwrap_or(0).max(0) as u64, Ordering::Relaxed);
             }
         })
         .expect("mpv bridge thread");
@@ -138,6 +187,12 @@ pub struct Player {
     /// mpv drops the first frame if nobody renders it within ~200 ms (slow first paint, e.g. a file
     /// opened from the command line). One re-seek shortly after loading brings the picture back.
     kick_at: Cell<Option<Instant>>,
+    /// Same flag as in `Shared`: set for a paused seek, cleared by the bridge when mpv has finished it.
+    seek_hold: Arc<AtomicBool>,
+    /// Where the last scrubbing seek (exact) went: the seek that ends the drag at the same spot is skipped,
+    /// because re-seeking makes mpv flush its decoder and flash an intermediate picture.
+    scrub_at: Cell<Option<(f64, Instant)>>,
+    scrub_exact: bool,
     /// Further re-seeks after the first one: on a slow first paint one kick is not always enough.
     kicks_left: Cell<u8>,
     /// A second handle that only receives mpv's error messages: a video filter that fails is only reported there.
@@ -231,11 +286,20 @@ impl Player {
             unsafe { libmpv2_sys::mpv_request_log_messages(l.ctx.as_ptr(), c"error".as_ptr()) >= 0 }
         });
 
+        let seek_hold = Arc::new(AtomicBool::new(false));
         Ok(Player {
-            bridge: spawn_bridge(mpv),
+            bridge: spawn_bridge(mpv, seek_hold.clone()),
             target: Cell::new(None),
             mpv,
-            shared: Arc::new(Shared { render: ManuallyDrop::new(render), fbo: Mutex::new(None), loupe_req: Mutex::new(None), loupe_out: Mutex::new(None) }),
+            shared: Arc::new(Shared {
+                render: ManuallyDrop::new(render),
+                fbo: Mutex::new(None),
+                held: Mutex::new(None),
+                freeze: AtomicBool::new(false),
+                seek_hold: seek_hold.clone(),
+                loupe_req: Mutex::new(None),
+                loupe_out: Mutex::new(None),
+            }),
             loaded: false,
             duration: 0.0,
             seek_gen: Cell::new(0),
@@ -243,6 +307,9 @@ impl Player {
             applied: RefCell::new((0, String::new())),
             flip: Cell::new((false, false)),
             kick_at: Cell::new(None),
+            seek_hold,
+            scrub_at: Cell::new(None),
+            scrub_exact: !std::env::var("FFCUT_SCRUB").is_ok_and(|v| v.eq_ignore_ascii_case("keyframes")),
             kicks_left: Cell::new(0),
             log,
         })
@@ -262,6 +329,23 @@ impl Player {
             }
         }
         out
+    }
+
+    /// Keeps showing the last good picture until `release_hold` (mpv is about to rebuild its video filters:
+    /// for a few frames it draws black or the old picture in a new shape).
+    pub fn hold(&self) {
+        self.shared.freeze.store(true, Ordering::Relaxed);
+    }
+    pub fn release_hold(&self) {
+        self.shared.freeze.store(false, Ordering::Relaxed);
+    }
+    pub fn held(&self) -> bool {
+        self.shared.freeze.load(Ordering::Relaxed)
+    }
+    /// Size of the picture that mpv's video chain delivers now; `None` while there is none.
+    pub fn out_size(&self) -> Option<(u64, u64)> {
+        let (w, h) = (self.bridge.out_w.load(Ordering::Relaxed), self.bridge.out_h.load(Ordering::Relaxed));
+        (w > 0 && h > 0).then_some((w, h))
     }
 
     /// True for a moment after something changed: the UI keeps repainting so the new frame shows up.
@@ -292,6 +376,9 @@ impl Player {
         let p = path.to_string_lossy();
         // a mix graph of the previous file refers to tracks the new file does not have
         let _ = self.mpv.set_property("lavfi-complex", "");
+        self.release_hold(); // the held picture belongs to the previous file
+        self.seek_hold.store(false, Ordering::Relaxed);
+        self.scrub_at.set(None);
         let _ = self.mpv.command("loadfile", &[&p, "replace"]);
         let _ = self.mpv.set_property("pause", true);
         self.loaded = true;
@@ -324,9 +411,17 @@ impl Player {
     pub fn time(&self) -> f64 {
         if let Some((t, at)) = self.target.get() {
             let el = at.elapsed();
-            if el < Duration::from_millis(350) {
-                // playing: the requested position moves on, like the real one will
-                return if self.paused() { t } else { t + el.as_secs_f64() };
+            if self.paused() {
+                // mpv may still be decoding towards the target (a slow exact seek): keep showing the requested
+                // position instead of letting the playhead jump back to the old one and forward again
+                if el < Duration::from_millis(350) || (el < Duration::from_millis(2500) && (self.real_time() - t).abs() > 0.2) {
+                    return t;
+                }
+            } else if el < Duration::from_millis(1500) {
+                // playing: do not run ahead of mpv (it starts playing only when the seek is done, so a guessed
+                // `t + elapsed` is too far and the playhead would jump back). Stand on the target until mpv
+                // moves, then follow it. The first moments are skipped: mpv has not reported the new spot yet.
+                return if el < Duration::from_millis(60) { t } else { self.real_time().max(t) };
             }
             self.target.set(None);
         }
@@ -350,6 +445,10 @@ impl Player {
         }
         let _ = self.mpv.set_property("pause", p);
         self.bridge.paused.store(p, Ordering::Relaxed);
+        if !p {
+            self.seek_hold.store(false, Ordering::Relaxed);
+            self.scrub_at.set(None);
+        }
     }
     fn queue_seek(&self, t: f64, exact: bool) {
         self.seek_gen.set(self.seek_gen.get() + 1);
@@ -357,15 +456,32 @@ impl Player {
         self.bump();
         self.target.set(Some((t, Instant::now())));
         self.bridge.eof.store(false, Ordering::Relaxed);
+        // paused: keep the picture that is up until mpv has the new frame (see `Shared::seek_hold`)
+        if self.paused() {
+            self.seek_hold.store(true, Ordering::Relaxed);
+        }
+        self.scrub_at.set(None);
         *self.bridge.pending.lock().unwrap() = Some((t, exact));
         self.bridge.wake.notify_one();
     }
     pub fn seek(&self, t: f64) {
+        // the drag already put mpv exactly here: nothing left to do (see `scrub_at`)
+        // (only right after the drag: later seeks to the same spot are on purpose, e.g. to refresh the frame)
+        if let Some((at, when)) = self.scrub_at.get() {
+            if self.paused() && when.elapsed() < Duration::from_millis(200) && (at - t.clamp(0.0, self.duration.max(0.0))).abs() < 0.0006 {
+                self.seek_gen.set(self.seek_gen.get() + 1);
+                self.scrub_at.set(None);
+                return;
+            }
+        }
         self.queue_seek(t, true);
     }
     /// Cheap seek (snaps to keyframes) for scrubbing; finish with `seek` for the exact frame.
     pub fn seek_fast(&self, t: f64) {
         self.queue_seek(t, false);
+        if self.scrub_exact {
+            self.scrub_at.set(Some((t.clamp(0.0, self.duration.max(0.0)), Instant::now())));
+        }
     }
     pub fn step_frame(&self, forward: bool) {
         self.seek_gen.set(self.seek_gen.get() + 1);
@@ -431,18 +547,16 @@ impl Player {
                 let mut slot = shared.fbo.lock().unwrap();
                 if slot.as_ref().is_none_or(|f| f.w != w || f.h != h) {
                     if let Some(old) = slot.take() {
-                        gl.delete_framebuffer(old.fbo);
-                        gl.delete_texture(old.tex);
+                        drop_fbo(gl, old);
                     }
-                    let tex = gl.create_texture().unwrap();
-                    gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-                    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, w, h, 0, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
-                    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, glow::LINEAR as i32);
-                    gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, glow::LINEAR as i32);
-                    let fbo = gl.create_framebuffer().unwrap();
-                    gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-                    gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(tex), 0);
-                    *slot = Some(Fbo { fbo, tex, w, h });
+                    *slot = Some(new_fbo(gl, w, h));
+                }
+                let mut held = shared.held.lock().unwrap();
+                if held.as_ref().is_none_or(|f| f.w != w || f.h != h) {
+                    if let Some(old) = held.take() {
+                        drop_fbo(gl, old);
+                    }
+                    *held = Some(new_fbo(gl, w, h));
                 }
                 let f = slot.as_ref().unwrap();
 
@@ -463,6 +577,27 @@ impl Player {
                     eprintln!("fbo status {st:#x} gl err {err:#x} {w}x{h} centre pixel {px:?}");
                 }
 
+                // 1a) what is shown: the fresh picture, or (while mpv rebuilds its filters and may draw black or
+                //     a wrongly shaped picture) the last good one. mpv is rendered into `f` either way, so it
+                //     never believes that nobody wants its frames.
+                let freeze = shared.freeze.load(Ordering::Relaxed) || shared.seek_hold.load(Ordering::Relaxed);
+                let h_ref = held.as_mut().unwrap();
+                let shown = if freeze && h_ref.filled {
+                    h_ref.fbo
+                } else {
+                    // remember it (the egui scissor box is in screen coordinates: off for this copy)
+                    let scissor = gl.is_enabled(glow::SCISSOR_TEST);
+                    gl.disable(glow::SCISSOR_TEST);
+                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
+                    gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, Some(h_ref.fbo));
+                    gl.blit_framebuffer(0, 0, w, h, 0, 0, w, h, glow::COLOR_BUFFER_BIT, glow::NEAREST);
+                    if scissor {
+                        gl.enable(glow::SCISSOR_TEST);
+                    }
+                    h_ref.filled = true;
+                    f.fbo
+                };
+
                 // 1b) the crop loupe: read back a small part of the picture (as displayed, so flips are undone)
                 if let Some(region) = shared.loupe_req.lock().unwrap().take() {
                     let [mut u0, mut v0, mut u1, mut v1] = region;
@@ -478,7 +613,7 @@ impl Player {
                     let py1 = (((1.0 - v0) * h as f32).ceil() as i32).clamp(py0 + 1, h);
                     let (cw, ch) = ((px1 - px0) as usize, (py1 - py0) as usize);
                     let mut buf = vec![0u8; cw * ch * 4];
-                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
+                    gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(shown));
                     gl.read_pixels(px0, py0, cw as i32, ch as i32, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut buf)));
                     // GL rows run bottom-up: put the top row first, and mirror what the display mirrors
                     let mut rgba = Vec::with_capacity(buf.len());
@@ -497,7 +632,7 @@ impl Player {
                 }
 
                 // 2) our FBO -> screen, at the egui viewport position
-                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(f.fbo));
+                gl.bind_framebuffer(glow::READ_FRAMEBUFFER, Some(shown));
                 gl.bind_framebuffer(glow::DRAW_FRAMEBUFFER, painter.intermediate_fbo());
                 // swapping the destination corners mirrors the picture
                 let (x0, x1) = if flip_h { (vp.left_px + w, vp.left_px) } else { (vp.left_px, vp.left_px + w) };
