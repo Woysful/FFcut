@@ -443,6 +443,12 @@ impl Player {
         if !p && self.at_end() {
             self.seek(0.0);
         }
+        if p && !self.paused() {
+            // Pausing playback: the position of an earlier seek is history by now. Keeping it would make `time()`
+            // hold the playhead on that old target (the paused branch) while the video has moved on, so it
+            // would jump back, and forward again later. mpv's own position is right, also during a seek.
+            self.target.set(None);
+        }
         let _ = self.mpv.set_property("pause", p);
         self.bridge.paused.store(p, Ordering::Relaxed);
         if !p {
@@ -456,8 +462,12 @@ impl Player {
         self.bump();
         self.target.set(Some((t, Instant::now())));
         self.bridge.eof.store(false, Ordering::Relaxed);
-        // paused: keep the picture that is up until mpv has the new frame (see `Shared::seek_hold`)
-        if self.paused() {
+        // A single paused seek (click, jump): keep the picture that is up until mpv has the new frame (see
+        // `Shared::seek_hold`). Not while scrubbing: new seeks arrive every frame, so "the seek is done" never
+        // comes before the mouse is released, and the preview would stand still during the whole drag.
+        if !exact {
+            self.seek_hold.store(false, Ordering::Relaxed);
+        } else if self.paused() {
             self.seek_hold.store(true, Ordering::Relaxed);
         }
         self.scrub_at.set(None);
